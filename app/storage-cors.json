@@ -1,0 +1,26 @@
+[
+  {
+    "origin": [
+      "https://socialkon10-marketing.vercel.app",
+      "https://socialkon10-marketing-*.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:4173",
+      "http://localhost:3000"
+    ],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "Content-Length",
+      "User-Agent",
+      "x-goog-resumable",
+      "x-firebase-storage-version",
+      "x-goog-upload-command",
+      "x-goog-upload-offset",
+      "x-goog-upload-url",
+      "x-goog-upload-protocol",
+      "x-goog-upload-status"
+    ]
+  }
+]

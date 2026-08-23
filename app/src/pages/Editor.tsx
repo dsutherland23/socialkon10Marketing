@@ -27,7 +27,8 @@ import { useAuth } from "../lib/auth";
 import { firebaseReady } from "../lib/firebase";
 import { addManaged, getFileBuffer, listMyOrders, updateManaged } from "../lib/backend";
 import { track, useSEO } from "../lib/seo";
-import { entitlementsFromOrders, useTemplates, type Template } from "../lib/templates";
+import { entitlementsFromOrders, useTemplates, type Template, type Orientation, type TemplateStatus } from "../lib/templates";
+
 import { parsePsdToFabricJson } from "../lib/psd-import";
 import {
   KON10_PROPS, applyCustomerPermissions, applyPermissionsToAll, buildSeedDoc, deletableObjects, editorError, masterDocFor,
@@ -674,7 +675,44 @@ export default function Editor() {
 
   const { user, isAdmin } = useAuth();
   const { templates, ready } = useTemplates();
-  const tpl: Template | undefined = templates.find((x) => x.slug === slug);
+  const tpl: Template | undefined = useMemo(() => {
+    const found = templates.find((x) => x.slug === slug);
+    if (found) return found;
+    if (slug && (isAuthor || isAdmin)) {
+      return {
+        slug,
+        name: slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        description: "Studio template",
+        category: "flyer",
+        tags: [],
+        keywords: [],
+        software: "Adobe Photoshop",
+        fileFormat: "PSD",
+        dimensions: "1080 × 1350 px",
+        resolution: "300 DPI",
+        colorMode: "RGB",
+        fileSize: "10 MB",
+        orientation: "portrait" as Orientation,
+        features: [],
+        fonts: [],
+        price: 0,
+        licenseFees: { personal: 0, commercial: 0, extended: 0 },
+        customizePrice: 0,
+        customizeAvailable: false,
+        versions: [],
+        previewImages: [],
+        status: "published" as TemplateStatus,
+        bestseller: false,
+        isNew: true,
+        sales: 0,
+        hue: 210,
+        createdAt: new Date().toISOString().slice(0, 10),
+      };
+    }
+    return undefined;
+  }, [templates, slug, isAuthor, isAdmin]);
+
+
 
   const canvasEl = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -907,13 +945,13 @@ export default function Editor() {
 
   /* ---------------- access verification ---------------- */
   useEffect(() => {
+    if (isAuthor || isAdmin || !firebaseReady) {
+      setAccess("granted");
+      return;
+    }
     if (!ready) return;
     (async () => {
       if (!tpl) { setAccess("denied"); return; }
-      if (isAuthor || !firebaseReady || isAdmin) {
-        setAccess("granted");
-        return;
-      }
       const free = (tpl.salePrice ?? tpl.price) === 0 || tpl.price === 0;
       if (free) { setAccess("granted"); return; }
       const orders = await listMyOrders(user);
@@ -922,6 +960,7 @@ export default function Editor() {
       if (!owned) track("editor_access_denied", { template: tpl.slug });
     })();
   }, [ready, tpl, user, isAdmin, isAuthor]);
+
 
   /* ---------------- serialization / zoom ---------------- */
   const refreshLayers = useCallback(() => {
@@ -1185,7 +1224,9 @@ export default function Editor() {
         setPsdImporting(true);
         try {
           setPsdProgress("Loading source file…");
-          const buffer = await getFileBuffer(tpl.privateFilePath!);
+          const bufferPromise = getFileBuffer(tpl.privateFilePath!);
+          const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("File download timed out")), 20000));
+          const buffer = await Promise.race([bufferPromise, timeoutPromise]);
           setPsdProgress("Parsing PSD layers…");
           resolvedMaster = await parsePsdToFabricJson(buffer, tpl);
           setPsdProgress("Layers ready — opening editor…");
@@ -1198,7 +1239,7 @@ export default function Editor() {
           }
         } catch (err) {
           console.error("PSD boot error:", err);
-          toast.error("PSD import failed — opening blank canvas.", {
+          toast.error("PSD source file unavailable — opened standard layout.", {
             description: err instanceof Error ? err.message : String(err),
           });
         } finally {
@@ -1291,7 +1332,9 @@ export default function Editor() {
             }
           });
         }
-        await c.loadFromJSON(json);
+        const loadPromise = c.loadFromJSON(json);
+        const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Canvas load timeout")), 10000));
+        await Promise.race([loadPromise, timeoutPromise]);
         applyModePermissions(c);
         purgePhantomSelections();
         c.renderAll();
@@ -1310,8 +1353,10 @@ export default function Editor() {
         } catch {
           editorError("load");
         }
+      } finally {
+        setBooting(false);
       }
-      setBooting(false);
+
 
       // first-run onboarding (§42) — short, skippable, once per browser
       if (!localStorage.getItem("sk-studio-onboarded-v2")) setOnboard(0);

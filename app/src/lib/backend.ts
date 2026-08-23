@@ -195,9 +195,11 @@ export async function createOrder(
 /** Link any orders placed with this email (before sign-up) to the account. */
 export async function claimOrders(user: User): Promise<void> {
   if (!firebaseReady || !db || !user.email) return;
-  const q = query(collection(db, "orders"), where("email", "==", user.email), where("uid", "==", null));
-  const snap = await getDocs(q);
-  await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { uid: user.uid })));
+  try {
+    const q = query(collection(db, "orders"), where("email", "==", user.email), where("uid", "==", null));
+    const snap = await getDocs(q);
+    await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { uid: user.uid })));
+  } catch { /* ignore permission errors */ }
 }
 
 export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
@@ -205,20 +207,29 @@ export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     return orders;
   }
-  const q = query(collection(db, "orders"), where("uid", "==", user.uid));
-  const snap = await getDocs(q);
-  return snap.docs
-    .map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as OrderRecord)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  try {
+    const q = query(collection(db, "orders"), where("uid", "==", user.uid));
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as OrderRecord)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch {
+    return [];
+  }
 }
 
 export async function listAllOrders(): Promise<OrderRecord[]> {
   if (!firebaseReady || !db) {
     return (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
   }
-  const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as OrderRecord);
+  try {
+    const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc")));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as OrderRecord);
+  } catch {
+    return [];
+  }
 }
+
 
 /** Delete an order (admin housekeeping). */
 export async function deleteOrder(id: string): Promise<void> {
@@ -289,11 +300,16 @@ export async function getServiceOverrides(): Promise<Record<string, ServiceOverr
   if (!firebaseReady || !db) {
     return (await idbGet<Record<string, ServiceOverride>>("sk-demo-overrides")) || {};
   }
-  const snap = await getDocs(collection(db, "serviceOverrides"));
-  const out: Record<string, ServiceOverride> = {};
-  snap.docs.forEach((d) => (out[d.id] = d.data() as ServiceOverride));
-  return out;
+  try {
+    const snap = await getDocs(collection(db, "serviceOverrides"));
+    const out: Record<string, ServiceOverride> = {};
+    snap.docs.forEach((d) => (out[d.id] = d.data() as ServiceOverride));
+    return out;
+  } catch {
+    return {};
+  }
 }
+
 
 export async function saveServiceOverride(slug: string, override: ServiceOverride): Promise<void> {
   if (!firebaseReady || !db) {
@@ -340,9 +356,15 @@ export async function listManaged(kind: ManagedKind): Promise<ManagedItem[]> {
     const res = await idbGet<ManagedItem[]>(`sk-demo-${kind}`);
     return res || [];
   }
-  const snap = await getDocs(collection(db, kind));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  try {
+    const snap = await getDocs(collection(db, kind));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    // Permission denied or network error — fall back to empty (seeds remain)
+    return [];
+  }
 }
+
 
 export async function addManaged(kind: ManagedKind, data: Record<string, unknown>): Promise<void> {
   if (!firebaseReady || !db) {
@@ -589,9 +611,14 @@ export async function getSettings(): Promise<SiteSettings> {
   if (!firebaseReady || !db) {
     return (await idbGet<SiteSettings>("sk-demo-settings")) || {};
   }
-  const snap = await getDoc(doc(db, "settings", "site"));
-  return snap.exists() ? (snap.data() as SiteSettings) : {};
+  try {
+    const snap = await getDoc(doc(db, "settings", "site"));
+    return snap.exists() ? (snap.data() as SiteSettings) : {};
+  } catch {
+    return {};
+  }
 }
+
 
 export async function saveSettings(s: SiteSettings): Promise<void> {
   if (!firebaseReady || !db) {

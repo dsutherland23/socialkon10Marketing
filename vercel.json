@@ -3,6 +3,21 @@
   "buildCommand": "cd app && npm run build",
   "outputDirectory": "app/dist",
   "installCommand": "cd app && npm install",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin-allow-popups"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "unsafe-none"
+        }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",

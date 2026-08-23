@@ -403,8 +403,12 @@ export function TemplateCatalogProvider({ children }: { children: ReactNode }) {
           .map((b) => ({ ...b, templateSlugs: strArr(b.templateSlugs), price: num(b.price, 0), active: b.active !== false && (b.active as unknown) !== "false" }));
 
         setState({ templates, categories, bundles, ready: true });
-      } catch { /* seeds remain */ }
+      } catch (err) {
+        console.warn("TemplateCatalog load warning:", err);
+        setState((prev) => ({ ...prev, ready: true }));
+      }
     };
+
     load();
     window.addEventListener("sk-content-changed", load);
     return () => { alive = false; window.removeEventListener("sk-content-changed", load); };

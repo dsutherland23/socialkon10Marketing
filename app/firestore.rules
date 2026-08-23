@@ -1,9 +1,10 @@
 rules_version = '2';
 
 // ─────────────────────────────────────────────────────────────
-// Social Kon10 — Firestore security rules
-// Clients read only their own orders. Admins (email allowlist)
-// manage everything. Deploy: firebase deploy --only firestore:rules
+// Social Kon10 — Firestore Security Rules
+// Public reads for CMS & catalog data.
+// Client data isolated per authenticated user (orders, designs, uploads).
+// Admins (socialkon10@gmail.com) have full management access.
 // ─────────────────────────────────────────────────────────────
 
 service cloud.firestore {
@@ -12,11 +13,11 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isAdmin() {
       return signedIn()
+        && request.auth.token.email != null
         && request.auth.token.email.lower() in ['socialkon10@gmail.com'];
     }
 
-    // orders: create by anyone checking out (uid null or self),
-    // read own / admin, status updates admin-only
+    // Orders: Anyone checking out can create, client reads own, admin manages all
     match /orders/{orderId} {
       allow create: if true
         && request.resource.data.email is string
@@ -24,7 +25,6 @@ service cloud.firestore {
         && (request.resource.data.uid == null
             || (signedIn() && request.resource.data.uid == request.auth.uid));
       allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
-      // clients may only claim their own order (set uid to themselves)
       allow update: if isAdmin()
         || (signedIn()
             && resource.data.uid == null
@@ -32,7 +32,7 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid']));
       allow delete: if isAdmin();
 
-      // project messaging (PRD §66): order owner + admin only
+      // Project messaging
       match /messages/{messageId} {
         allow read: if isAdmin()
           || (signedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid);
@@ -48,7 +48,7 @@ service cloud.firestore {
       }
     }
 
-    // leads: anyone can submit, only admin reads/updates
+    // Leads: Public can submit, admin manages
     match /leads/{leadId} {
       allow create: if true
         && request.resource.data.email is string
@@ -56,13 +56,19 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
-    // package CMS overrides: public read, admin write
+    // Site settings: Public reads, admin writes
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Package CMS overrides: Public read, admin write
     match /serviceOverrides/{slug} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // testimonials + faqs: public read, admin write
+    // CMS collections: Public read, admin write
     match /testimonials/{id} {
       allow read: if true;
       allow write: if isAdmin();
@@ -71,8 +77,6 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
-
-    // portfolio CMS + promo codes: public read, admin write
     match /portfolio/{id} {
       allow read: if true;
       allow write: if isAdmin();
@@ -81,31 +85,79 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
-
-    // admin-created custom services: public read, admin write
     match /services/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // templates library: public read, admin write
+    // Templates marketplace: Public reads, admin writes
     match /templates/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
+    match /templateCategories/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /templateBundles/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /templateReviews/{id} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+    match /downloadRecords/{id} {
+      allow read, write: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if true;
+    }
 
-    // customer saved designs: read/write own or admin
+    // Design shop collections: Public read, admin write
+    match /designCategories/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /designServices/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /designSizes/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /designOptions/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /designPackages/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /designDiscounts/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /designAudit/{id} {
+      allow create: if true;
+      allow read, write: if isAdmin();
+    }
+
+    // Customer saved designs: Read/write own or admin
     match /customerDesigns/{id} {
       allow create: if true;
-      allow read, update, delete: if isAdmin() || (signedIn() && (resource.data.uid == request.auth.uid || resource.data.email == request.auth.token.email));
+      allow read, update, delete: if isAdmin()
+        || (signedIn() && (resource.data.uid == request.auth.uid || resource.data.email == request.auth.token.email));
     }
 
-    // customer asset uploads: read/write own or admin
+    // Customer asset uploads: Read/write own or admin
     match /userUploads/{id} {
       allow create: if true;
-      allow read, update, delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read, update, delete: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
+    // Fallback block
     match /{document=**} {
       allow read, write: if false;
     }
