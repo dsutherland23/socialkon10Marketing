@@ -88,10 +88,22 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // site settings (contact + social links): public read, admin write
-    match /settings/{id} {
+    // templates library: public read, admin write
+    match /templates/{id} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    // customer saved designs: read/write own or admin
+    match /customerDesigns/{id} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin() || (signedIn() && (resource.data.uid == request.auth.uid || resource.data.email == request.auth.token.email));
+    }
+
+    // customer asset uploads: read/write own or admin
+    match /userUploads/{id} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
     match /{document=**} {

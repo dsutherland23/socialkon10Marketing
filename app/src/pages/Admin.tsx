@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+
 import { toast } from "sonner";
 import { CONTACT, FAQS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, WORK_FILTERS, formatMoney } from "../lib/data";
 import { useDepartment } from "../lib/dept";
@@ -699,9 +699,66 @@ function HomepageManager() {
 
 const TABS = ["Orders", "Leads", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
 
+const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
+const labelCls2 = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
+
+function AdminSignIn() {
+  const { signIn, signInGoogle } = useAuth();
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const go = async () => {
+    if (!email.trim() || !pass) { setError("Enter your admin email and password."); return; }
+    setBusy(true); setError(null);
+    const err = await signIn(email, pass);
+    setBusy(false);
+    if (err) setError(err);
+  };
+
+  const goGoogle = async () => {
+    setBusy(true); setError(null);
+    const err = await signInGoogle();
+    setBusy(false);
+    if (err) setError(err);
+  };
+
+  return (
+    <div className="max-w-sm mx-auto mt-4">
+      <div className="border border-[var(--line-strong)] p-8" style={{ background: "var(--panel)" }}>
+        <div className="flex items-center gap-3 mb-5">
+          <span className="text-2xl">🔐</span>
+          <div>
+            <p className="font-display text-sm font-bold uppercase tracking-wider">Studio Admin</p>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">Authorised personnel only</p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-4">
+          <div>
+            <label className={labelCls2} htmlFor="adm-email">Admin Email</label>
+            <input id="adm-email" type="email" autoComplete="email" className={inputCls2} value={email} onChange={e => setEmail(e.target.value)} placeholder="socialkon10@gmail.com" />
+          </div>
+          <div>
+            <label className={labelCls2} htmlFor="adm-pass">Password</label>
+            <input id="adm-pass" type="password" autoComplete="current-password" className={inputCls2} value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} />
+          </div>
+          {error && <p className="font-meta text-[10px] text-red-500" role="alert">{error}</p>}
+          <button className="btn btn-dept justify-center" disabled={busy} onClick={go}>
+            {busy ? "Signing in…" : "Sign in to Studio"} <span className="btn-arrow" aria-hidden>→</span>
+          </button>
+          <button className="btn btn-ghost justify-center" disabled={busy} onClick={goGoogle}>
+            Continue with Google
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
   useDepartment(null);
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, isAdmin, signOut } = useAuth();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Orders");
   useSEO({ title: "Admin — Social Kon10 Marketing", description: "Studio admin dashboard." });
 
@@ -711,20 +768,24 @@ export default function Admin() {
     <section className="wrap pt-14 md:pt-20 pb-24 min-h-[70vh]">
       <div className="flex justify-between font-meta text-[10px] text-[var(--muted)]">
         <span className="idx">/admin</span>
-        <span>{firebaseReady ? (isAdmin ? "Admin access" : "Restricted") : "Demo mode"}</span>
+        <span>{firebaseReady ? (isAdmin ? `Admin: ${user?.email}` : user ? "Not authorised" : "Signed out") : "Demo mode"}</span>
       </div>
       <h1 className="display-section mt-6 mb-10">Studio admin</h1>
 
       {loading ? (
         <p className="font-meta text-[11px] text-[var(--muted)]">Loading…</p>
       ) : !allowed ? (
-        <div className="border border-[var(--line)] p-10 max-w-lg text-center" style={{ background: "var(--panel)" }}>
-          <p className="font-display text-xl font-bold uppercase">Restricted</p>
-          <p className="text-sm text-[var(--muted)] mt-2">
-            {user ? `${user.email} isn't an admin account.` : "Sign in with an admin account to continue."}
-          </p>
-          <Link to="/client" className="btn btn-fill mt-6">Go to sign-in</Link>
-        </div>
+        <>
+          {user ? (
+            <div className="border border-[var(--line)] p-8 max-w-sm text-center" style={{ background: "var(--panel)" }}>
+              <p className="font-meta text-[10px] text-red-500">⛔ {user.email} is not an admin account.</p>
+              <p className="text-sm text-[var(--muted)] mt-2">Sign in with an authorised admin email to continue.</p>
+              <button className="btn btn-fill mt-5" onClick={signOut}>Sign out</button>
+            </div>
+          ) : (
+            <AdminSignIn />
+          )}
+        </>
       ) : (
         <>
           <div className="flex flex-wrap gap-2 mb-10" role="tablist" aria-label="Admin sections">
@@ -735,6 +796,12 @@ export default function Admin() {
                 {t.toUpperCase()}
               </button>
             ))}
+            <button
+              onClick={signOut}
+              className="font-meta text-[10px] px-4 py-2 border border-[var(--line)] text-[var(--muted)] hover:border-red-500 hover:text-red-500 transition-colors ml-auto"
+            >
+              SIGN OUT
+            </button>
           </div>
           {tab === "Orders" && <Orders />}
           {tab === "Leads" && <Leads />}
@@ -779,3 +846,4 @@ export default function Admin() {
     </section>
   );
 }
+

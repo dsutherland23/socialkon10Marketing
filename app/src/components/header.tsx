@@ -5,6 +5,9 @@ import { useRouteDept } from "../lib/dept";
 import { useShop } from "../lib/shop";
 import { useTheme } from "../lib/theme";
 import { ShuffleText } from "../lib/motion";
+import { useAuth } from "../lib/auth";
+import { firebaseReady } from "../lib/firebase";
+
 
 function Wordmark() {
   return (
@@ -104,9 +107,11 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
   const [scrolled, setScrolled] = useState(false);
   const [shuffleDept, setShuffleDept] = useState<string | null>(null);
   const { count } = useShop();
+  const { user, isAdmin } = useAuth();
   const routeDept = useRouteDept();
   const navigate = useNavigate();
   const headerRef = useRef<HTMLElement>(null);
+
 
   // close menus on route change / escape
   useEffect(() => {
@@ -199,12 +204,32 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
             >
               <span aria-hidden>⌘</span>K
             </button>
+            {/* Auth indicator */}
+            {firebaseReady && (
+              user ? (
+                <Link
+                  to={isAdmin ? "/admin" : "/client"}
+                  className="hidden sm:inline-flex font-meta text-[10px] px-2 py-1 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors items-center gap-1"
+                  title={user.email ?? "My account"}
+                >
+                  {isAdmin ? "Studio" : "Account"}
+                </Link>
+              ) : (
+                <Link
+                  to="/auth"
+                  className="hidden sm:inline-flex font-meta text-[10px] px-2 py-1 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors"
+                >
+                  Sign in
+                </Link>
+              )
+            )}
             <Link to="/checkout" className="font-meta text-[11px] u-line whitespace-nowrap" aria-label={`Cart, ${count} items`}>
               Cart {String(count).padStart(2, "0")}
             </Link>
             <Link to="/start" className="btn btn-fill hidden sm:inline-flex !py-2.5 !px-4 whitespace-nowrap">
               Start a project <span className="btn-arrow" aria-hidden>→</span>
             </Link>
+
             <button
               className="xl:hidden p-2 -mr-2"
               aria-label={mobileOpen ? "Close menu" : "Open menu"}

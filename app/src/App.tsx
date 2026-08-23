@@ -34,6 +34,7 @@ import NotFound from "./pages/NotFound";
 const ProjectPage = lazy(() => import("./pages/Project"));
 const InsightArticle = lazy(() => import("./pages/Insight"));
 const Checkout = lazy(() => import("./pages/Checkout"));
+const AuthPage = lazy(() => import("./pages/Auth"));
 const ClientPortal = lazy(() => import("./pages/Client"));
 const Admin = lazy(() => import("./pages/Admin"));
 const DesignStore = lazy(() => import("./pages/DesignStore"));
@@ -42,6 +43,7 @@ const CustomPackage = lazy(() => import("./pages/CustomPackage"));
 const Templates = lazy(() => import("./pages/Templates"));
 const TemplateDetail = lazy(() => import("./pages/TemplateDetail"));
 const Editor = lazy(() => import("./pages/Editor"));
+
 
 function ScrollAndTrack() {
   const { pathname } = useLocation();
@@ -104,6 +106,8 @@ function Shell() {
             <div key={pathname} className="page-enter">
             <Routes>
               <Route path="/" element={<Home />} />
+              <Route path="/auth" element={<AuthPage />} />
+
               <Route path="/graphic-design-branding" element={<DepartmentPage deptId="brand" />} />
               <Route path="/graphic-design-branding/design-store" element={<DesignStore />} />
               <Route path="/design-services/:slug" element={<DesignServicePage />} />

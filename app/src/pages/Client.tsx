@@ -569,3 +569,4 @@ export default function ClientPortal() {
     </section>
   );
 }
+
