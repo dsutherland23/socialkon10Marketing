@@ -24,9 +24,31 @@ export interface CustomerDesign {
 
 export async function listDesigns(email: string, uid?: string | null): Promise<CustomerDesign[]> {
   const rows = await listManaged("customerDesigns", uid ?? null);
-  return (rows as unknown as CustomerDesign[])
-    .filter((d) => d.email === email || (uid && d.uid === uid))
-    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  const matching = (rows as unknown as CustomerDesign[])
+    .filter((d) => (d.email && d.email.toLowerCase() === (email || "").toLowerCase()) || (uid && d.uid === uid))
+    .sort((a, b) => (b.updatedAt ?? b.createdAt ?? "").localeCompare(a.updatedAt ?? a.createdAt ?? ""));
+
+  // 2026 Best Practice: Deduplicate by templateSlug (1 canonical active design per template)
+  const seenSlugs = new Set<string>();
+  const uniqueDesigns: CustomerDesign[] = [];
+  const duplicatesToDelete: string[] = [];
+
+  for (const d of matching) {
+    const slugKey = d.templateSlug || d.id;
+    if (!seenSlugs.has(slugKey)) {
+      seenSlugs.add(slugKey);
+      uniqueDesigns.push(d);
+    } else {
+      // Auto-prune duplicate entries created during previous retries
+      if (d.id) duplicatesToDelete.push(d.id);
+    }
+  }
+
+  if (duplicatesToDelete.length > 0) {
+    void Promise.allSettled(duplicatesToDelete.map((id) => removeManaged("customerDesigns", id)));
+  }
+
+  return uniqueDesigns;
 }
 
 export async function findDesignFor(email: string, templateSlug: string, uid?: string | null): Promise<CustomerDesign | null> {

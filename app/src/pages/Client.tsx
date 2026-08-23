@@ -361,7 +361,7 @@ function MyDesigns() {
   const [loading, setLoading] = useState(true);
 
   const reload = async () => {
-    setDesigns(await listDesigns(user?.email ?? "demo@local"));
+    setDesigns(await listDesigns(user?.email ?? "demo@local", user?.uid ?? null));
     setLoading(false);
   };
   useEffect(() => { void reload(); }, [user]);
