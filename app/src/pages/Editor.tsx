@@ -3988,11 +3988,38 @@ export default function Editor() {
   const canRedo = historyRef.current.idx < historyRef.current.stack.length - 1;
   const canvasRect = (guides.v !== null || guides.h !== null) && canvasEl.current ? canvasEl.current.getBoundingClientRect() : null;
 
-  const selectLayer = (o: FabricObject) => {
+  const selectLayer = (o: FabricObject, ev?: React.MouseEvent) => {
     const c = fc.current; if (!c) return;
     const e = o as unknown as EditorObject;
     if (e.selectable === false || e.evented === false) { toast.error("That layer is locked."); return; }
-    c.setActiveObject(o); c.renderAll();
+
+    const isMulti = Boolean(ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey));
+
+    if (isMulti) {
+      const activeObjs = c.getActiveObjects();
+      let nextObjs: FabricObject[];
+
+      if (activeObjs.includes(o)) {
+        // Toggle off from active multi-selection
+        nextObjs = activeObjs.filter((x) => x !== o);
+      } else {
+        // Add layer to active multi-selection
+        nextObjs = [...activeObjs, o];
+      }
+
+      if (nextObjs.length === 0) {
+        c.discardActiveObject();
+      } else if (nextObjs.length === 1) {
+        c.setActiveObject(nextObjs[0]);
+      } else {
+        const sel = new ActiveSelection(nextObjs, { canvas: c });
+        c.setActiveObject(sel);
+      }
+    } else {
+      c.setActiveObject(o);
+    }
+
+    c.renderAll();
     setSel(readSelection(c));
   };
 
@@ -4852,8 +4879,8 @@ export default function Editor() {
                             ) : (
                               <button
                                 className="grow min-w-0 text-left truncate py-0.5"
-                                title={`${displayName} — Click to select, double-click to edit`}
-                                onClick={() => selectLayer(o)}
+                                title={`${displayName} — Click to select, Shift/⌘-click for multiple layers, double-click to edit`}
+                                onClick={(ev) => selectLayer(o, ev)}
                                 onDoubleClick={() => {
                                   if (e.kIsPsdText) {
                                     convertPsdTextToLiveTextbox(o);
