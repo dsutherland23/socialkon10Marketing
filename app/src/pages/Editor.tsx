@@ -1279,7 +1279,7 @@ export default function Editor() {
 
       const source: Kon10Doc | null = await (async () => {
         if (isAuthor) return resolvedMaster;
-        let d = await findDesignFor(email, tpl.slug);
+        let d = await findDesignFor(email, tpl.slug, user?.uid ?? null);
         if (!d) {
           d = await createDesign({
             uid: user?.uid ?? null, email, templateSlug: tpl.slug,

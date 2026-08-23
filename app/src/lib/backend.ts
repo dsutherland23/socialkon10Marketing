@@ -2,7 +2,7 @@ import {
   addDoc, collection, doc, getDocs, getDoc, orderBy, query,
   serverTimestamp, setDoc, updateDoc, where, deleteDoc,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, getBytes } from "firebase/storage";
 import type { User } from "firebase/auth";
 import { db, storage, firebaseReady } from "./firebase";
 import type { CartItem } from "./shop";
@@ -351,13 +351,20 @@ export type ManagedKind =
 
 export interface ManagedItem { id: string; [k: string]: unknown }
 
-export async function listManaged(kind: ManagedKind): Promise<ManagedItem[]> {
+export async function listManaged(kind: ManagedKind, filterByUid?: string | null): Promise<ManagedItem[]> {
   if (!firebaseReady || !db) {
     const res = await idbGet<ManagedItem[]>(`sk-demo-${kind}`);
     return res || [];
   }
   try {
-    const snap = await getDocs(collection(db, kind));
+    let q;
+    if (kind === "customerDesigns" && filterByUid) {
+      // Must filter by uid — Firestore rules deny full collection scans for non-admins
+      q = query(collection(db, kind), where("uid", "==", filterByUid));
+    } else {
+      q = query(collection(db, kind));
+    }
+    const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch {
     // Permission denied or network error — fall back to empty (seeds remain)
@@ -565,12 +572,11 @@ export async function getFileBuffer(path: string): Promise<ArrayBuffer> {
     return resp.arrayBuffer();
   }
 
-  // 3. Firebase Storage
+  // 3. Firebase Storage — use SDK getBytes() to avoid browser CORS
   if (firebaseReady && storage) {
-    const url = await getDownloadURL(ref(storage, path));
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} downloading file from storage.`);
-    return resp.arrayBuffer();
+    const storageRef = ref(storage, path);
+    const bytes = await getBytes(storageRef);
+    return bytes;
   }
 
   throw new Error(`File binary not found for: ${path}`);

@@ -146,7 +146,14 @@ service cloud.firestore {
     // Customer saved designs: Read/write own or admin
     match /customerDesigns/{id} {
       allow create: if true;
-      allow read, update, delete: if isAdmin()
+      // Allow listing own designs (needed for where("uid","==",uid) queries)
+      allow list: if isAdmin()
+        || (signedIn() && request.query.filters[0].field.fieldPath == "uid"
+            && request.query.filters[0].value == request.auth.uid);
+      // Allow reading a specific document if you own it
+      allow get: if isAdmin()
+        || (signedIn() && (resource.data.uid == request.auth.uid || resource.data.email == request.auth.token.email));
+      allow update, delete: if isAdmin()
         || (signedIn() && (resource.data.uid == request.auth.uid || resource.data.email == request.auth.token.email));
     }
 

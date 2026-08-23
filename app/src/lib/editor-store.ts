@@ -22,15 +22,15 @@ export interface CustomerDesign {
   updatedAt: string;
 }
 
-export async function listDesigns(email: string): Promise<CustomerDesign[]> {
-  const rows = await listManaged("customerDesigns");
+export async function listDesigns(email: string, uid?: string | null): Promise<CustomerDesign[]> {
+  const rows = await listManaged("customerDesigns", uid ?? null);
   return (rows as unknown as CustomerDesign[])
-    .filter((d) => d.email === email)
+    .filter((d) => d.email === email || (uid && d.uid === uid))
     .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
 }
 
-export async function findDesignFor(email: string, templateSlug: string): Promise<CustomerDesign | null> {
-  const all = await listDesigns(email);
+export async function findDesignFor(email: string, templateSlug: string, uid?: string | null): Promise<CustomerDesign | null> {
+  const all = await listDesigns(email, uid);
   return all.find((d) => d.templateSlug === templateSlug) ?? null;
 }
 

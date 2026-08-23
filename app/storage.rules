@@ -25,6 +25,13 @@ service firebase.storage {
       allow read: if true;
     }
 
+    // Template canvas JSON offloads (large canvasJson > 1MB stored here)
+    match /template-canvas/{allPaths=**} {
+      allow write: if isAdmin()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow read: if true;
+    }
+
     // Template files & design assets: admin writes, public / buyer reads
     match /template-files/{allPaths=**} {
       allow write: if isAdmin()
