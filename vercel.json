@@ -25,24 +25,11 @@
           "value": "public, max-age=31536000, immutable"
         }
       ]
-    },
-    {
-      "source": "/index.html",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, no-store, must-revalidate"
-        }
-      ]
     }
   ],
   "rewrites": [
     {
-      "source": "/((?!assets/|favicon|.*\\..*).*)",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/(.*)",
+      "source": "/((?!assets/|site\\.webmanifest|.*\\.[\\w]+$).*)",
       "destination": "/index.html"
     }
   ]

@@ -2,7 +2,7 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/|site\\.webmanifest|.*\\.[\\w]+$).*)",
       "destination": "/index.html"
     }
   ]
