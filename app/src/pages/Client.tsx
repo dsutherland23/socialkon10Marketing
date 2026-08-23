@@ -384,11 +384,13 @@ function MyDesigns() {
         const tpl = templates.find((t) => t.slug === d.templateSlug);
         return (
           <article key={d.id} className="border border-[var(--line-strong)] flex flex-col" style={{ background: "var(--panel)" }}>
-            <div className="aspect-[4/5] relative" style={{ background: "var(--dept-soft)" }}>
-              {d.thumbnail ? (
+            <div className="aspect-[4/5] relative overflow-hidden" style={{ background: "var(--dept-soft)" }}>
+              {d.thumbnail && d.thumbnail.length > 25000 ? (
                 <img src={d.thumbnail} alt={`${d.title} thumbnail`} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
               ) : tpl ? (
                 <TemplatePreview tpl={tpl} className="absolute inset-0" noWatermark />
+              ) : d.thumbnail ? (
+                <img src={d.thumbnail} alt={`${d.title} thumbnail`} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
               ) : null}
             </div>
             <div className="p-4 flex flex-col gap-1 grow">

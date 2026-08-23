@@ -1025,7 +1025,13 @@ export default function Editor() {
     setSaveState("saving");
     try {
       const c = fc.current!;
-      const thumb = renderCleanDataUrl(c, canvasSize, { format: "jpeg", multiplier: 140 / Math.max(canvasSize.width, canvasSize.height), quality: 0.6 });
+      const maxDim = Math.max(canvasSize.width, canvasSize.height);
+      const targetDim = Math.min(800, maxDim);
+      const thumb = renderCleanDataUrl(c, canvasSize, {
+        format: "jpeg",
+        multiplier: targetDim / maxDim,
+        quality: 0.9,
+      });
       await saveDesign(designId, { canvasJson: json, thumbnail: thumb });
       setSaveState("saved");
       track("design_saved", { template: slug });
