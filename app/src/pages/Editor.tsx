@@ -767,6 +767,7 @@ export default function Editor() {
   const [sel, setSel] = useState<SelInfo>({ kind: "none", obj: null });
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [zoom, setZoom] = useState(0.5);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab | null>("text");
   const [layers, setLayers] = useState<FabricObject[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
@@ -1047,6 +1048,50 @@ export default function Editor() {
     c.renderAll();
     setZoom(fit);
   }, [canvasSize]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      const el = document.documentElement;
+      if (el.requestFullscreen) {
+        el.requestFullscreen().then(() => {
+          setIsFullscreen(true);
+          setTimeout(fitZoom, 150);
+        }).catch(() => {
+          setIsFullscreen(true);
+          setTimeout(fitZoom, 150);
+        });
+      } else {
+        setIsFullscreen(true);
+        setTimeout(fitZoom, 150);
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().then(() => {
+          setIsFullscreen(false);
+          setTimeout(fitZoom, 150);
+        }).catch(() => {
+          setIsFullscreen(false);
+          setTimeout(fitZoom, 150);
+        });
+      } else {
+        setIsFullscreen(false);
+        setTimeout(fitZoom, 150);
+      }
+    }
+  }, [fitZoom]);
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+      setTimeout(fitZoom, 150);
+    };
+    document.addEventListener("fullscreenchange", handleFsChange);
+    document.addEventListener("webkitfullscreenchange", handleFsChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFsChange);
+      document.removeEventListener("webkitfullscreenchange", handleFsChange);
+    };
+  }, [fitZoom]);
 
   const persistNow = useCallback(async (targetId: string) => {
     const json = serialize();
@@ -1836,7 +1881,9 @@ export default function Editor() {
       if (e.key === "ArrowRight") { e.preventDefault(); nudge(step, 0); }
       if (e.key === "ArrowUp") { e.preventDefault(); nudge(0, -step); }
       if (e.key === "ArrowDown") { e.preventDefault(); nudge(0, step); }
-      /* Canva-style quick insert: R rect · C circle · L line · T text · V select tool */
+      /* Canva-style quick insert: R rect · C circle · L line · T text · V select tool · F fullscreen */
+      if (!mod && !e.altKey && key === "f") { e.preventDefault(); toggleFullscreen(); return; }
+      if ((mod && e.shiftKey && key === "f") || e.key === "F11") { e.preventDefault(); toggleFullscreen(); return; }
       if (!mod && !e.altKey && key === "v") {
         let exited = false;
         if (drawing) { setDrawingMode(false); exited = true; }
@@ -4000,6 +4047,7 @@ export default function Editor() {
     { id: "zoom-100", label: "Zoom to 100%", run: () => applyZoom(1) },
     { id: "preview", label: "Preview design", run: openPreview },
     { id: "export", label: "Download / export", run: openExport },
+    { id: "fullscreen", label: isFullscreen ? "Exit fullscreen mode" : "Enter fullscreen mode", hint: "F", run: toggleFullscreen },
     { id: "save", label: "Save now", hint: "⌘S", run: () => { const d = designRef.current; if (d) void persistNow(d.id); } },
     { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", run: () => setShortcutsOpen(true) },
   ];
@@ -4329,6 +4377,20 @@ export default function Editor() {
         <div className="flex items-center gap-1.5 shrink-0">
           <button className="s-btn s-btn-line max-lg:hidden" onClick={() => { setPaletteQ(""); setPaletteIdx(0); setPaletteOpen(true); }}>
             <span className="s-kbd">⌘K</span>
+          </button>
+          <button
+            className={"s-btn !text-[11.5px] flex items-center gap-1.5 transition-all " + (isFullscreen ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "")}
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Exit Fullscreen (F or Esc)" : "Enter Fullscreen Mode (F)"}
+          >
+            <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              {isFullscreen ? (
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+              ) : (
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+              )}
+            </svg>
+            <span className="max-sm:hidden">{isFullscreen ? "Exit Full" : "Fullscreen"}</span>
           </button>
           <button className="s-btn s-btn-line text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20 max-sm:hidden flex items-center gap-1" onClick={() => setAnimOpen(true)}>
             <span>✨</span> Animate
@@ -6202,6 +6264,14 @@ export default function Editor() {
               <button className="s-icon-btn !w-6 !h-6 !text-[11px]" onClick={() => applyZoom(zoom + 0.1)} aria-label="Zoom in">+</button>
               <span className="w-px h-3.5 bg-[var(--s-line)] mx-0.5" />
               <button className="s-btn !h-6 !px-2 font-meta text-[10px]" onClick={fitZoom}>Fit</button>
+              <span className="w-px h-3.5 bg-[var(--s-line)] mx-0.5" />
+              <button
+                className={"s-btn !h-6 !px-2 font-meta text-[10px] flex items-center gap-1 transition-all " + (isFullscreen ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "")}
+                onClick={toggleFullscreen}
+                title={isFullscreen ? "Exit Fullscreen (F or Esc)" : "Fullscreen Mode (F)"}
+              >
+                <span>{isFullscreen ? "⛶ Exit" : "⛶ Full"}</span>
+              </button>
             </div>
           </div>
         </div>
