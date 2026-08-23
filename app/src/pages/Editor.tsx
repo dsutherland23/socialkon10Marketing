@@ -354,7 +354,18 @@ function renderCleanDataUrl(
   const origZoom = c.getZoom();
   const origBg = c.backgroundColor;
 
-  c.discardActiveObject();
+  // Preserve active selection and text-editing state so auto-save NEVER interrupts typing
+  const activeObj = c.getActiveObject();
+  const isEditing = !!(activeObj as unknown as { isEditing?: boolean } | null)?.isEditing;
+  const selStart = (activeObj as unknown as { selectionStart?: number } | null)?.selectionStart;
+  const selEnd = (activeObj as unknown as { selectionEnd?: number } | null)?.selectionEnd;
+
+  // Temporarily hide selection controls during export without exiting editing mode
+  if (activeObj) {
+    (activeObj as unknown as { hasControls?: boolean }).hasControls = false;
+    (activeObj as unknown as { hasBorders?: boolean }).hasBorders = false;
+  }
+
   c.viewportTransform = [1, 0, 0, 1, 0, 0];
   c.setDimensions({ width: canvasSize.width, height: canvasSize.height });
   if (options.transparentBg && options.format !== "jpeg") {
@@ -376,6 +387,26 @@ function renderCleanDataUrl(
   c.viewportTransform = origVpt;
   c.setDimensions({ width: origW, height: origH });
   c.setZoom(origZoom);
+
+  // Restore selection controls and maintain active editing session
+  if (activeObj) {
+    (activeObj as unknown as { hasControls?: boolean }).hasControls = true;
+    (activeObj as unknown as { hasBorders?: boolean }).hasBorders = true;
+    c.setActiveObject(activeObj);
+    if (isEditing && typeof (activeObj as unknown as { enterEditing?: () => void }).enterEditing === "function") {
+      try {
+        (activeObj as unknown as { enterEditing: () => void }).enterEditing();
+        if (typeof selStart === "number" && typeof selEnd === "number") {
+          (activeObj as unknown as { selectionStart: number; selectionEnd: number }).selectionStart = selStart;
+          (activeObj as unknown as { selectionEnd: number }).selectionEnd = selEnd;
+        }
+        (activeObj as unknown as { hiddenTextarea?: HTMLTextAreaElement }).hiddenTextarea?.focus();
+      } catch {
+        // no-op
+      }
+    }
+  }
+
   c.renderAll();
 
   return dataUrl;
@@ -1045,7 +1076,9 @@ export default function Editor() {
     if (!design) return;
     setSaveState("unsaved");
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persistNow(design.id), 1000);
+    const activeObj = fc.current?.getActiveObject();
+    const isEditing = !!(activeObj as unknown as { isEditing?: boolean } | null)?.isEditing;
+    saveTimer.current = setTimeout(() => persistNow(design.id), isEditing ? 2500 : 1200);
   }, [design, persistNow]);
 
   const pushHistory = useCallback(() => {
