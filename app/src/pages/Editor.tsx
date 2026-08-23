@@ -1222,6 +1222,33 @@ export default function Editor() {
     toast.success("Converted to live editable text!");
   }, [canvasSize.width, pushHistory, refreshLayers]);
 
+  const expandTextToFit = useCallback((target?: FabricObject | null) => {
+    const c = fc.current;
+    const obj = (target ?? c?.getActiveObject()) as unknown as (Textbox & EditorObject) | null;
+    if (!obj || !isText(obj)) return;
+
+    const text = obj.text || "";
+    const lines = text.split(/\r?\n/);
+    let maxLineW = 0;
+    if (typeof (obj as unknown as { getLineWidth?: (idx: number) => number }).getLineWidth === "function") {
+      for (let i = 0; i < lines.length; i++) {
+        const lw = (obj as unknown as { getLineWidth: (idx: number) => number }).getLineWidth(i);
+        if (lw > maxLineW) maxLineW = lw;
+      }
+    }
+    if (maxLineW <= 0) {
+      maxLineW = text.length * ((obj.fontSize ?? 32) * 0.7);
+    }
+
+    const newWidth = Math.ceil(maxLineW * 1.15 + (obj.fontSize ?? 32) * 0.5);
+    obj.set({ width: Math.max(newWidth, 120), scaleX: 1, scaleY: 1 });
+    obj.setCoords();
+    c?.renderAll();
+    pushHistory();
+    setSel(readSelection(c!));
+    toast.success("Text box extended to 1 line!");
+  }, [pushHistory]);
+
   /* ---------------- canvas boot ---------------- */
   useEffect(() => {
     if (access !== "granted" || !tpl || !canvasEl.current || fc.current) return;
@@ -5829,6 +5856,41 @@ export default function Editor() {
                   <TbColor tip="Text color" disabled={styleLocked}
                     value={normalizeHex((selObj as unknown as { fill?: string }).fill) ?? "#ffffff"}
                     onChange={(hex) => setProp({ fill: hex })} />
+
+                  <span className="w-px h-4 bg-white/10" />
+
+                  {/* Photoshop-style Box Width Extender */}
+                  <Tip tip="Fit all text on 1 line without wrapping">
+                    <button
+                      className="s-btn s-btn-line !py-1 !px-2 text-[10px] font-bold text-amber-300 hover:text-white flex items-center gap-1 border-amber-500/40 hover:bg-amber-500/20"
+                      disabled={styleLocked}
+                      onClick={() => expandTextToFit(selObj)}
+                    >
+                      <span>↔</span> Fit 1 Line
+                    </button>
+                  </Tip>
+                  <div className="flex items-center gap-1 bg-black/40 px-1.5 py-0.5 rounded border border-white/10" title="Text box bounding width (pixels)">
+                    <span className="text-[9px] text-white/50">W:</span>
+                    <input
+                      type="number"
+                      className="s-input !w-[56px] !px-1 !py-0.5 text-center text-[10px]"
+                      disabled={styleLocked}
+                      aria-label="Text box width"
+                      value={Math.round((selObj as unknown as { width?: number }).width ?? 200)}
+                      onChange={(e) => {
+                        const val = Number(e.target.value) || 100;
+                        const tb = selObj as unknown as Textbox;
+                        if (tb) {
+                          tb.set("width", val);
+                          tb.setCoords();
+                          fc.current?.renderAll();
+                          pushHistory();
+                          setSel((s) => ({ ...s }));
+                        }
+                      }}
+                    />
+                    <span className="text-[9px] text-white/50">px</span>
+                  </div>
                 </div>
               )}
 
@@ -6091,6 +6153,7 @@ export default function Editor() {
               text?: string; fontSize?: number; fontFamily?: string; fontWeight?: string; fontStyle?: string;
               underline?: boolean; linethrough?: boolean; textAlign?: string; fill?: string; opacity?: number;
               charSpacing?: number; lineHeight?: number; textBackgroundColor?: string; shadow?: Shadow | null;
+              width?: number;
               kWarp?: { mode: "arcUp" | "arcDown" | "wave" | "circle"; bend: number } | null;
             };
             return (
@@ -6243,6 +6306,33 @@ export default function Editor() {
                   onChange={(v) => setProp({ charSpacing: v })} />
                 <Slider label="Line height" min={0.6} max={2.5} step={0.05} disabled={styleLocked} value={t.lineHeight ?? 1.05}
                   onChange={(v) => setProp({ lineHeight: v })} />
+
+                {/* Photoshop-style Box Width Extender */}
+                <div className="pt-2 border-t border-[var(--s-line)]">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="s-label mb-0">Box Width (Extend)</p>
+                    <button
+                      type="button"
+                      className="text-[10px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 hover:underline cursor-pointer"
+                      disabled={styleLocked}
+                      title="Extend text box width so text fits on 1 line without wrapping"
+                      onClick={() => expandTextToFit(selObj)}
+                    >
+                      <span>↔</span> Fit 1 Line
+                    </button>
+                  </div>
+                  <Slider label="Width (px)" min={80} max={Math.max(2500, Math.round(canvasSize.width * 1.5))} step={10} disabled={styleLocked} value={Math.round(t.width ?? 200)}
+                    onChange={(v) => {
+                      const tb = selObj as unknown as Textbox;
+                      if (tb) {
+                        tb.set("width", v);
+                        tb.setCoords();
+                        fc.current?.renderAll();
+                        pushHistory();
+                        setSel((s) => ({ ...s }));
+                      }
+                    }} />
+                </div>
               </>
             );
           })()}

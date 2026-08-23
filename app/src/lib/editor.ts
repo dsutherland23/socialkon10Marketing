@@ -115,6 +115,13 @@ export function applyCustomerPermissions(obj: EditorObject): void {
   obj.hasControls = obj.kResizable !== false || obj.kRotatable !== false;
   if (/^(textbox|itext)$/i.test(obj.type ?? "")) {
     obj.editable = obj.kEditable !== false;
+    if (typeof (obj as unknown as { setControlVisible?: (ctrl: string, vis: boolean) => void }).setControlVisible === "function") {
+      const setter = (obj as unknown as { setControlVisible: (ctrl: string, vis: boolean) => void });
+      setter.setControlVisible("ml", true);
+      setter.setControlVisible("mr", true);
+      setter.setControlVisible("mt", false);
+      setter.setControlVisible("mb", false);
+    }
   }
 }
 
@@ -131,7 +138,16 @@ export function applyPermissionsToAll(objects: EditorObject[], mode: EditorMode)
       o.lockScalingX = false; o.lockScalingY = false;
       o.lockRotation = false;
       o.hasControls = true;
-      if (/^(textbox|itext)$/i.test(o.type ?? "")) o.editable = true;
+      if (/^(textbox|itext)$/i.test(o.type ?? "")) {
+        o.editable = true;
+        if (typeof (o as unknown as { setControlVisible?: (ctrl: string, vis: boolean) => void }).setControlVisible === "function") {
+          const setter = (o as unknown as { setControlVisible: (ctrl: string, vis: boolean) => void });
+          setter.setControlVisible("ml", true);
+          setter.setControlVisible("mr", true);
+          setter.setControlVisible("mt", false);
+          setter.setControlVisible("mb", false);
+        }
+      }
     });
     return;
   }
