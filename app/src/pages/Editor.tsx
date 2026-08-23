@@ -1292,15 +1292,19 @@ export default function Editor() {
         setDesign(d);
         try {
           const saved = JSON.parse(d.canvasJson) as Kon10Doc;
-          // If customer's saved design is from the old procedural seed doc or old schema version,
-          // overwrite with the newly resolved PSD master template doc!
-          const isLegacySeed = (
+          const masterLayerCount = ((resolvedMaster?.fabric as { objects?: unknown[] })?.objects?.length ?? 0);
+          const savedLayerCount = ((saved?.fabric as { objects?: unknown[] })?.objects?.length ?? 0);
+          
+          // If customer's saved design is from an old procedural seed doc,
+          // overwrite with the master template doc!
+          const isSeedDoc = (
             saved.schemaVersion !== "1.2" ||
             !Array.isArray((saved.fabric as Record<string, unknown>)?.objects) ||
-            ((saved.fabric as { objects: unknown[] })?.objects?.length ?? 0) <= 8
+            ((saved.fabric as { objects: unknown[] })?.objects?.some((o) => String((o as { kId?: string }).kId ?? "").startsWith("seed_"))) ||
+            (savedLayerCount <= 9 && masterLayerCount > 9)
           );
 
-          if (isLegacySeed) {
+          if (isSeedDoc && masterLayerCount > 0) {
             void saveDesign(d.id, { canvasJson: JSON.stringify(resolvedMaster) });
             clearDraft(d.id);
             return resolvedMaster;
@@ -1311,6 +1315,7 @@ export default function Editor() {
           if (draft && draft.updatedAt > (d.updatedAt ?? "") && draft.canvasJson !== d.canvasJson) setRestore(draft.canvasJson);
           return saved;
         } catch { return resolvedMaster; }
+
       })();
 
       if (source) {
