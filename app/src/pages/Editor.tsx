@@ -1217,10 +1217,22 @@ export default function Editor() {
     );
 
     (async () => {
-      // ---- Step 1: resolve master doc (possibly from PSD) ----
+      // ---- Step 1: resolve master doc (possibly from PSD or Storage) ----
       let resolvedMaster = masterDocFor(tpl); // returns canvasJson or seed
 
-      if (needsPsdImport) {
+      if (tpl.canvasJson?.startsWith("storage://")) {
+        try {
+          setPsdProgress("Loading canvas layers…");
+          const path = tpl.canvasJson.replace("storage://", "");
+          const buf = await getFileBuffer(path);
+          const text = new TextDecoder().decode(buf);
+          resolvedMaster = JSON.parse(text) as Kon10Doc;
+        } catch (e) {
+          console.warn("Storage canvas load fallback:", e);
+        }
+      }
+
+      if (needsPsdImport && (!resolvedMaster || !resolvedMaster.fabric || ((resolvedMaster.fabric as { objects?: unknown[] })?.objects?.length ?? 0) <= 3)) {
         setPsdImporting(true);
         try {
           setPsdProgress("Loading source file…");
@@ -1233,6 +1245,7 @@ export default function Editor() {
           
           // Cache to template so next open is instant across author and customer views
           if (tpl.slug) {
+
             try {
               void updateManaged("templates", (tpl as unknown as { id?: string }).id || tpl.slug, { canvasJson: JSON.stringify(resolvedMaster) });
             } catch { /* ignore */ }

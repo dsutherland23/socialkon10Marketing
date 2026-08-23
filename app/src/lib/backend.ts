@@ -365,6 +365,27 @@ export async function listManaged(kind: ManagedKind): Promise<ManagedItem[]> {
   }
 }
 
+async function sanitizePayload(kind: ManagedKind, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const clone = { ...data };
+  for (const [key, val] of Object.entries(clone)) {
+    if (typeof val === "string" && val.length > 500000) {
+      if (firebaseReady && storage) {
+        try {
+          const cleanKey = key.replace(/[^\w.-]/g, "_");
+          const path = `template-canvas/${kind}-${Date.now()}-${cleanKey}.json`;
+          await uploadBytes(ref(storage, path), new Blob([val], { type: "application/json" }));
+          clone[key] = `storage://${path}`;
+        } catch (err) {
+          console.warn(`Storage offload for ${key} failed, removing to protect Firestore:`, err);
+          delete clone[key];
+        }
+      } else {
+        delete clone[key];
+      }
+    }
+  }
+  return clone;
+}
 
 export async function addManaged(kind: ManagedKind, data: Record<string, unknown>): Promise<void> {
   if (!firebaseReady || !db) {
@@ -375,7 +396,8 @@ export async function addManaged(kind: ManagedKind, data: Record<string, unknown
     notifyContentChanged();
     return;
   }
-  await addDoc(collection(db, kind), data);
+  const safeData = await sanitizePayload(kind, data);
+  await addDoc(collection(db, kind), safeData);
   notifyContentChanged();
 }
 
@@ -400,7 +422,8 @@ export async function updateManaged(kind: ManagedKind, id: string, data: Record<
     notifyContentChanged();
     return;
   }
-  await updateDoc(doc(db, kind, id), data);
+  const safeData = await sanitizePayload(kind, data);
+  await updateDoc(doc(db, kind, id), safeData);
   notifyContentChanged();
 }
 
