@@ -1234,30 +1234,64 @@ export default function Editor() {
 
   const expandTextToFit = useCallback((target?: FabricObject | null) => {
     const c = fc.current;
-    const obj = (target ?? c?.getActiveObject()) as unknown as (Textbox & EditorObject) | null;
+    let obj = (target ?? c?.getActiveObject()) as unknown as (Textbox & EditorObject) | null;
+    if (!obj) return;
+
+    const raw = obj as unknown as EditorObject;
+    if (raw.kIsPsdText || (!isText(obj) && raw.kLayerType === "text")) {
+      convertPsdTextToLiveTextbox(obj as unknown as FabricObject);
+      obj = c?.getActiveObject() as unknown as (Textbox & EditorObject);
+    }
     if (!obj || !isText(obj)) return;
 
-    const text = obj.text || "";
-    const lines = text.split(/\r?\n/);
-    let maxLineW = 0;
-    if (typeof (obj as unknown as { getLineWidth?: (idx: number) => number }).getLineWidth === "function") {
-      for (let i = 0; i < lines.length; i++) {
-        const lw = (obj as unknown as { getLineWidth: (idx: number) => number }).getLineWidth(i);
-        if (lw > maxLineW) maxLineW = lw;
+    const currentText = obj.text || "";
+    // Join wrapped/multiline text into a clean single line
+    const singleLineText = currentText.replace(/[\r\n]+/g, " ").replace(/\s{2,}/g, " ").trim();
+
+    // Measure single line width using canvas font metrics
+    let measuredWidth = 0;
+    try {
+      const offscreen = document.createElement("canvas");
+      const ctx = offscreen.getContext("2d");
+      if (ctx) {
+        const fontStyle = obj.fontStyle || "normal";
+        const fontWeight = obj.fontWeight || "normal";
+        const fontSize = obj.fontSize || 32;
+        const fontFamily = obj.fontFamily || "sans-serif";
+        ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+        const metrics = ctx.measureText(singleLineText);
+        measuredWidth = metrics.width;
+        if (obj.charSpacing) {
+          measuredWidth += singleLineText.length * (fontSize * (obj.charSpacing / 1000));
+        }
       }
-    }
-    if (maxLineW <= 0) {
-      maxLineW = text.length * ((obj.fontSize ?? 32) * 0.7);
+    } catch {
+      measuredWidth = singleLineText.length * ((obj.fontSize ?? 32) * 0.7);
     }
 
-    const newWidth = Math.ceil(maxLineW * 1.15 + (obj.fontSize ?? 32) * 0.5);
-    obj.set({ width: Math.max(newWidth, 120), scaleX: 1, scaleY: 1 });
+    if (measuredWidth <= 0) {
+      measuredWidth = singleLineText.length * ((obj.fontSize ?? 32) * 0.7);
+    }
+
+    // Set width generously so words never wrap
+    const targetWidth = Math.ceil(Math.max(measuredWidth * 1.15 + 40, (obj.width ?? 200) * 1.5, 300));
+
+    obj.set({
+      text: singleLineText,
+      width: targetWidth,
+      scaleX: 1,
+      scaleY: 1,
+    });
+
+    if (typeof (obj as unknown as { initDimensions?: () => void }).initDimensions === "function") {
+      (obj as unknown as { initDimensions: () => void }).initDimensions();
+    }
     obj.setCoords();
     c?.renderAll();
     pushHistory();
     setSel(readSelection(c!));
-    toast.success("Text box extended to 1 line!");
-  }, [pushHistory]);
+    toast.success("Extended text box to 1 line!");
+  }, [convertPsdTextToLiveTextbox, pushHistory]);
 
   /* ---------------- canvas boot ---------------- */
   useEffect(() => {
