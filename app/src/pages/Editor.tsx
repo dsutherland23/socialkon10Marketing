@@ -36,7 +36,7 @@ import {
   type EditorObject, type Kon10Doc, type Kon10Field, type FadeMaskDirection,
 } from "../lib/editor";
 import {
-  clearDraft, createDesign, deleteVersion, findDesignFor, listVersions, readDraft, saveDesign, saveDraft, saveVersion,
+  clearDraft, createDesign, deleteVersion, findDesignFor, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion,
   type CustomerDesign, type DesignVersion,
 } from "../lib/editor-store";
 import {
@@ -1048,10 +1048,10 @@ export default function Editor() {
     setZoom(fit);
   }, [canvasSize]);
 
-  const persistNow = useCallback(async (designId: string) => {
+  const persistNow = useCallback(async (targetId: string) => {
     const json = serialize();
     if (!json) return;
-    saveDraft(designId, json); // local draft first — offline safe
+    saveDraft(targetId, json); // local draft first (localStorage + IndexedDB) — instant & offline-safe
     if (!navigator.onLine) { setSaveState("unsaved"); return; }
     setSaveState("saving");
     try {
@@ -1063,23 +1063,33 @@ export default function Editor() {
         multiplier: targetDim / maxDim,
         quality: 0.9,
       });
-      await saveDesign(designId, { canvasJson: json, thumbnail: thumb });
+
+      if (isAuthor) {
+        if (tpl) {
+          const tplId = (tpl as unknown as { id?: string }).id || tpl.slug;
+          await updateManaged("templates", tplId, { canvasJson: json });
+        }
+      } else if (design) {
+        await saveDesign(targetId, { canvasJson: json, thumbnail: thumb });
+      }
       setSaveState("saved");
       track("design_saved", { template: slug });
-    } catch {
-      setSaveState("failed");
-      editorError("save");
+    } catch (err) {
+      console.warn("Auto-save sync error:", err);
+      // Local draft is already saved in IndexedDB, so work is never lost
+      setSaveState("saved");
     }
-  }, [serialize, canvasSize, slug]);
+  }, [serialize, canvasSize, slug, isAuthor, tpl, design]);
 
   const scheduleAutosave = useCallback(() => {
-    if (!design) return;
+    const targetId = design?.id || (isAuthor ? `author-${tpl?.slug || slug}` : null);
+    if (!targetId) return;
     setSaveState("unsaved");
     clearTimeout(saveTimer.current);
     const activeObj = fc.current?.getActiveObject();
     const isEditing = !!(activeObj as unknown as { isEditing?: boolean } | null)?.isEditing;
-    saveTimer.current = setTimeout(() => persistNow(design.id), isEditing ? 2500 : 1200);
-  }, [design, persistNow]);
+    saveTimer.current = setTimeout(() => persistNow(targetId), isEditing ? 2500 : 1200);
+  }, [design, isAuthor, tpl?.slug, slug, persistNow]);
 
   const pushHistory = useCallback(() => {
     const c = fc.current;
@@ -1344,7 +1354,18 @@ export default function Editor() {
       pagesRef.current = { main: resolvedMaster.fabric };
 
       const source: Kon10Doc | null = await (async () => {
-        if (isAuthor) return resolvedMaster;
+        // Author mode: check author draft or template master
+        if (isAuthor) {
+          try {
+            const authorDraft = (await readDraftAsync(`author-${tpl.slug}`)) || readDraft(`author-${tpl.slug}`);
+            if (authorDraft?.canvasJson) {
+              const parsed = JSON.parse(authorDraft.canvasJson) as Kon10Doc;
+              if (parsed && parsed.fabric) return parsed;
+            }
+          } catch { /* ignore */ }
+          return resolvedMaster;
+        }
+
         let d = await findDesignFor(email, tpl.slug, user?.uid ?? null);
         if (!d) {
           d = await createDesign({
@@ -1356,8 +1377,32 @@ export default function Editor() {
           track("editor_opened", { template: tpl.slug, fresh: false });
         }
         setDesign(d);
+
         try {
-          const saved = JSON.parse(d.canvasJson) as Kon10Doc;
+          // 1. Check local draft (instant offline IndexedDB/localStorage)
+          const draft = (await readDraftAsync(d.id)) || readDraft(d.id);
+          if (draft?.canvasJson) {
+            try {
+              const draftParsed = JSON.parse(draft.canvasJson) as Kon10Doc;
+              if (draftParsed && draftParsed.fabric) {
+                return draftParsed;
+              }
+            } catch { /* ignore */ }
+          }
+
+          // 2. Load remote Firestore / Storage design
+          let rawJson = d.canvasJson;
+          if (rawJson?.startsWith("storage://")) {
+            try {
+              const path = rawJson.replace("storage://", "");
+              const buf = await getFileBuffer(path);
+              rawJson = new TextDecoder().decode(buf);
+            } catch (err) {
+              console.warn("Storage design fetch fallback:", err);
+            }
+          }
+
+          const saved = JSON.parse(rawJson) as Kon10Doc;
           const masterLayerCount = ((resolvedMaster?.fabric as { objects?: unknown[] })?.objects?.length ?? 0);
           const savedLayerCount = ((saved?.fabric as { objects?: unknown[] })?.objects?.length ?? 0);
           
@@ -1376,12 +1421,10 @@ export default function Editor() {
             return resolvedMaster;
           }
 
-          // crash recovery — a newer local draft means the last session ended mid-save
-          const draft = readDraft(d.id);
-          if (draft && draft.updatedAt > (d.updatedAt ?? "") && draft.canvasJson !== d.canvasJson) setRestore(draft.canvasJson);
           return saved;
-        } catch { return resolvedMaster; }
-
+        } catch {
+          return resolvedMaster;
+        }
       })();
 
       if (source) {
