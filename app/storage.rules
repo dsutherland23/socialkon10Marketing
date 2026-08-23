@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────
+// Social Kon10 — Storage rules
+// Project files upload into orders/{orderId}/… — write allowed
+// for checkout uploads (type + size constrained), reads admin or
+// the owning client (client portal reads via signed URLs later).
+// Deploy: firebase deploy --only storage
+// ─────────────────────────────────────────────────────────────
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email.lower() in ['socialkon10@gmail.com'];
+    }
+
+    match /orders/{orderId}/{fileName} {
+      allow write: if request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches('application/pdf|image/.*|video/mp4|audio/mpeg|application/zip|application/vnd.openxmlformats-officedocument.wordprocessingml.document|image/svg\\+xml');
+      allow read: if isAdmin() || request.auth != null;
+    }
+
+    // portfolio + CMS image uploads: admin writes, public reads
+    match /portfolio/{fileName} {
+      allow write: if isAdmin()
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow read: if true;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

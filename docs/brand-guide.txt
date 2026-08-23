@@ -1,0 +1,3068 @@
+# SOCIAL KON10 MARKETING
+
+## 2026 Creative Agency Website + Ecommerce Platform
+
+### Product Requirements Document
+
+---
+
+# 1. PROJECT OVERVIEW
+
+Build a premium, modern, highly interactive ecommerce website for:
+
+**SOCIAL KON10 MARKETING**
+
+Primary services:
+
+1. **Graphic Design & Branding**
+2. **Social Media Management & Marketing**
+3. **Website Design & Development**
+
+The website must position Social Kon10 as a **creative growth agency**, not simply a graphic designer or social media provider.
+
+The website should communicate:
+
+> **We create brands, content and digital experiences that connect, convert and grow businesses.**
+
+The website must combine:
+
+* Premium agency presentation
+* Modern editorial design
+* Strong visual storytelling
+* Purposeful animation
+* Ecommerce/service purchasing
+* Portfolio/case studies
+* Service discovery
+* Custom quote requests
+* Online payments
+* Client onboarding
+* Mobile-first UX
+* SEO
+* Accessibility
+* Performance
+* Analytics
+* CMS/admin management
+
+The website should feel like a **2026 creative technology agency**, not a traditional template-based marketing website.
+
+---
+
+# 2. BRAND INFORMATION
+
+## Business
+
+**Social Kon10 Marketing**
+
+## Contact
+
+**Phone:** 1876-255-4848
+
+**Email:** [socialkon10@gmail.com](mailto:socialkon10@gmail.com)
+
+**Location:** Kingston, Jamaica
+
+## Core Services
+
+### SECTION 01
+
+GRAPHIC DESIGN + BRANDING
+
+### SECTION 02
+
+SOCIAL MEDIA MANAGEMENT + MARKETING
+
+### SECTION 03
+
+WEBSITE DESIGN + DEVELOPMENT
+
+---
+
+# 3. DESIGN PHILOSOPHY
+
+Do NOT create a generic SaaS website.
+
+Avoid:
+
+* Generic hero + 3 cards
+* Excessive rounded cards
+* Purple/blue AI gradients
+* Inter everywhere
+* Excessive glassmorphism
+* Random floating shapes
+* Animation for the sake of animation
+* Every section looking identical
+* Huge amounts of text
+* Stock-photo-heavy layouts
+* Template-looking pricing tables
+* Excessive shadows
+* Boring centered layouts
+
+The site should feel:
+
+**Creative**
+**Confident**
+**Premium**
+**Editorial**
+**Interactive**
+**Modern**
+**Commercial**
+**Strategic**
+**Caribbean-rooted but globally competitive**
+
+Use asymmetry, strong typography, controlled whitespace, large imagery, intentional motion and distinct visual identities for each service department.
+
+---
+
+# 4. REQUIRED AI DESIGN SKILLS
+
+Install and use the following GitHub skills before building the site.
+
+## SKILL 1 — Emil Kowalski
+
+Repository:
+
+https://github.com/emilkowalski/skills
+
+Official installation:
+
+```bash
+npx skills@latest add emilkowalski/skills
+```
+
+Use this skill primarily for:
+
+* Animation
+* Motion choreography
+* Hover interactions
+* Micro-interactions
+* Easing
+* Transitions
+* UI feedback
+* Interaction quality
+
+The repository specifically focuses on helping design engineers make better animation and interface decisions.
+
+---
+
+# 5. SKILL 2 — IMPECCABLE
+
+Repository:
+
+https://github.com/pbakaus/impeccable
+
+Install:
+
+```bash
+npx impeccable install
+```
+
+Then initialize in the project:
+
+```text
+/impeccable init
+```
+
+Use Impeccable for:
+
+* Typography
+* Color systems
+* Spatial design
+* Responsive design
+* UX writing
+* Motion design
+* Accessibility
+* Layout auditing
+* Design consistency
+* Anti-pattern detection
+* Final polish
+* Responsive adaptation
+* Performance optimization
+
+Important:
+
+Run:
+
+```text
+/impeccable audit
+```
+
+before launch.
+
+Then:
+
+```text
+/impeccable polish
+```
+
+and:
+
+```text
+/impeccable harden
+```
+
+before production.
+
+---
+
+# 6. SKILL 3 — TASTE SKILL
+
+Repository:
+
+https://github.com/Leonxlnx/taste-skill
+
+Install:
+
+```bash
+npx skills add https://github.com/Leonxlnx/taste-skill --skill "design-taste-frontend"
+```
+
+Use the current v2 skill.
+
+Configure approximately:
+
+```text
+DESIGN_VARIANCE: 8
+MOTION_INTENSITY: 7
+VISUAL_DENSITY: 5
+```
+
+Adjust after testing.
+
+Use Taste Skill for:
+
+* Creative layout exploration
+* Avoiding generic AI-generated interfaces
+* Typography
+* Motion
+* Spacing
+* Design-system reasoning
+* Responsive adaptation
+* Visual hierarchy
+* Pre-flight design review
+
+---
+
+# 7. SKILL ORCHESTRATION
+
+Do not allow the three skills to fight each other.
+
+Use them in this order:
+
+### PHASE 1 — TASTE
+
+Define:
+
+* Overall visual language
+* Layout direction
+* Design variance
+* Visual density
+* Section personalities
+
+### PHASE 2 — IMPECCABLE
+
+Systematize:
+
+* Typography
+* Spacing
+* Color
+* Accessibility
+* Responsive behavior
+* UX
+* Design consistency
+
+### PHASE 3 — EMIL
+
+Enhance:
+
+* Motion
+* Animation
+* Hover behavior
+* Transitions
+* Micro-interactions
+
+### PHASE 4 — IMPECCABLE
+
+Audit and polish the finished experience.
+
+---
+
+# 8. CORE WEBSITE CONCEPT
+
+The entire website should behave like a **digital creative studio operating system**.
+
+The three major services should feel like three separate creative departments.
+
+Think:
+
+```text
+SOCIAL KON10
+     |
+     +---- GRAPHIC / BRAND
+     |
+     +---- SOCIAL / MARKETING
+     |
+     +---- WEB / DIGITAL
+```
+
+Users should be able to switch between departments without feeling like they left the website.
+
+---
+
+# 9. THE "FILE SYSTEM" NAVIGATION CONCEPT
+
+Create a distinctive navigation system inspired by a modern creative file system.
+
+Desktop navigation:
+
+```text
+SOCIAL KON10
+
+/01 GRAPHIC + BRAND
+/02 SOCIAL + MARKETING
+/03 WEB + DIGITAL
+
+WORK
+PRICING
+ABOUT
+CONTACT
+```
+
+The active department controls the site's accent color.
+
+For example:
+
+### Graphic / Branding
+
+Electric Blue + Black + White
+
+### Social / Marketing
+
+Coral / Orange / Magenta
+
+### Website / Digital
+
+Electric Cyan / Deep Navy / Violet
+
+Do NOT make the entire website three unrelated websites.
+
+Maintain:
+
+* Same typography
+* Same navigation
+* Same logo
+* Same interaction language
+* Same grid
+* Same component architecture
+
+Only the **visual atmosphere and accent system** changes.
+
+---
+
+# 10. HERO EXPERIENCE
+
+Homepage hero should immediately communicate:
+
+## "WE BUILD BRANDS THAT GET NOTICED."
+
+Supporting statement:
+
+**Branding. Social Media. Websites. Creative strategy built to help businesses look better, connect better and grow.**
+
+Primary CTA:
+
+**START A PROJECT**
+
+Secondary CTA:
+
+**EXPLORE OUR WORK**
+
+Include an interactive service selector.
+
+Example:
+
+```text
+WHAT DO YOU NEED?
+
+[ BRAND ]
+
+[ SOCIAL ]
+
+[ WEBSITE ]
+```
+
+When the user selects one:
+
+* Hero changes color
+* Background changes
+* Typography animation occurs
+* Relevant services appear
+* Relevant portfolio projects load
+* CTA changes
+* Service navigation becomes active
+
+---
+
+# 11. GRAPHIC + BRANDING DEPARTMENT
+
+## Visual Personality
+
+This section should feel:
+
+* Artistic
+* Premium
+* Editorial
+* Precise
+* Bold
+* Creative
+
+Suggested color direction:
+
+**Primary:** Social Kon10 Blue
+
+**Supporting:** Black / White / subtle silver
+
+Avoid excessive gradients.
+
+---
+
+# 12. GRAPHIC + BRANDING HERO
+
+Headline:
+
+## "MAKE YOUR BRAND IMPOSSIBLE TO IGNORE."
+
+Supporting copy:
+
+**From logos to complete visual identities, we create brands that look professional, feel intentional and stay consistent everywhere your customers see you.**
+
+CTA:
+
+**EXPLORE BRAND SERVICES**
+
+Secondary:
+
+**VIEW BRAND WORK**
+
+---
+
+# 13. GRAPHIC + BRANDING SERVICES
+
+Create service products.
+
+### LOGO DESIGN
+
+Starting at:
+
+**$750**
+
+Possible deliverables:
+
+* Initial concepts
+* Logo refinement
+* Primary logo
+* Alternate logo
+* Icon/mark
+* Digital files
+* Print files
+
+CTA:
+
+**GET STARTED**
+
+---
+
+### BRAND IDENTITY
+
+Starting at:
+
+**$2,500**
+
+Include:
+
+* Logo system
+* Color palette
+* Typography
+* Brand elements
+* Social assets
+* Stationery
+* Brand guidelines
+
+---
+
+### EVENT CREATIVE
+
+Starting at:
+
+**$750**
+
+Packages:
+
+**Event Starter — $750**
+
+**Event Pro — $1,500**
+
+**Event Signature — $2,750**
+
+Include the event package system previously developed.
+
+---
+
+### PRINT + DIGITAL COLLATERAL
+
+Products:
+
+* Flyers
+* Posters
+* Brochures
+* Business cards
+* Menus
+* Presentations
+* Social graphics
+* Banners
+* Signage
+* Digital advertising
+
+---
+
+# 14. BRAND STRATEGY ADD-ON
+
+Offer:
+
+**BRAND STRATEGY**
+
+Custom pricing.
+
+Include:
+
+* Brand positioning
+* Audience definition
+* Competitor review
+* Brand personality
+* Brand voice
+* Messaging
+* Visual direction
+* Brand roadmap
+
+This follows the stronger strategic positioning demonstrated by modern creative agencies.
+
+---
+
+# 15. SOCIAL MEDIA DEPARTMENT
+
+This should be dramatically different visually.
+
+Suggested atmosphere:
+
+* Energetic
+* Editorial
+* Fast
+* Social-first
+* Content-heavy
+* Dynamic
+
+Suggested colors:
+
+**Coral / Orange / Pink / Red**
+
+Use motion more heavily here.
+
+---
+
+# 16. SOCIAL MEDIA HERO
+
+Headline:
+
+## "STOP POSTING. START GROWING."
+
+Supporting copy:
+
+**Social media should do more than fill your feed. We create content, manage your community and build strategies designed to increase visibility, engagement and conversions.**
+
+CTA:
+
+**VIEW SOCIAL PACKAGES**
+
+Secondary:
+
+**SEE SOCIAL WORK**
+
+---
+
+# 17. SOCIAL MEDIA SERVICES
+
+### SOCIAL MEDIA MANAGEMENT
+
+Include:
+
+* Strategy
+* Content calendar
+* Content creation
+* Graphic design
+* Caption writing
+* Publishing
+* Community management
+* Analytics
+* Monthly reporting
+
+---
+
+### SOCIAL MEDIA CONTENT
+
+Products:
+
+* Static posts
+* Carousels
+* Reels
+* Stories
+* TikTok content
+* Promotional campaigns
+* Event campaigns
+
+---
+
+### PAID SOCIAL ADVERTISING
+
+Include:
+
+* Campaign strategy
+* Audience research
+* Ad creative
+* Campaign setup
+* Testing
+* Optimization
+* Retargeting
+* Performance reporting
+
+Important:
+
+Do not promise guaranteed sales.
+
+Use language such as:
+
+**"Built to increase qualified traffic, leads and conversions."**
+
+---
+
+### SOCIAL MEDIA PACKAGES
+
+Create ecommerce products:
+
+**STARTER**
+
+**GROWTH**
+
+**PRO**
+
+**CUSTOM**
+
+Each package should allow:
+
+* Platform selection
+* Posts per week
+* Reels
+* Stories
+* Community management
+* Reporting
+* Ad management add-on
+
+---
+
+# 18. WEBSITE DEPARTMENT
+
+Visual personality:
+
+* Digital
+* Futuristic
+* Clean
+* Technical
+* Premium
+* Interactive
+
+Suggested accent:
+
+**Cyan / Electric Blue / Deep Navy**
+
+---
+
+# 19. WEBSITE HERO
+
+Headline:
+
+## "YOUR WEBSITE SHOULD WORK AS HARD AS YOU DO."
+
+Supporting copy:
+
+**We design fast, responsive digital experiences that help businesses look credible, capture leads, sell products and turn visitors into customers.**
+
+CTA:
+
+**BUILD MY WEBSITE**
+
+Secondary:
+
+**SEE WEBSITE WORK**
+
+---
+
+# 20. WEBSITE SERVICES
+
+### LANDING PAGE
+
+Starting at:
+
+**$1,500**
+
+For:
+
+* Campaigns
+* Events
+* Product launches
+* Lead generation
+* Single services
+
+---
+
+### BUSINESS WEBSITE
+
+Starting at:
+
+**$3,500**
+
+Example:
+
+* Home
+* About
+* Services
+* Portfolio
+* Blog
+* Contact
+* Basic SEO
+* Mobile optimization
+
+---
+
+### ECOMMERCE WEBSITE
+
+Starting at:
+
+**$6,500+**
+
+Include:
+
+* Product catalog
+* Checkout
+* Payment integration
+* Customer accounts
+* Order management
+* Inventory
+* Email notifications
+* Mobile optimization
+
+---
+
+### WEBSITE CARE PLAN
+
+Monthly:
+
+**$250+**
+
+Include:
+
+* Updates
+* Security monitoring
+* Content updates
+* Performance monitoring
+* Maintenance
+
+---
+
+# 21. PORTFOLIO / WORK SYSTEM
+
+This must be one of the strongest sections of the website.
+
+Do NOT simply create:
+
+```text
+Portfolio
+[card]
+[card]
+[card]
+```
+
+Instead create an interactive **CREATIVE ARCHIVE**.
+
+Example:
+
+```text
+/WORK
+
+FILTER BY:
+
+ALL
+BRANDING
+GRAPHIC
+SOCIAL
+WEB
+EVENTS
+CAMPAIGNS
+```
+
+Projects should behave like files.
+
+Example:
+
+```text
+/PROJECT_024
+
+OASIS MUSIC FESTIVAL
+
+EVENT BRANDING
+SOCIAL CAMPAIGN
+DIGITAL DESIGN
+
+[OPEN PROJECT]
+```
+
+---
+
+# 22. CASE STUDIES
+
+Every major project should have a case study.
+
+Structure:
+
+### 01 — THE CHALLENGE
+
+What problem did the client have?
+
+### 02 — THE STRATEGY
+
+What did Social Kon10 decide?
+
+### 03 — THE CREATIVE
+
+Show design work.
+
+### 04 — THE EXECUTION
+
+Show social/web/campaign applications.
+
+### 05 — THE RESULT
+
+Show measurable results when available.
+
+Examples:
+
+* Reach
+* Engagement
+* Leads
+* Traffic
+* Sales
+* Audience growth
+* Conversion rate
+
+Never fabricate metrics.
+
+---
+
+# 23. PORTFOLIO INTERACTION
+
+Use:
+
+* Horizontal image reveals
+* Cursor previews
+* Magnetic project links
+* Image zoom
+* Smooth page transitions
+* Scroll-triggered typography
+* Project color themes
+* Before/after sliders
+* Full-screen project previews
+
+Animations must remain purposeful.
+
+Respect:
+
+```text
+prefers-reduced-motion
+```
+
+---
+
+# 24. ECOMMERCE SYSTEM
+
+The website must function as a real service-commerce platform.
+
+Users should be able to:
+
+1. Browse service
+2. Select package
+3. Review deliverables
+4. Add optional upgrades
+5. Enter project details
+6. Upload files
+7. Select timeline
+8. Review price
+9. Pay deposit or full amount
+10. Receive confirmation
+11. Receive onboarding instructions
+12. Track project status
+
+---
+
+# 25. SERVICE PRODUCT MODEL
+
+Each service must be treated as a product.
+
+Product fields:
+
+```text
+Product ID
+Service Category
+Product Name
+Description
+Starting Price
+Fixed Price
+Price Type
+Currency
+Billing Type
+Deposit Required
+Deposit Percentage
+Estimated Timeline
+Revision Count
+Deliverables
+Optional Add-ons
+Rush Fee
+Tax
+Status
+Featured
+SEO Title
+SEO Description
+Images
+Portfolio Examples
+```
+
+---
+
+# 26. CUSTOM QUOTE SYSTEM
+
+Not everything should have a fixed price.
+
+Provide:
+
+### FIXED PRICE
+
+For clearly defined packages.
+
+### STARTING PRICE
+
+For projects that require customization.
+
+### REQUEST QUOTE
+
+For complex projects.
+
+### BOOK CONSULTATION
+
+For strategy-heavy projects.
+
+---
+
+# 27. SERVICE CONFIGURATOR
+
+Example:
+
+## BUILD YOUR PACKAGE
+
+**What do you need?**
+
+[Branding]
+
+**What type?**
+
+[Logo]
+[Brand Identity]
+[Event Branding]
+[Campaign]
+
+**Add-ons**
+
+☐ Business cards
+
+☐ Social media kit
+
+☐ Brand guide
+
+☐ Website
+
+☐ Additional revisions
+
+☐ Rush production
+
+Live price updates.
+
+Then:
+
+**CONTINUE TO CHECKOUT**
+
+---
+
+# 28. PAYMENT SYSTEM
+
+Payment architecture must be provider-agnostic.
+
+Primary requirements:
+
+* Credit/debit cards
+* PayPal
+* Payment links
+* Deposit payments
+* Full payments
+* Recurring subscriptions
+* Invoices
+* Refund handling
+* Payment confirmation
+* Failed-payment handling
+* Webhooks
+* Transaction records
+
+Because Social Kon10 operates from Jamaica, payment provider availability must be verified before production.
+
+PayPal currently advertises Jamaica business checkout supporting PayPal and major cards. Stripe's current global availability list does not list Jamaica as a directly supported country, so Stripe should not be assumed as the primary processor for a Jamaican merchant.
+
+Implement a payment abstraction layer:
+
+```text
+PaymentProvider
+    |
+    +--- PayPal
+    |
+    +--- Stripe
+    |
+    +--- Future Caribbean provider
+```
+
+This allows another provider to be added without rebuilding checkout.
+
+---
+
+# 29. DEPOSIT PAYMENT
+
+For project services, support:
+
+### 50% DEPOSIT
+
+Example:
+
+Service:
+
+$1,500
+
+Deposit:
+
+$750
+
+Remaining:
+
+$750
+
+After payment:
+
+```text
+ORDER CONFIRMED
+
+Deposit received.
+
+Next step:
+Complete your project questionnaire.
+```
+
+Admin should be able to configure:
+
+* 25%
+* 30%
+* 40%
+* 50%
+* 100%
+* Custom
+
+per service.
+
+---
+
+# 30. CHECKOUT EXPERIENCE
+
+Do not create a long traditional ecommerce checkout.
+
+Use a streamlined multi-step checkout.
+
+### STEP 1
+
+Project summary
+
+### STEP 2
+
+Client information
+
+### STEP 3
+
+Project requirements
+
+### STEP 4
+
+File uploads
+
+### STEP 5
+
+Payment
+
+### STEP 6
+
+Confirmation
+
+Progress indicator:
+
+```text
+PROJECT
+→ DETAILS
+→ FILES
+→ PAYMENT
+→ DONE
+```
+
+---
+
+# 31. PROJECT QUESTIONNAIRE
+
+After purchasing:
+
+Collect:
+
+* Name
+* Company
+* Email
+* Phone
+* Website
+* Industry
+* Target audience
+* Project goals
+* Preferred style
+* Competitors
+* Existing brand assets
+* Required deadline
+* Additional information
+
+Allow:
+
+* PDF upload
+* JPG
+* PNG
+* SVG
+* DOCX
+* ZIP
+* MP4
+* MP3 where applicable
+
+Use secure upload storage.
+
+---
+
+# 32. CLIENT PORTAL
+
+Create a client portal.
+
+Clients can view:
+
+### DASHBOARD
+
+```text
+PROJECT
+STATUS
+NEXT STEP
+PAYMENT
+FILES
+MESSAGES
+REVIEWS
+```
+
+Project statuses:
+
+```text
+ORDER RECEIVED
+DISCOVERY
+CONCEPT
+CLIENT REVIEW
+REVISION
+FINAL APPROVAL
+DELIVERED
+COMPLETED
+```
+
+---
+
+# 33. ADMIN DASHBOARD
+
+Admin must manage:
+
+### PRODUCTS
+
+* Create service
+* Edit service
+* Pricing
+* Add-ons
+* Packages
+* Discounts
+* Availability
+
+### ORDERS
+
+* View orders
+* Payment status
+* Deposit status
+* Remaining balance
+* Project status
+
+### CLIENTS
+
+* Client information
+* Projects
+* Payments
+* Files
+* Communication
+
+### PORTFOLIO
+
+* Add project
+* Edit project
+* Case study
+* Images
+* Videos
+* Tags
+* Results
+
+### CONTENT
+
+* Homepage
+* Services
+* Blog
+* Testimonials
+* FAQs
+
+### ANALYTICS
+
+* Sales
+* Leads
+* Conversion
+* Popular services
+* Average order value
+* Traffic
+* Campaign performance
+
+---
+
+# 34. PROMOTIONAL SYSTEM
+
+Admin should be able to create:
+
+* Promo codes
+* Percentage discounts
+* Fixed discounts
+* Package discounts
+* Seasonal offers
+* First-time customer offers
+* Bundle pricing
+
+Examples:
+
+```text
+WELCOME10
+EVENT2026
+BRAND20
+```
+
+---
+
+# 35. BUNDLE SYSTEM
+
+Encourage larger purchases.
+
+Example:
+
+### BRAND LAUNCH BUNDLE
+
+Brand Identity
++
+Website
++
+Social Media Setup
+
+Instead of:
+
+$X + $X + $X
+
+Show:
+
+**BUNDLE PRICE**
+
+**SAVE $XXX**
+
+---
+
+# 36. CROSS-SELLING
+
+After purchasing branding:
+
+> "Your brand is ready. Want us to launch it?"
+
+Recommend:
+
+**Social Media Launch Package**
+
+After purchasing website:
+
+> "Your website is live. Now let's drive traffic."
+
+Recommend:
+
+**Social Media Marketing**
+
+After purchasing social:
+
+> "Turn your audience into customers."
+
+Recommend:
+
+**Website / Landing Page**
+
+This creates an ecosystem instead of isolated services.
+
+---
+
+# 37. HOMEPAGE STRUCTURE
+
+Recommended sequence:
+
+### 01
+
+Hero
+
+### 02
+
+Interactive Department Selector
+
+### 03
+
+Featured Work
+
+### 04
+
+What We Do
+
+Graphic / Brand
+
+Social / Marketing
+
+Web / Digital
+
+### 05
+
+Why Social Kon10
+
+### 06
+
+Featured Case Study
+
+### 07
+
+Service Packages
+
+### 08
+
+Process
+
+### 09
+
+Testimonials
+
+### 10
+
+Creative Archive
+
+### 11
+
+FAQ
+
+### 12
+
+CTA
+
+### 13
+
+Footer
+
+---
+
+# 38. "WHY SOCIAL KON10?"
+
+Position around:
+
+### STRATEGY
+
+We don't create blindly.
+
+### CREATIVE
+
+We create work people notice.
+
+### CONSISTENCY
+
+Your brand should look right everywhere.
+
+### PERFORMANCE
+
+Creative should support business goals.
+
+### PARTNERSHIP
+
+We work with clients rather than simply handing over files.
+
+---
+
+# 39. PROCESS SECTION
+
+Use a visual timeline.
+
+```text
+01
+DISCOVER
+
+Understand your business.
+
+↓
+
+02
+STRATEGIZE
+
+Define the direction.
+
+↓
+
+03
+CREATE
+
+Build the creative.
+
+↓
+
+04
+REFINE
+
+Review and improve.
+
+↓
+
+05
+LAUNCH
+
+Put it into the world.
+
+↓
+
+06
+GROW
+
+Measure and evolve.
+```
+
+This is inspired by the stronger strategy/process positioning found in the research but must use Social Kon10's own language.
+
+---
+
+# 40. TESTIMONIAL SYSTEM
+
+Testimonials should include:
+
+* Client name
+* Company
+* Service
+* Testimonial
+* Optional photo
+* Optional project
+* Optional result
+
+Display testimonials contextually.
+
+For example:
+
+Branding page:
+
+> Branding testimonials.
+
+Social page:
+
+> Social media testimonials.
+
+Website page:
+
+> Website testimonials.
+
+---
+
+# 41. TRUST SYSTEM
+
+Include:
+
+* Client logos
+* Number of projects
+* Years active
+* Industries served
+* Testimonials
+* Portfolio
+* Certifications if applicable
+* Social proof
+
+Only display verified numbers.
+
+Never invent statistics.
+
+---
+
+# 42. LEAD GENERATION
+
+Create multiple conversion paths.
+
+### PRIMARY
+
+**START A PROJECT**
+
+### SECONDARY
+
+**GET A QUOTE**
+
+### STRATEGY
+
+**BOOK A CONSULTATION**
+
+### LOW FRICTION
+
+**ASK A QUESTION**
+
+### HIGH VALUE
+
+**BUILD MY BRAND**
+
+---
+
+# 43. SMART PROJECT FORM
+
+Do not immediately ask for 20 questions.
+
+Start:
+
+## WHAT ARE YOU LOOKING FOR?
+
+[Branding]
+
+[Social Media]
+
+[Website]
+
+[Something else]
+
+Then progressively reveal relevant questions.
+
+This creates a shorter perceived form.
+
+---
+
+# 44. AI-ASSISTED SERVICE MATCHER
+
+Add an optional interactive tool:
+
+## WHAT DOES YOUR BUSINESS NEED?
+
+Ask 4–6 questions.
+
+Example:
+
+1. Do you already have a logo?
+2. Do you actively post online?
+3. Do you have a website?
+4. What's your biggest challenge?
+5. What's your primary goal?
+
+Output:
+
+### YOUR RECOMMENDED STARTING POINT
+
+**Brand Refresh + Social Growth**
+
+Recommended:
+
+* Brand audit
+* Social media package
+* Landing page
+
+CTA:
+
+**BUILD MY PACKAGE**
+
+This should be a recommendation engine, not a chatbot gimmick.
+
+---
+
+# 45. NAVIGATION
+
+Desktop:
+
+```text
+SOCIAL KON10
+
+SERVICES
+WORK
+PACKAGES
+ABOUT
+INSIGHTS
+
+[START A PROJECT]
+```
+
+Services opens:
+
+```text
+01 GRAPHIC + BRAND
+02 SOCIAL + MARKETING
+03 WEB + DIGITAL
+```
+
+Persistent mini navigation can allow quick switching.
+
+---
+
+# 46. MOBILE NAVIGATION
+
+Mobile should become:
+
+```text
+☰
+
+SERVICES
+  Graphic + Brand
+  Social + Marketing
+  Web + Digital
+
+WORK
+
+PACKAGES
+
+ABOUT
+
+CONTACT
+
+START PROJECT
+```
+
+The service selector should remain easily accessible.
+
+---
+
+# 47. ANIMATION SYSTEM
+
+Animation must be intentional.
+
+Use:
+
+### Page transitions
+
+Fast fade + directional movement.
+
+### Section reveals
+
+Opacity + translate.
+
+### Typography
+
+Clip/reveal animation.
+
+### Portfolio
+
+Image scale + text movement.
+
+### Hover
+
+Subtle image movement.
+
+### Buttons
+
+Small directional transformation.
+
+### Cursor
+
+Optional desktop-only magnetic interaction.
+
+### Navigation
+
+Smooth service transitions.
+
+Avoid:
+
+* Bounce
+* Excessive spring
+* Slow cinematic transitions everywhere
+* Constant parallax
+* Animating every element
+
+---
+
+# 48. MOTION PERFORMANCE
+
+Animations must use GPU-friendly properties where possible:
+
+```text
+transform
+opacity
+```
+
+Avoid unnecessary:
+
+```text
+top
+left
+width
+height
+```
+
+Respect:
+
+```text
+prefers-reduced-motion
+```
+
+Mobile should use less motion than desktop.
+
+---
+
+# 49. TYPOGRAPHY
+
+Do not default to Inter.
+
+Create a distinctive typography system.
+
+Recommended:
+
+### Display
+
+Modern grotesk / editorial display typeface.
+
+### Body
+
+Highly readable neutral sans.
+
+### Accent
+
+Optional condensed or mono font for metadata.
+
+Example:
+
+```text
+DISPLAY
+Large / Bold / Tight
+
+BODY
+Readable / Medium
+
+META
+Small / Uppercase / Letter spaced
+```
+
+Typography should become a major visual element.
+
+---
+
+# 50. COLOR ARCHITECTURE
+
+Create global design tokens.
+
+```text
+--color-bg
+--color-text
+--color-muted
+--color-border
+--color-primary
+--color-secondary
+--color-accent
+```
+
+Then department tokens:
+
+```text
+BRAND_PRIMARY
+BRAND_ACCENT
+
+SOCIAL_PRIMARY
+SOCIAL_ACCENT
+
+WEB_PRIMARY
+WEB_ACCENT
+```
+
+This allows the entire interface to transform without breaking consistency.
+
+---
+
+# 51. DARK MODE
+
+Support:
+
+* Light
+* Dark
+* System
+
+Dark mode should not simply invert colors.
+
+Create a properly designed dark palette.
+
+---
+
+# 52. RESPONSIVE DESIGN
+
+Mobile-first.
+
+Breakpoints should be based on content rather than arbitrary device names.
+
+Must support:
+
+* Small mobile
+* Large mobile
+* Tablet
+* Laptop
+* Desktop
+* Large desktop
+
+Google recommends responsive design and emphasizes that mobile content, metadata and structured data need to remain equivalent to desktop content for mobile-first indexing.
+
+---
+
+# 53. ACCESSIBILITY
+
+Target:
+
+**WCAG 2.2 AA**
+
+Requirements:
+
+* Keyboard navigation
+* Visible focus states
+* Accessible menus
+* Semantic HTML
+* Proper headings
+* Alt text
+* Form labels
+* Error messages
+* Sufficient contrast
+* Reduced motion
+* Screen-reader support
+* Accessible checkout
+
+WCAG 2.2 provides the current W3C accessibility recommendations covering users with visual, auditory, mobility, cognitive and other disabilities.
+
+---
+
+# 54. SEO
+
+Implement technical SEO from day one.
+
+Every service should have its own indexable page.
+
+Recommended URLs:
+
+```text
+/
+/graphic-design-branding
+/social-media-marketing
+/website-design-development
+/work
+/packages
+/about
+/contact
+/insights
+```
+
+Individual projects:
+
+```text
+/work/project-name
+```
+
+Individual services:
+
+```text
+/services/logo-design
+/services/brand-identity
+/services/social-media-management
+/services/paid-social
+/services/website-design
+/services/ecommerce
+```
+
+---
+
+# 55. STRUCTURED DATA
+
+Implement:
+
+### Organization
+
+Social Kon10 Marketing
+
+### LocalBusiness
+
+Where appropriate.
+
+### Service
+
+For service pages.
+
+### Product / Offer
+
+For purchasable packages.
+
+### BreadcrumbList
+
+For navigation.
+
+### Article
+
+For blog/insights.
+
+### FAQ
+
+Where appropriate and compliant.
+
+Google currently supports structured-data experiences including Organization, LocalBusiness, Product, Event, Article and others.
+
+For purchasable packages, implement appropriate Product/Offer data where eligible.
+
+---
+
+# 56. SEO CONTENT STRATEGY
+
+Create original content around:
+
+### Branding
+
+* Logo design Jamaica
+* Brand identity Jamaica
+* Branding agency Jamaica
+* Graphic design Jamaica
+* Event branding Jamaica
+
+### Social
+
+* Social media management Jamaica
+* Social media marketing Jamaica
+* Instagram marketing Jamaica
+* Social media advertising Jamaica
+* Content creation Jamaica
+
+### Web
+
+* Website design Jamaica
+* Website development Jamaica
+* Ecommerce website Jamaica
+* Business website Jamaica
+* Landing page design Jamaica
+
+Do not keyword stuff.
+
+Create useful, people-first content.
+
+Google's Search Essentials emphasizes helpful, reliable, people-first content and descriptive titles, headings, links and image text.
+
+---
+
+# 57. INSIGHTS / BLOG
+
+Create:
+
+```text
+INSIGHTS
+
+Branding
+Social Media
+Marketing
+Web Design
+Business Growth
+Events
+```
+
+Potential articles:
+
+* Why Your Business Needs More Than a Logo
+* How Much Does Branding Cost in Jamaica?
+* Social Media Management vs Doing It Yourself
+* What Makes a Website Actually Convert?
+* How to Build a Brand Sponsors Want to Work With
+* How Businesses Should Prepare for Social Media Campaigns
+* 10 Branding Mistakes Small Businesses Make
+
+---
+
+# 58. PERFORMANCE
+
+Target excellent Core Web Vitals.
+
+Requirements:
+
+* Optimized images
+* AVIF/WebP
+* Responsive images
+* Lazy loading below the fold
+* Preload only critical assets
+* Minimize JavaScript
+* Code splitting
+* Route-based loading
+* Avoid layout shifts
+* Efficient animation
+* CDN
+* Browser caching
+
+Do not sacrifice performance for animation.
+
+---
+
+# 59. IMAGE SYSTEM
+
+Portfolio images should support:
+
+```text
+thumbnail
+medium
+large
+mobile
+```
+
+Generate optimized derivatives automatically.
+
+Use:
+
+```text
+alt
+width
+height
+loading
+decoding
+```
+
+correctly.
+
+Avoid huge original uploads being delivered to mobile.
+
+---
+
+# 60. ANALYTICS
+
+Install:
+
+* Google Analytics
+* Google Search Console
+* Conversion tracking
+* Meta Pixel where appropriate
+* Google Ads conversion tracking if used
+* Ecommerce events
+
+Track:
+
+```text
+page_view
+service_view
+package_view
+add_to_cart
+checkout_start
+payment_start
+purchase
+quote_request
+consultation_request
+file_upload
+contact_submit
+```
+
+---
+
+# 61. CONVERSION FUNNEL
+
+Measure:
+
+```text
+VISITOR
+ ↓
+SERVICE VIEW
+ ↓
+PACKAGE VIEW
+ ↓
+CONFIGURE
+ ↓
+CHECKOUT
+ ↓
+PAYMENT
+ ↓
+PROJECT ONBOARDING
+```
+
+Admin dashboard should show where users abandon.
+
+---
+
+# 62. SECURITY
+
+Implement:
+
+* HTTPS
+* Secure cookies
+* CSRF protection
+* Rate limiting
+* Input validation
+* Server-side validation
+* Secure file uploads
+* File type validation
+* File size limits
+* Malware scanning where appropriate
+* Access-controlled client files
+* Role-based admin permissions
+* Payment webhook verification
+* Secrets stored server-side
+* No payment credentials in frontend code
+
+Never store raw card data.
+
+Use the payment provider's secure checkout/tokenization.
+
+---
+
+# 63. DATABASE MODEL
+
+Core entities:
+
+```text
+Users
+Clients
+Admins
+Services
+Packages
+AddOns
+Orders
+OrderItems
+Payments
+Invoices
+Projects
+ProjectMilestones
+ProjectFiles
+Messages
+PortfolioProjects
+Testimonials
+Coupons
+Subscriptions
+Consultations
+Leads
+BlogPosts
+AnalyticsEvents
+```
+
+---
+
+# 64. ROLE SYSTEM
+
+### ADMIN
+
+Full access.
+
+### PROJECT MANAGER
+
+Projects + clients.
+
+### DESIGNER
+
+Assigned projects + files.
+
+### SOCIAL MANAGER
+
+Social projects.
+
+### WEB DEVELOPER
+
+Website projects.
+
+### CLIENT
+
+Own projects only.
+
+---
+
+# 65. EMAIL AUTOMATION
+
+Automated emails:
+
+### Purchase
+
+"Your Social Kon10 project has been received."
+
+### Payment
+
+"Payment received."
+
+### Deposit
+
+"Your project deposit has been received."
+
+### Questionnaire
+
+"Your project questionnaire is ready."
+
+### File upload
+
+"Your files have been received."
+
+### Review required
+
+"Your project is ready for review."
+
+### Revision
+
+"Revision round available."
+
+### Final approval
+
+"Your project is ready for final approval."
+
+### Delivery
+
+"Your final files are ready."
+
+### Payment reminder
+
+"Your remaining project balance is due."
+
+---
+
+# 66. CLIENT COMMUNICATION
+
+Instead of relying entirely on email:
+
+Create project messaging.
+
+Example:
+
+```text
+PROJECT #SK-1048
+
+Social Kon10
+CLIENT
+
+Messages
+
+[Message]
+
+[Attach File]
+
+[Send]
+```
+
+Keep communications tied to the project.
+
+---
+
+# 67. PORTFOLIO CMS
+
+Admin should be able to create:
+
+```text
+Project Name
+Client
+Category
+Industry
+Services
+Challenge
+Strategy
+Creative
+Execution
+Results
+Images
+Videos
+Testimonial
+Featured
+```
+
+Portfolio categories:
+
+```text
+Branding
+Graphic Design
+Events
+Social Media
+Marketing
+Web Design
+Ecommerce
+Campaigns
+```
+
+---
+
+# 68. PACKAGE CMS
+
+Do not hard-code package information.
+
+Admin must be able to:
+
+* Add package
+* Remove package
+* Change price
+* Change currency
+* Add deliverable
+* Remove deliverable
+* Add add-on
+* Change deposit
+* Change revision count
+* Mark popular
+* Enable/disable
+* Schedule promotional price
+
+This allows Social Kon10 to change pricing without developers.
+
+---
+
+# 69. MULTI-CURRENCY
+
+Support:
+
+```text
+USD
+JMD
+BMD
+CAD
+```
+
+Primary display:
+
+**USD**
+
+Allow admin to enable/disable currencies.
+
+Do not automatically use an exchange rate for final payment unless explicitly configured.
+
+Store:
+
+```text
+currency
+exchange_rate
+price
+```
+
+at transaction time.
+
+---
+
+# 70. QUOTE SYSTEM
+
+For custom projects:
+
+```text
+CUSTOM PROJECT REQUEST
+
+Service
+Budget
+Timeline
+Goals
+Description
+Attachments
+Preferred start date
+```
+
+Admin can convert a quote into:
+
+**PAYABLE ORDER**
+
+Client receives:
+
+> Your custom proposal is ready.
+
+Then:
+
+**REVIEW PROPOSAL**
+
+→
+
+**ACCEPT**
+
+→
+
+**PAY DEPOSIT**
+
+---
+
+# 71. CONSULTATION BOOKING
+
+Integrate a calendar system.
+
+Client chooses:
+
+* Service
+* Date
+* Time
+* Name
+* Email
+* Project type
+
+Confirmation:
+
+```text
+CONSULTATION CONFIRMED
+```
+
+Allow admin to configure:
+
+* Duration
+* Availability
+* Buffer time
+* Meeting platform
+* Booking limits
+* Cancellation policy
+
+---
+
+# 72. FAQ SYSTEM
+
+Dynamic FAQ per service.
+
+Example:
+
+Branding:
+
+**How many logo concepts do I receive?**
+
+Social:
+
+**Do you create the content?**
+
+Website:
+
+**Do you provide hosting?**
+
+Checkout:
+
+**Do I have to pay everything upfront?**
+
+---
+
+# 73. FINAL CTA
+
+The website should repeatedly guide users toward:
+
+## "LET'S BUILD SOMETHING THAT MATTERS."
+
+Buttons:
+
+**START A PROJECT**
+
+**GET A QUOTE**
+
+**BOOK A CONSULTATION**
+
+---
+
+# 74. FOOTER
+
+Include:
+
+**SOCIAL KON10 MARKETING**
+
+Graphic Design
+Branding
+Social Media
+Marketing
+Web Design
+Website Development
+
+Work
+Packages
+About
+Insights
+Contact
+
+Phone:
+
+**1876-255-4848**
+
+Email:
+
+**[socialkon10@gmail.com](mailto:socialkon10@gmail.com)**
+
+Location:
+
+**Kingston, Jamaica**
+
+Social links should be editable through admin.
+
+---
+
+# 75. CONTENT STRATEGY FROM COMPETITOR RESEARCH
+
+The research indicates several valuable positioning ideas.
+
+LYFE Marketing focuses heavily on:
+
+* Target audience
+* Competitor research
+* Strategy
+* Content calendars
+* Content creation
+* Community management
+* Paid advertising
+* Analytics
+* Conversion
+* Reporting
+
+These ideas should influence Social Kon10's service architecture, but all copy should be original.
+
+4D Creative strongly connects:
+
+* Brand strategy
+* Identity
+* Websites
+* Discovery
+* Planning
+* Delivery
+* Refinement
+* Brand consistency
+
+It also provides structured onboarding for different project types.
+
+Social Kon10 should combine these concepts into:
+
+> **STRATEGY + CREATIVE + DIGITAL + MARKETING**
+
+rather than presenting four unrelated services.
+
+---
+
+# 76. UNIQUE SOCIAL KON10 DIFFERENTIATOR
+
+Create a visual concept called:
+
+## THE SOCIAL KON10 CREATIVE SYSTEM
+
+```text
+BRAND
+   ↓
+CONTENT
+   ↓
+AUDIENCE
+   ↓
+DIGITAL
+   ↓
+CONVERSION
+   ↓
+GROWTH
+```
+
+Explain:
+
+**We don't believe branding, social media and websites should operate separately.**
+
+Your:
+
+**Brand**
+
+creates recognition.
+
+Your:
+
+**Content**
+
+creates attention.
+
+Your:
+
+**Website**
+
+creates conversion.
+
+Your:
+
+**Marketing**
+
+creates growth.
+
+This becomes the strategic heart of the website.
+
+---
+
+# 77. MODERN "COMMAND CENTER" EXPERIENCE
+
+Optional premium feature.
+
+Add a small floating launcher:
+
+```text
+⌘
+```
+
+When clicked:
+
+```text
+WHAT ARE YOU LOOKING FOR?
+
+/ BRAND MY BUSINESS
+/ GROW MY SOCIALS
+/ BUILD MY WEBSITE
+/ VIEW OUR WORK
+/ GET A QUOTE
+```
+
+This gives the site a distinctive agency-tech feel.
+
+Do not make it necessary for navigation.
+
+---
+
+# 78. DESIGN SYSTEM REQUIREMENTS
+
+Create reusable components:
+
+```text
+Navbar
+Footer
+Button
+MagneticButton
+ServiceSwitcher
+ServiceHero
+ServiceCard
+PackageCard
+PortfolioCard
+CaseStudy
+Testimonial
+PricingTable
+Configurator
+FAQ
+CTA
+Modal
+Drawer
+Toast
+Form
+FileUploader
+Checkout
+PaymentStatus
+ClientDashboard
+```
+
+Every component must support:
+
+* Light mode
+* Dark mode
+* Responsive layout
+* Accessibility
+* Animation states
+
+---
+
+# 79. DESIGN QA
+
+Before considering the website finished, perform:
+
+### TASTE AUDIT
+
+Does it look generic?
+
+### IMPECCABLE AUDIT
+
+Check:
+
+* Layout
+* Typography
+* Color
+* Motion
+* Responsive behavior
+* UX writing
+* Accessibility
+
+### EMIL MOTION REVIEW
+
+Check:
+
+* Easing
+* Duration
+* Interaction feedback
+* Motion hierarchy
+* Hover behavior
+* Reduced motion
+
+---
+
+# 80. FUNCTIONAL QA
+
+Test:
+
+### Navigation
+
+Every link works.
+
+### Services
+
+Every service page works.
+
+### Portfolio
+
+Every project opens.
+
+### Cart
+
+Items can be added and removed.
+
+### Checkout
+
+Complete checkout works.
+
+### Payments
+
+Successful payment works.
+
+Failed payment works.
+
+Cancelled payment works.
+
+Webhook updates order.
+
+### File upload
+
+Valid file works.
+
+Invalid file rejected.
+
+Large file rejected.
+
+### Forms
+
+Validation works.
+
+Error states work.
+
+Success states work.
+
+### Client portal
+
+Client cannot access another client's project.
+
+### Admin
+
+Role permissions work.
+
+---
+
+# 81. RESPONSIVE QA
+
+Test:
+
+* 320px
+* 375px
+* 390px
+* 430px
+* 768px
+* 1024px
+* 1280px
+* 1440px
+* 1920px+
+
+Check:
+
+* No horizontal scrolling
+* No overlapping text
+* No clipped buttons
+* No broken animations
+* No inaccessible menus
+* No oversized images
+* No layout shifts
+
+---
+
+# 82. PERFORMANCE ACCEPTANCE CRITERIA
+
+Target:
+
+### LCP
+
+≤ 2.5s
+
+### INP
+
+≤ 200ms
+
+### CLS
+
+≤ 0.1
+
+Where realistically achievable.
+
+Also monitor:
+
+* Total JS
+* Image weight
+* Font loading
+* Third-party scripts
+* Animation cost
+
+---
+
+# 83. SEO ACCEPTANCE CRITERIA
+
+Before launch:
+
+* Sitemap generated
+* Robots configured
+* Canonical URLs
+* Open Graph
+* Twitter/X metadata
+* Proper titles
+* Meta descriptions
+* H1 hierarchy
+* Image alt text
+* Schema validation
+* Search Console configured
+* Analytics configured
+* 404 page
+* Redirect system
+
+---
+
+# 84. ECOMMERCE ACCEPTANCE CRITERIA
+
+Client must be able to:
+
+```text
+Browse
+→ Select
+→ Configure
+→ Checkout
+→ Pay
+→ Receive confirmation
+→ Complete onboarding
+→ Track project
+```
+
+No manual intervention should be required for a standard fixed-price package purchase except project production.
+
+---
+
+# 85. ADMIN ACCEPTANCE CRITERIA
+
+Admin must be able to change:
+
+* Prices
+* Packages
+* Services
+* Add-ons
+* Promotions
+* Portfolio
+* Testimonials
+* FAQs
+* Homepage sections
+* Social links
+* Contact details
+* Payment settings
+* Deposit percentages
+
+without changing code.
+
+---
+
+# 86. LAUNCH PHASES
+
+## PHASE 1 — FOUNDATION
+
+* Install skills
+* Configure framework
+* Design system
+* Navigation
+* CMS architecture
+* Database
+
+## PHASE 2 — CORE WEBSITE
+
+* Homepage
+* Services
+* Portfolio
+* About
+* Contact
+
+## PHASE 3 — ECOMMERCE
+
+* Packages
+* Cart
+* Configurator
+* Checkout
+* Payment
+* Orders
+
+## PHASE 4 — CLIENT SYSTEM
+
+* Client portal
+* Onboarding
+* File upload
+* Project tracking
+* Messaging
+
+## PHASE 5 — ADMIN
+
+* CMS
+* Products
+* Orders
+* Clients
+* Portfolio
+* Analytics
+
+## PHASE 6 — POLISH
+
+* Animation
+* Performance
+* SEO
+* Accessibility
+* Responsive QA
+
+## PHASE 7 — LAUNCH
+
+* Production payment testing
+* Analytics
+* Search Console
+* Security review
+* Backup
+* Monitoring
+
+---
+
+# 87. IMPORTANT DEVELOPMENT RULE
+
+Do NOT build the entire site as one huge page.
+
+Use reusable architecture.
+
+Recommended:
+
+```text
+/app
+  /services
+    /graphic-brand
+    /social-marketing
+    /web-digital
+  /work
+  /packages
+  /checkout
+  /client
+  /admin
+  /about
+  /contact
+  /insights
+```
+
+---
+
+# 88. FINAL CREATIVE DIRECTION
+
+The finished site should feel like:
+
+**A creative agency + digital studio + ecommerce platform.**
+
+It should NOT feel like:
+
+**A freelancer portfolio.**
+
+The user should immediately understand:
+
+> Social Kon10 can build my brand.
+
+Then:
+
+> Social Kon10 can market my brand.
+
+Then:
+
+> Social Kon10 can build my digital presence.
+
+And finally:
+
+> I can actually buy these services directly from the website.
+
+---
+
+# 89. FINAL PRIMARY MESSAGE
+
+Use this as the central positioning direction:
+
+## SOCIAL KON10 MARKETING
+
+### DESIGN THAT CONNECTS.
+
+### MARKETING THAT MOVES.
+
+### DIGITAL EXPERIENCES THAT GROW.
+
+**Branding. Social Media. Websites.**
+
+One creative partner for businesses ready to look better, connect better and grow.
+
+**[ START A PROJECT ]**
+
+**[ EXPLORE OUR WORK ]**
+
+---
+
+# 90. DEFINITION OF DONE
+
+The project is complete only when:
+
+* [ ] Three requested design skills are installed
+* [ ] Three skills are used according to the orchestration rules
+* [ ] Website has three distinct creative departments
+* [ ] Service switching works
+* [ ] Portfolio works
+* [ ] Case studies work
+* [ ] Packages are editable
+* [ ] Ecommerce works
+* [ ] Deposits work
+* [ ] Payment provider abstraction exists
+* [ ] Client onboarding works
+* [ ] File upload works
+* [ ] Client portal works
+* [ ] Admin portal works
+* [ ] Quote system works
+* [ ] Consultation booking works
+* [ ] Promotional codes work
+* [ ] Cross-selling works
+* [ ] Analytics works
+* [ ] SEO works
+* [ ] Structured data works
+* [ ] WCAG 2.2 AA target is met
+* [ ] Mobile experience is excellent
+* [ ] Desktop experience is excellent
+* [ ] Reduced-motion mode works
+* [ ] Performance is optimized
+* [ ] Security review completed
+* [ ] Payment test transactions completed
+* [ ] Failed-payment scenarios tested
+* [ ] Portfolio content is editable
+* [ ] Testimonials are editable
+* [ ] FAQs are editable
+* [ ] Contact information is editable
+* [ ] Impeccable audit completed
+* [ ] Taste pre-flight completed
+* [ ] Animation review completed
+* [ ] Final cross-browser QA completed
+
+---
+
+# SUCCESS METRIC
+
+The website should not simply generate traffic.
+
+It should move visitors through:
+
+**DISCOVER → TRUST → EXPLORE → CONFIGURE → PURCHASE → ONBOARD → PROJECT → REPEAT**
+
+The ultimate goal is to turn Social Kon10's website into a **24/7 sales and project-intake system**, while simultaneously functioning as the agency's strongest portfolio and brand statement.

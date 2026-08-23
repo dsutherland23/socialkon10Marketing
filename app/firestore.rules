@@ -1,0 +1,101 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────
+// Social Kon10 — Firestore security rules
+// Clients read only their own orders. Admins (email allowlist)
+// manage everything. Deploy: firebase deploy --only firestore:rules
+// ─────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email.lower() in ['socialkon10@gmail.com'];
+    }
+
+    // orders: create by anyone checking out (uid null or self),
+    // read own / admin, status updates admin-only
+    match /orders/{orderId} {
+      allow create: if true
+        && request.resource.data.email is string
+        && request.resource.data.items is list
+        && (request.resource.data.uid == null
+            || (signedIn() && request.resource.data.uid == request.auth.uid));
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      // clients may only claim their own order (set uid to themselves)
+      allow update: if isAdmin()
+        || (signedIn()
+            && resource.data.uid == null
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid']));
+      allow delete: if isAdmin();
+
+      // project messaging (PRD §66): order owner + admin only
+      match /messages/{messageId} {
+        allow read: if isAdmin()
+          || (signedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid);
+        allow create: if signedIn()
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 2000
+          && (
+            (request.resource.data.from == 'studio' && isAdmin())
+            || (request.resource.data.from == 'client'
+                && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid)
+          );
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // leads: anyone can submit, only admin reads/updates
+    match /leads/{leadId} {
+      allow create: if true
+        && request.resource.data.email is string
+        && request.resource.data.message is string;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // package CMS overrides: public read, admin write
+    match /serviceOverrides/{slug} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // testimonials + faqs: public read, admin write
+    match /testimonials/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /faqs/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // portfolio CMS + promo codes: public read, admin write
+    match /portfolio/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /promos/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // admin-created custom services: public read, admin write
+    match /services/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // site settings (contact + social links): public read, admin write
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

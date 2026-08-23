@@ -1,0 +1,12 @@
+{
+  "name": "Social Kon10 Marketing",
+  "short_name": "Social Kon10",
+  "description": "Creative growth agency in Kingston, Jamaica — branding, social media and websites.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fafaf7",
+  "theme_color": "#0c0c0f",
+  "icons": [
+    { "src": "assets/sk-mark.png", "sizes": "any", "type": "image/png", "purpose": "any" }
+  ]
+}
