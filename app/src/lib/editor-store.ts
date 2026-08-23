@@ -37,10 +37,8 @@ export async function findDesignFor(email: string, templateSlug: string, uid?: s
 export async function createDesign(d: Omit<CustomerDesign, "id" | "createdAt" | "updatedAt" | "version">): Promise<CustomerDesign> {
   const now = new Date().toISOString();
   const rec = { ...d, version: 1, createdAt: now, updatedAt: now };
-  await addManaged("customerDesigns", rec as unknown as Record<string, unknown>);
-  // recover the assigned id
-  const all = await listDesigns(d.email);
-  return all.find((x) => x.templateSlug === d.templateSlug && x.createdAt === now) ?? { id: `local-${Date.now()}`, ...rec };
+  const assignedId = await addManaged("customerDesigns", rec as unknown as Record<string, unknown>);
+  return { id: assignedId, ...rec };
 }
 
 export async function saveDesign(id: string, patch: Partial<Pick<CustomerDesign, "canvasJson" | "thumbnail" | "title">>): Promise<void> {

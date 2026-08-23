@@ -3805,7 +3805,12 @@ export default function Editor() {
       problems.forEach((p) => toast.error(p));
       return;
     }
-    await addManaged("templates", { slug: tpl.slug, canvasJson: json, status: "published" });
+    const templateId = (tpl as unknown as { id?: string }).id;
+    if (templateId) {
+      await updateManaged("templates", templateId, { canvasJson: json, status: "published" });
+    } else {
+      await addManaged("templates", { ...tpl, canvasJson: json, status: "published" });
+    }
     track("template_published", { template: tpl.slug });
     toast.success("Template validated + published — live in the marketplace.");
     navigate("/admin");

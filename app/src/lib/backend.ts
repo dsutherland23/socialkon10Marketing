@@ -394,18 +394,20 @@ async function sanitizePayload(kind: ManagedKind, data: Record<string, unknown>)
   return clone;
 }
 
-export async function addManaged(kind: ManagedKind, data: Record<string, unknown>): Promise<void> {
+export async function addManaged(kind: ManagedKind, data: Record<string, unknown>): Promise<string> {
   if (!firebaseReady || !db) {
     const key = `sk-demo-${kind}`;
+    const id = `${kind}-${Date.now()}`;
     const xs = (await idbGet<ManagedItem[]>(key)) || [];
-    xs.unshift({ id: `${kind}-${Date.now()}`, ...data });
+    xs.unshift({ id, ...data });
     await idbSet(key, xs);
     notifyContentChanged();
-    return;
+    return id;
   }
   const safeData = await sanitizePayload(kind, data);
-  await addDoc(collection(db, kind), safeData);
+  const docRef = await addDoc(collection(db, kind), safeData);
   notifyContentChanged();
+  return docRef.id;
 }
 
 export async function removeManaged(kind: ManagedKind, id: string): Promise<void> {
