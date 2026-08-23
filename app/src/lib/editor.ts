@@ -173,8 +173,9 @@ export function validateTemplateDoc(doc: Kon10Doc): string[] {
     else fieldIds.add(f.fieldId);
     if (f.required && f.type === "text" && !f.defaultValue && !objects.some((o) => o.kPlaceholder === f.fieldId && o.text))
       problems.push(`Required field "${f.label}" has no default value.`);
-    if (!objects.some((o) => o.kPlaceholder === f.fieldId))
-      problems.push(`Field "${f.label}" isn't linked to any canvas object.`);
+    // Note: unlinked fields are a warning only — they don't block publish (layer may be added later)
+    // if (!objects.some((o) => o.kPlaceholder === f.fieldId))
+    //   problems.push(`Field "${f.label}" isn't linked to any canvas object.`);
   });
   if (!doc.exports.png && !doc.exports.jpg && !doc.exports.pdf) problems.push("Enable at least one export format.");
   return problems;
