@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { CONTACT, formatMoney, waLink } from "../lib/data";
@@ -6,7 +6,18 @@ import { useDepartment } from "../lib/dept";
 import { useSEO, track } from "../lib/seo";
 import { Reveal } from "../lib/motion";
 import { useAuth } from "../lib/auth";
-import { claimOrders, listMyOrders, recordPayment, ORDER_STATUSES, type OrderRecord } from "../lib/backend";
+import {
+  claimOrders,
+  listMyOrders,
+  recordPayment,
+  setOrderStatus,
+  getFileUrl,
+  attachFiles,
+  postMessage,
+  ORDER_STATUSES,
+  type OrderRecord,
+  type OrderStatus,
+} from "../lib/backend";
 import { activeProviders } from "../lib/payments";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
@@ -101,21 +112,7 @@ function SignIn() {
   );
 }
 
-function StatusPipeline({ status }: { status: OrderRecord["status"] }) {
-  const idx = ORDER_STATUSES.indexOf(status);
-  return (
-    <ol className="flex flex-wrap gap-x-2 gap-y-1.5 font-meta text-[8.5px]" aria-label={`Project status: ${status}`}>
-      {ORDER_STATUSES.map((s, i) => (
-        <li key={s} className="flex items-center gap-2">
-          <span style={{ color: i < idx ? "var(--muted)" : i === idx ? "var(--dept)" : "var(--muted)", opacity: i > idx ? 0.45 : 1, fontWeight: i === idx ? 700 : 400 }}>
-            {s}
-          </span>
-          {i < ORDER_STATUSES.length - 1 && <span style={{ opacity: 0.3 }} aria-hidden>→</span>}
-        </li>
-      ))}
-    </ol>
-  );
-}
+
 
 function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void }) {
   const [paying, setPaying] = useState(false);
@@ -436,6 +433,552 @@ function MyDesigns() {
   );
 }
 
+/* ------------------------------------------------------------------
+   MODERN 2026 CLIENT PROJECT COCKPIT (Split-View Workspace)
+   • Master-Detail interactive layout
+   • Real-time milestone tracker & progress bar
+   • 1-Click "Approve Deliverables" & "Request Revision" flow
+   • Deliverables Vault with direct file download links
+   • Integrated Official PDF Receipt generator
+------------------------------------------------------------------- */
+
+function DeliverableFileItem({ file }: { file: { name: string; size: number; path?: string } }) {
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const ext = file.name.split(".").pop()?.toUpperCase() || "FILE";
+
+  const handleDownload = async () => {
+    if (downloadUrl) {
+      window.open(downloadUrl, "_blank");
+      return;
+    }
+    setLoading(true);
+    try {
+      const url = file.path ? await getFileUrl(file.path) : "#";
+      if (url && url !== "#") {
+        setDownloadUrl(url);
+        window.open(url, "_blank");
+      } else {
+        toast.info(`Preparing "${file.name}" for download…`);
+      }
+    } catch {
+      toast.error("Failed to load file download URL.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="flex items-center justify-between p-3.5 border border-[var(--line)] bg-[var(--bg)] rounded-lg hover:border-[var(--dept)] transition-colors">
+      <div className="flex items-center gap-3 truncate">
+        <span className="text-xl">📁</span>
+        <div className="truncate">
+          <p className="font-display text-xs font-bold uppercase truncate">{file.name}</p>
+          <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
+            {ext} · {file.size ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Ready to download"}
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={handleDownload}
+        disabled={loading}
+        className="font-meta text-[9px] px-3 py-1.5 rounded border border-[var(--dept)] dept-accent hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors shrink-0"
+      >
+        {loading ? "Loading…" : "⬇ Download"}
+      </button>
+    </div>
+  );
+}
+
+function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onReload: () => void }) {
+  const { user } = useAuth();
+  const [selectedId, setSelectedId] = useState<string>(orders[0]?.id ?? "");
+  const [filter, setFilter] = useState<"all" | "active" | "review" | "completed">("all");
+  const [search, setSearch] = useState("");
+  const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
+  const [receiptOrder, setReceiptOrder] = useState<OrderRecord | null>(null);
+  const [revisionPrompt, setRevisionPrompt] = useState(false);
+  const [revisionText, setRevisionText] = useState("");
+  const [busyAction, setBusyAction] = useState(false);
+  const [uploadingVault, setUploadingVault] = useState(false);
+  const vaultInputRef = useRef<HTMLInputElement>(null);
+
+  // Keep selectedId valid
+  useEffect(() => {
+    if (orders.length > 0 && (!selectedId || !orders.some((o) => o.id === selectedId))) {
+      setSelectedId(orders[0].id);
+    }
+  }, [orders, selectedId]);
+
+  const activeOrders = orders.filter((o) => !["DELIVERED", "COMPLETED"].includes(o.status));
+  const reviewOrders = orders.filter((o) => ["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status));
+  const completedOrders = orders.filter((o) => ["DELIVERED", "COMPLETED"].includes(o.status));
+
+  const filteredOrders = orders.filter((o) => {
+    if (filter === "active" && ["DELIVERED", "COMPLETED"].includes(o.status)) return false;
+    if (filter === "review" && !["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status)) return false;
+    if (filter === "completed" && !["DELIVERED", "COMPLETED"].includes(o.status)) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const matchId = o.id.toLowerCase().includes(q);
+      const matchItem = o.items.some((i) => i.name.toLowerCase().includes(q));
+      return matchId || matchItem;
+    }
+    return true;
+  });
+
+  const current = orders.find((o) => o.id === selectedId) ?? filteredOrders[0] ?? orders[0];
+
+  if (!current) {
+    return (
+      <div className="border border-[var(--line)] p-12 text-center" style={{ background: "var(--panel)" }}>
+        <p className="font-display text-xl font-bold uppercase">No matching projects</p>
+        <p className="text-sm text-[var(--muted)] mt-2">Try clearing your search or filter.</p>
+        <button onClick={() => { setFilter("all"); setSearch(""); }} className="btn btn-ghost mt-4">Reset Filters</button>
+      </div>
+    );
+  }
+
+  const stepIndex = ORDER_STATUSES.indexOf(current.status);
+  const progressPct = Math.round(((stepIndex + 1) / ORDER_STATUSES.length) * 100);
+
+  const getStatusColor = (status: OrderRecord["status"]) => {
+    if (["DELIVERED", "COMPLETED"].includes(status)) return "bg-emerald-500/10 text-emerald-500 border-emerald-500/30";
+    if (["CLIENT REVIEW", "FINAL APPROVAL"].includes(status)) return "bg-amber-500/10 text-amber-500 border-amber-500/30";
+    if (["CONCEPT", "REVISION"].includes(status)) return "bg-purple-500/10 text-purple-500 border-purple-500/30";
+    return "bg-cyan-500/10 text-cyan-500 border-cyan-500/30";
+  };
+
+  const approveDeliverable = async () => {
+    if (!window.confirm("Approve this deliverable and proceed to final release?")) return;
+    setBusyAction(true);
+    try {
+      const nextStatus: OrderStatus = current.status === "CLIENT REVIEW" ? "FINAL APPROVAL" : "COMPLETED";
+      await setOrderStatus(current.id, nextStatus);
+      await postMessage(current.id, "client", `✅ Deliverable approved by client. Ready for ${nextStatus.toLowerCase()}.`, user?.email ?? "Client");
+      toast.success("Deliverable approved! Studio notified.");
+      onReload();
+    } catch {
+      toast.error("Failed to approve. Please try again.");
+    }
+    setBusyAction(false);
+  };
+
+  const submitRevision = async () => {
+    if (!revisionText.trim()) return;
+    setBusyAction(true);
+    try {
+      await setOrderStatus(current.id, "REVISION");
+      await postMessage(current.id, "client", `🔄 Revision requested:\n\n${revisionText.trim()}`, user?.email ?? "Client");
+      toast.success("Revision request submitted to your designer.");
+      setRevisionPrompt(false);
+      setRevisionText("");
+      onReload();
+    } catch {
+      toast.error("Failed to submit revision.");
+    }
+    setBusyAction(false);
+  };
+
+  const handleVaultUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setUploadingVault(true);
+    try {
+      const files = Array.from(e.target.files);
+      await attachFiles(current.id, files);
+      toast.success(`${files.length} file(s) added to project vault.`);
+      onReload();
+    } catch {
+      toast.error("Failed to upload files.");
+    }
+    setUploadingVault(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Search & Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter projects">
+          <button
+            onClick={() => setFilter("all")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "all" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            All ({orders.length})
+          </button>
+          <button
+            onClick={() => setFilter("active")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "active" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Active ({activeOrders.length})
+          </button>
+          <button
+            onClick={() => setFilter("review")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "review" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Action Needed ({reviewOrders.length})
+          </button>
+          <button
+            onClick={() => setFilter("completed")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "completed" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Delivered ({completedOrders.length})
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search projects by name or ID…"
+            className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-60"
+          />
+          <Link to="/start" className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] shrink-0">
+            + New Project
+          </Link>
+        </div>
+      </div>
+
+      {/* Split-View Workspace */}
+      <div className="grid lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT COLUMN: Master Project List */}
+        <div className="lg:col-span-4 flex flex-col gap-2.5 max-h-[750px] overflow-y-auto pr-1">
+          {filteredOrders.map((o) => {
+            const isSelected = o.id === current.id;
+            const sIdx = ORDER_STATUSES.indexOf(o.status);
+            const pct = Math.round(((sIdx + 1) / ORDER_STATUSES.length) * 100);
+            return (
+              <div
+                key={o.id}
+                onClick={() => setSelectedId(o.id)}
+                className={`p-4 border text-left cursor-pointer transition-all duration-150 rounded-lg ${
+                  isSelected
+                    ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-sm"
+                    : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="font-meta text-[9px] text-[var(--muted)]">
+                    #ORD-{o.id.slice(0, 7).toUpperCase()}
+                  </span>
+                  <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded-full border ${getStatusColor(o.status)}`}>
+                    {o.status}
+                  </span>
+                </div>
+
+                <h4 className="font-display text-sm font-bold uppercase line-clamp-1 leading-snug">
+                  {o.items.map((i) => i.name).join(" · ")}
+                </h4>
+
+                <div className="mt-3 flex items-center justify-between text-[11px] font-meta text-[var(--muted)]">
+                  <span>Step {sIdx + 1}/8 · {pct}%</span>
+                  <span className="font-semibold text-[var(--ink)]">
+                    {o.balanceDue > 0 ? (
+                      <span className="text-amber-600">Balance {formatMoney(o.balanceDue)}</span>
+                    ) : (
+                      <span className="dept-accent">Paid in Full</span>
+                    )}
+                  </span>
+                </div>
+
+                {/* Micro progress line */}
+                <div className="w-full bg-[var(--line)] h-1 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="h-full transition-all duration-300"
+                    style={{
+                      width: `${pct}%`,
+                      background: o.status === "COMPLETED" ? "rgb(16 185 129)" : "var(--dept)",
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* RIGHT COLUMN: Interactive Studio Cockpit */}
+        <div className="lg:col-span-8 border border-[var(--line-strong)] bg-[var(--panel)] rounded-xl overflow-hidden shadow-sm">
+          {/* Cockpit Header */}
+          <div className="p-6 border-b border-[var(--line)] bg-[var(--bg)] flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="idx">/project-cockpit</span>
+                <span className="font-meta text-[10px] text-[var(--muted)]">· #ORD-{current.id.slice(0, 8).toUpperCase()}</span>
+              </div>
+              <h2 className="font-display text-xl font-bold uppercase">
+                {current.items.map((i) => i.name).join(" · ")}
+              </h2>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                Ordered on {current.createdAt ? new Date(current.createdAt).toLocaleDateString(undefined, { dateStyle: "long" }) : "Recent"}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setReceiptOrder(current)}
+                className="btn btn-ghost !py-2 !px-3 font-meta text-[10px] flex items-center gap-1.5"
+              >
+                <span>🧾</span> Receipt / PDF
+              </button>
+              {current.balanceDue > 0 && (
+                <button
+                  onClick={() => setCockpitTab("overview")}
+                  className="btn btn-dept !py-2 !px-3 font-meta text-[10px]"
+                >
+                  Pay Balance ({formatMoney(current.balanceDue)}) →
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Visual Milestone Progress Tracker */}
+          <div className="px-6 py-4 border-b border-[var(--line)] bg-[var(--dept-soft)]/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-meta text-[10px] uppercase font-bold text-[var(--dept)] tracking-wider">
+                Phase {stepIndex + 1} of 8: {current.status}
+              </span>
+              <span className="font-meta text-[10px] text-[var(--muted)]">{progressPct}% Completed</span>
+            </div>
+
+            <div className="w-full bg-[var(--line)] h-2 rounded-full overflow-hidden">
+              <div
+                className="h-full transition-all duration-500"
+                style={{
+                  width: `${progressPct}%`,
+                  background: current.status === "COMPLETED" ? "rgb(16 185 129)" : "var(--dept)",
+                }}
+              />
+            </div>
+
+            <p className="font-meta text-[11px] text-[var(--muted)] mt-3 leading-relaxed">
+              {current.status === "ORDER RECEIVED" && "📋 Questionnaire & intake received — studio is scheduling kickoff and resource allocation."}
+              {current.status === "DISCOVERY" && "🔍 Creative discovery in progress — researching your market, audience, and visual positioning."}
+              {current.status === "CONCEPT" && "🎨 First concept drafts & wireframes are actively being developed in the studio."}
+              {current.status === "CLIENT REVIEW" && "👀 Your feedback is needed! Check the design proof below and approve or request revisions."}
+              {current.status === "REVISION" && "✏️ Designer is applying your requested adjustments. Updated proof will arrive shortly."}
+              {current.status === "FINAL APPROVAL" && "⭐ Design approved! Final master files, vectors, and export packages are being prepared."}
+              {current.status === "DELIVERED" && "🚀 Project delivered! All final assets are packaged and ready in your Deliverables Vault."}
+              {current.status === "COMPLETED" && "✅ Project successfully wrapped. Thank you for partnering with Social Kon10!"}
+            </p>
+          </div>
+
+          {/* Client Action Banner (When status is in Review) */}
+          {["CLIENT REVIEW", "FINAL APPROVAL"].includes(current.status) && (
+            <div className="p-4 bg-amber-500/10 border-b border-amber-500/30 flex flex-wrap items-center justify-between gap-3 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🔔</span>
+                <div>
+                  <p className="font-display text-xs font-bold uppercase text-amber-600">
+                    Deliverable Review Requested
+                  </p>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    Review designer concepts in the chat or files tab. Ready to proceed?
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={busyAction}
+                  onClick={() => setRevisionPrompt((p) => !p)}
+                  className="btn btn-ghost !py-1.5 !px-3 font-meta text-[10px]"
+                >
+                  🔄 Request Revision
+                </button>
+                <button
+                  disabled={busyAction}
+                  onClick={approveDeliverable}
+                  className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  ✅ Approve Deliverable
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Revision Prompt Box */}
+          {revisionPrompt && (
+            <div className="p-5 border-b border-[var(--line)] bg-[var(--bg)] animate-in slide-in-from-top-2">
+              <span className="font-meta text-[10px] text-amber-600 font-bold uppercase">Provide Revision Feedback</span>
+              <p className="text-xs text-[var(--muted)] mt-1">Specify changes, wording tweaks, or adjustments for your designer:</p>
+              <textarea
+                rows={3}
+                value={revisionText}
+                onChange={(e) => setRevisionText(e.target.value)}
+                placeholder="e.g. Please change the headline font to sans-serif and brighten the blue background…"
+                className="w-full mt-2 bg-transparent border border-[var(--line)] p-3 text-xs outline-none focus:border-[var(--dept)] rounded"
+              />
+              <div className="flex justify-end gap-2 mt-3">
+                <button onClick={() => setRevisionPrompt(false)} className="btn btn-ghost !py-1 !px-3 font-meta text-[10px]">Cancel</button>
+                <button disabled={busyAction || !revisionText.trim()} onClick={submitRevision} className="btn btn-dept !py-1 !px-3 font-meta text-[10px]">
+                  Submit Feedback →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Cockpit Sub-Tab Navigation */}
+          <div className="flex border-b border-[var(--line)] bg-[var(--bg)] px-4" role="tablist">
+            <button
+              onClick={() => setCockpitTab("overview")}
+              className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+                cockpitTab === "overview" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+            >
+              📌 Overview & Invoices
+            </button>
+            <button
+              onClick={() => setCockpitTab("chat")}
+              className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+                cockpitTab === "chat" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+            >
+              💬 Chat & Materials
+            </button>
+            <button
+              onClick={() => setCockpitTab("vault")}
+              className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+                cockpitTab === "vault" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+            >
+              📂 Deliverables Vault ({current.files.length})
+            </button>
+          </div>
+
+          {/* Cockpit Tab Content */}
+          <div className="p-6">
+            {/* SUB-TAB 1: Overview & Invoices */}
+            {cockpitTab === "overview" && (
+              <div className="flex flex-col gap-6">
+                {/* Deliverables Scope */}
+                <div>
+                  <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Scope of Work</h4>
+                  <div className="border border-[var(--line)] rounded-lg divide-y divide-[var(--line)] bg-[var(--bg)]">
+                    {current.items.map((it, idx) => (
+                      <div key={idx} className="p-3.5 flex items-center justify-between text-xs">
+                        <div>
+                          <p className="font-bold font-display uppercase">{it.name}</p>
+                          {it.tierLabel && <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">{it.tierLabel} Tier</p>}
+                          {it.addons.length > 0 && (
+                            <p className="font-meta text-[9px] dept-accent mt-0.5">
+                              Add-ons: {it.addons.map((a) => a.name).join(" · ")}
+                            </p>
+                          )}
+                        </div>
+                        <span className="font-display font-bold">{formatMoney(it.unitPrice)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Financial Summary & Balance Payment */}
+                <div>
+                  <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Invoice Breakdown</h4>
+                  <div className="border border-[var(--line)] p-4 rounded-lg bg-[var(--bg)] space-y-2 text-xs">
+                    <div className="flex justify-between text-[var(--muted)]">
+                      <span>Subtotal</span>
+                      <span>{formatMoney(current.subtotal)}</span>
+                    </div>
+                    {current.discount > 0 && (
+                      <div className="flex justify-between text-emerald-600">
+                        <span>Discount {current.promo ? `(${current.promo})` : ""}</span>
+                        <span>−{formatMoney(current.discount)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-bold text-sm pt-2 border-t border-[var(--line)]">
+                      <span>Total Engagement</span>
+                      <span>{formatMoney(current.total)}</span>
+                    </div>
+                    <div className="flex justify-between text-[var(--muted)] pt-1">
+                      <span>Amount Paid</span>
+                      <span className="text-emerald-600 font-bold">{formatMoney(current.amountPaid)}</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 border-t border-[var(--line)]">
+                      <div>
+                        <span className="font-bold">Remaining Balance</span>
+                        <p className="font-meta text-[9px] text-[var(--muted)]">Due upon final deliverable approval</p>
+                      </div>
+                      <span className="font-display text-base font-bold text-[var(--ink)]">
+                        {current.balanceDue > 0 ? formatMoney(current.balanceDue) : "PAID IN FULL"}
+                      </span>
+                    </div>
+
+                    <PayBalance order={current} onPaid={onReload} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB 2: Chat & Material Uploads */}
+            {cockpitTab === "chat" && (
+              <div>
+                <MessageThread orderId={current.id} from="client" author={user?.email ?? current.email} />
+              </div>
+            )}
+
+            {/* SUB-TAB 3: Deliverables Vault */}
+            {cockpitTab === "vault" && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider">
+                      Master Files &amp; Proofs
+                    </h4>
+                    <p className="text-xs text-[var(--muted)] mt-0.5">
+                      All approved design files, mockups, and client uploads for this project.
+                    </p>
+                  </div>
+                  <div>
+                    <input
+                      ref={vaultInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={handleVaultUpload}
+                    />
+                    <button
+                      onClick={() => vaultInputRef.current?.click()}
+                      disabled={uploadingVault}
+                      className="btn btn-ghost !py-1.5 !px-3 font-meta text-[10px]"
+                    >
+                      {uploadingVault ? "Uploading…" : "+ Upload File"}
+                    </button>
+                  </div>
+                </div>
+
+                {current.files.length === 0 ? (
+                  <div className="p-8 border border-dashed border-[var(--line)] text-center rounded-lg">
+                    <span className="text-3xl block mb-2">📂</span>
+                    <p className="font-display text-xs font-bold uppercase">No files attached yet</p>
+                    <p className="font-meta text-[10px] text-[var(--muted)] mt-1 max-w-xs mx-auto">
+                      Files shared by your designer or uploaded in chat will automatically appear in this vault.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {current.files.map((file, i) => (
+                      <DeliverableFileItem key={i} file={file} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Official PDF / Printable Receipt Modal */}
+      {receiptOrder && <ReceiptModal order={receiptOrder} onClose={() => setReceiptOrder(null)} />}
+    </div>
+  );
+}
+
 function Dashboard() {
   const { user, signOut, isAdmin } = useAuth();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
@@ -497,58 +1040,7 @@ function Dashboard() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-6">
-          {orders.map((o) => (
-            <Reveal key={o.id}>
-              <article className="border border-[var(--line-strong)]" style={{ background: "var(--panel)" }}>
-                <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 rule-b">
-                  <div>
-                    <span className="idx">/order-{o.id.slice(0, 8).toUpperCase()}</span>
-                    <h3 className="font-display text-lg font-bold uppercase mt-1">{o.items.map((i) => i.name).join(" · ")}</h3>
-                  </div>
-                  <span className="font-meta text-[9px] text-[var(--muted)]">{o.createdAt ? new Date(o.createdAt).toLocaleDateString() : ""}</span>
-                </div>
-                <div className="px-6 py-5">
-                  <StatusPipeline status={o.status} />
-                  <div className="grid sm:grid-cols-3 gap-6 mt-6 text-sm">
-                    <div>
-                      <span className="font-meta text-[9px] text-[var(--muted)] block mb-1.5">Payment</span>
-                      <p>Paid: <strong>{formatMoney(o.amountPaid)}</strong></p>
-                      {o.balanceDue > 0 && <p className="text-[var(--muted)]">Balance on approval: {formatMoney(o.balanceDue)}</p>}
-                      {o.balanceDue === 0 && <p className="dept-accent font-meta text-[10px] mt-1">PAID IN FULL</p>}
-                      <PayBalance order={o} onPaid={() => listMyOrders(user).then(setOrders)} />
-                    </div>
-                    <div>
-                      <span className="font-meta text-[9px] text-[var(--muted)] block mb-1.5">Files ({o.files.length})</span>
-                      {o.files.length === 0 ? <p className="text-[var(--muted)]">None uploaded yet</p> : (
-                        <ul className="flex flex-col gap-1">
-                          {o.files.map((f, i) => <li key={i} className="text-[13px] truncate">{f.name}</li>)}
-                        </ul>
-                      )}
-                    </div>
-                    <div>
-                      <span className="font-meta text-[9px] text-[var(--muted)] block mb-1.5">Next step</span>
-                      <p className="text-[13px]">
-                        {o.status === "ORDER RECEIVED" && "Complete your project questionnaire — we're scheduling kickoff."}
-                        {o.status === "DISCOVERY" && "We're researching your market and preparing direction."}
-                        {o.status === "CONCEPT" && "First concepts are in production."}
-                        {o.status === "CLIENT REVIEW" && "Your review is needed — check your email for the review link."}
-                        {o.status === "REVISION" && "Revisions are being applied."}
-                        {o.status === "FINAL APPROVAL" && "Approve the final files to release delivery."}
-                        {o.status === "DELIVERED" && "Your final files are ready in your delivery folder."}
-                        {o.status === "COMPLETED" && "Project complete — thank you. Ready for the next one?"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-6">
-                    <span className="font-meta text-[9px] text-[var(--muted)] block mb-1.5">Messages</span>
-                    <MessageThread orderId={o.id} from="client" author={user?.email ?? o.email} />
-                  </div>
-                </div>
-              </article>
-            </Reveal>
-          ))}
-        </div>
+        <ProjectsWorkspace orders={orders} onReload={() => listMyOrders(user).then(setOrders)} />
       ))}
 
       <p className="font-meta text-[10px] text-[var(--muted)] mt-10">
@@ -566,7 +1058,7 @@ export default function ClientPortal() {
   // Enhancement 4: complete passwordless magic-link sign-in when user lands here from email
   useEffect(() => {
     if (!firebaseReady) return;
-    completeMagicLink().then(async (err) => {
+    completeMagicLink().then(async (err: string | null) => {
       if (!err && firebaseReady) {
         // Give Firebase auth state a moment to update, then claim any guest orders
         setTimeout(async () => {
