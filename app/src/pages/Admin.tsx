@@ -10,7 +10,7 @@ import {
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
   getSettings, saveSettings, convertLeadToOrder, recordPayment,
-  uploadImage, getFileUrl,
+  uploadImage, getFileUrl, attachFiles, postMessage,
   type LeadRecord, type ManagedItem, type OrderRecord, type ServiceOverride, type SiteSettings,
 } from "../lib/backend";
 import { HOME_SECTIONS } from "../lib/content";
@@ -42,16 +42,34 @@ async function mutate(fn: () => Promise<unknown>, ok: string) {
   }
 }
 
-/* ================= ORDERS ================= */
+/* ================= ORDERS (Studio Operations Cockpit 2026) ================= */
+
+/** Two-step destructive confirm (2026: no blocking window.confirm). */
+function RemoveButton({ onRemove, onDone }: { onRemove: () => Promise<void>; onDone: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  if (!confirming) {
+    return <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors shrink-0" onClick={() => setConfirming(true)}>Remove</button>;
+  }
+  return (
+    <span className="flex gap-2 shrink-0">
+      <button className="font-meta text-[10px] text-red-600 font-bold" onClick={async () => { const ok = await mutate(onRemove, "Removed"); if (ok) onDone(); setConfirming(false); }}>Confirm remove</button>
+      <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => setConfirming(false)}>Cancel</button>
+    </span>
+  );
+}
 
 function RecordPayment({ order, onDone }: { order: OrderRecord; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(String(order.balanceDue));
   const [busy, setBusy] = useState(false);
-  if (order.balanceDue <= 0) return <span className="font-meta text-[9px] dept-accent">PAID IN FULL</span>;
-  if (!open) return <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => setOpen(true)}>Record payment →</button>;
+  if (order.balanceDue <= 0) return <span className="font-meta text-[9px] dept-accent font-bold">PAID IN FULL</span>;
+  if (!open) return (
+    <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors mt-2 block" onClick={() => setOpen(true)}>
+      + Record payment ({formatMoney(order.balanceDue)} due) →
+    </button>
+  );
   return (
-    <div className="flex items-center gap-2 mt-1">
+    <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-[var(--line)]">
       <input type="number" min="1" max={order.balanceDue} className={`${inputCls} !w-24 !py-1.5`} value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount received (USD)" />
       <button className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px]" disabled={busy || !Number(amount)}
         onClick={async () => {
@@ -67,101 +85,612 @@ function RecordPayment({ order, onDone }: { order: OrderRecord; onDone: () => vo
   );
 }
 
-function FileLink({ f }: { f: { name: string; path?: string } }) {
-  const [busy, setBusy] = useState(false);
-  if (!f.path) return <span className="text-[13px] truncate">{f.name}</span>;
+function AdminDeliverableItem({ file }: { file: { name: string; size: number; path?: string } }) {
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const ext = file.name.split(".").pop()?.toUpperCase() || "FILE";
+
+  const handleDownload = async () => {
+    if (downloadUrl) {
+      window.open(downloadUrl, "_blank");
+      return;
+    }
+    setLoading(true);
+    try {
+      const url = file.path ? await getFileUrl(file.path) : "#";
+      if (url && url !== "#") {
+        setDownloadUrl(url);
+        window.open(url, "_blank");
+      } else {
+        toast.info(`Preparing "${file.name}" for download…`);
+      }
+    } catch {
+      toast.error("Failed to load file download URL.");
+    }
+    setLoading(false);
+  };
+
   return (
-    <button className="text-[13px] truncate dept-accent text-left" disabled={busy}
-      onClick={async () => { setBusy(true); const url = await getFileUrl(f.path!); setBusy(false); window.open(url, "_blank", "noopener"); }}>
-      {busy ? "Opening…" : f.name} ↗
-    </button>
+    <div className="flex items-center justify-between p-3.5 border border-[var(--line)] bg-[var(--bg)] rounded-lg hover:border-[var(--dept)] transition-colors">
+      <div className="flex items-center gap-3 truncate">
+        <span className="text-xl">📁</span>
+        <div className="truncate">
+          <p className="font-display text-xs font-bold uppercase truncate">{file.name}</p>
+          <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
+            {ext} · {file.size ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Ready to download"}
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={handleDownload}
+        disabled={loading}
+        className="font-meta text-[9px] px-3 py-1.5 rounded border border-[var(--dept)] dept-accent hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors shrink-0"
+      >
+        {loading ? "Loading…" : "⬇ Download"}
+      </button>
+    </div>
   );
 }
 
 function Orders() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [openMsg, setOpenMsg] = useState<string | null>(null);
-  const [filter, setFilter] = useState<string>("ALL");
-  const reload = () => listAllOrders().then(setOrders);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "COMPLETED">("ALL");
+  const [search, setSearch] = useState("");
+  const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
+  const [uploadingVault, setUploadingVault] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; filename: string } | null>(null);
+  const [dragOverVault, setDragOverVault] = useState(false);
+  const vaultInputRef = useRef<HTMLInputElement>(null);
+
+  const reload = () => listAllOrders().then((data) => {
+    setOrders(data);
+    if (data.length > 0 && !selectedId) setSelectedId(data[0].id);
+  });
+
   useEffect(() => { reload(); }, []);
 
-  const visible = filter === "ALL" ? orders : orders.filter((o) => o.status === filter);
+  // Keep selectedId valid
+  useEffect(() => {
+    if (orders.length > 0 && (!selectedId || !orders.some((o) => o.id === selectedId))) {
+      setSelectedId(orders[0].id);
+    }
+  }, [orders, selectedId]);
+
+  const activeOrders = orders.filter((o) => !["DELIVERED", "COMPLETED"].includes(o.status));
+  const reviewOrders = orders.filter((o) => ["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status));
+  const completedOrders = orders.filter((o) => ["DELIVERED", "COMPLETED"].includes(o.status));
+
+  const filteredOrders = orders.filter((o) => {
+    if (filter === "ACTIVE" && ["DELIVERED", "COMPLETED"].includes(o.status)) return false;
+    if (filter === "REVIEW" && !["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status)) return false;
+    if (filter === "COMPLETED" && !["DELIVERED", "COMPLETED"].includes(o.status)) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const matchId = o.id.toLowerCase().includes(q);
+      const matchName = o.name.toLowerCase().includes(q);
+      const matchEmail = o.email.toLowerCase().includes(q);
+      const matchItem = o.items.some((i) => i.name.toLowerCase().includes(q));
+      return matchId || matchName || matchEmail || matchItem;
+    }
+    return true;
+  });
+
+  const current = orders.find((o) => o.id === selectedId) ?? filteredOrders[0] ?? orders[0];
+
+  const getStatusColor = (status: OrderRecord["status"]) => {
+    if (["DELIVERED", "COMPLETED"].includes(status)) return "bg-emerald-500/10 text-emerald-500 border-emerald-500/30";
+    if (["CLIENT REVIEW", "FINAL APPROVAL"].includes(status)) return "bg-amber-500/10 text-amber-500 border-amber-500/30";
+    if (["CONCEPT", "REVISION"].includes(status)) return "bg-purple-500/10 text-purple-500 border-purple-500/30";
+    return "bg-cyan-500/10 text-cyan-500 border-cyan-500/30";
+  };
+
+  const processVaultFiles = async (fileList: FileList | File[]) => {
+    if (!current) return;
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+    setUploadingVault(true);
+    setUploadProgress({ current: 1, total: files.length, filename: files[0].name });
+    try {
+      await attachFiles(current.id, files, (curr, tot, name) => {
+        setUploadProgress({ current: curr, total: tot, filename: name });
+      });
+      await postMessage(current.id, "studio", `📂 Studio added ${files.length} new deliverable file(s) to the project vault.`, "Social Kon10 Studio");
+      toast.success(`${files.length} deliverable(s) attached to order.`);
+      reload();
+    } catch (err) {
+      console.error("Vault upload failed:", err);
+      toast.error("Failed to upload files. Please try again.");
+    } finally {
+      setUploadingVault(false);
+      setUploadProgress(null);
+    }
+  };
+
+  const handleVaultUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      await processVaultFiles(e.target.files);
+      e.target.value = "";
+    }
+  };
+
+  const handleVaultDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverVault(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await processVaultFiles(e.dataTransfer.files);
+    }
+  };
+
+  const handleVaultDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragOverVault) setDragOverVault(true);
+  };
+
+  const handleVaultDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOverVault(false);
+  };
+
+  const advanceNextStatus = async () => {
+    if (!current) return;
+    const sIdx = ORDER_STATUSES.indexOf(current.status);
+    if (sIdx < ORDER_STATUSES.length - 1) {
+      const next = ORDER_STATUSES[sIdx + 1];
+      const ok = await mutate(() => setOrderStatus(current.id, next), `Status → ${next}`);
+      if (ok) {
+        await postMessage(current.id, "studio", `🚀 Project status updated to: ${next}`, "Social Kon10 Studio");
+        reload();
+      }
+    }
+  };
 
   return (
-    <div>
-      <div className="flex flex-wrap gap-2 mb-6" role="group" aria-label="Filter orders by status">
-        {["ALL", ...ORDER_STATUSES].map((s) => (
-          <button key={s} onClick={() => setFilter(s)} aria-pressed={filter === s}
-            className="font-meta text-[9px] px-3 py-1.5 border transition-colors"
-            style={filter === s ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
-            {s}{s === "ALL" ? ` (${orders.length})` : ` (${orders.filter((o) => o.status === s).length})`}
+    <div className="flex flex-col gap-6">
+      {/* Search & Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter orders">
+          <button
+            onClick={() => setFilter("ALL")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            All Orders ({orders.length})
           </button>
-        ))}
+          <button
+            onClick={() => setFilter("ACTIVE")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "ACTIVE" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Active ({activeOrders.length})
+          </button>
+          <button
+            onClick={() => setFilter("REVIEW")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "REVIEW" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Action / Review ({reviewOrders.length})
+          </button>
+          <button
+            onClick={() => setFilter("COMPLETED")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
+              filter === "COMPLETED" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Delivered ({completedOrders.length})
+          </button>
+        </div>
+
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by client, ID, email, or item…"
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-72"
+        />
       </div>
 
-      {visible.length === 0 && <p className="font-meta text-[11px] text-[var(--muted)]">No orders{filter !== "ALL" ? ` with status ${filter}` : " yet"}.</p>}
-      <div className="flex flex-col gap-4">
-        {visible.map((o) => (
-          <article key={o.id} className="border border-[var(--line)]" style={{ background: "var(--panel)" }}>
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 rule-b">
-              <div>
-                <span className="idx">/order-{o.id.slice(0, 8).toUpperCase()}</span>
-                <span className="font-meta text-[9px] text-[var(--muted)] ml-3">{o.createdAt ? new Date(o.createdAt).toLocaleString() : ""}</span>
-              </div>
-              <span className="flex items-center gap-4">
-              <RemoveButton onRemove={() => deleteOrder(o.id)} onDone={reload} />
-              <label className="font-meta text-[9px] flex items-center gap-2">
-                STATUS
-                <select
-                  value={o.status}
-                  onChange={async (e) => {
-                    const okDone = await mutate(() => setOrderStatus(o.id, e.target.value as OrderRecord["status"]), `Status → ${e.target.value}`);
-                    if (okDone) reload();
-                  }}
-                  className={`${inputCls} !w-auto !py-1.5 font-meta text-[10px]`}
+      {orders.length === 0 ? (
+        <div className="border border-[var(--line)] p-12 text-center" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-xl font-bold uppercase">No orders received yet</p>
+          <p className="text-sm text-[var(--muted)] mt-2">When clients purchase or accept proposals, they will appear here.</p>
+        </div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="border border-[var(--line)] p-12 text-center" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-xl font-bold uppercase">No matching orders</p>
+          <p className="text-sm text-[var(--muted)] mt-2">Try clearing your search or filter.</p>
+          <button onClick={() => { setFilter("ALL"); setSearch(""); }} className="btn btn-ghost mt-4">Reset Filters</button>
+        </div>
+      ) : (
+        /* Split-View Master-Detail Studio Cockpit */
+        <div className="grid lg:grid-cols-12 gap-6 items-start">
+          {/* LEFT COLUMN: Order Master List */}
+          <div className="lg:col-span-4 flex flex-col gap-2.5 max-h-[750px] overflow-y-auto pr-1">
+            {filteredOrders.map((o) => {
+              const isSelected = current && o.id === current.id;
+              const sIdx = ORDER_STATUSES.indexOf(o.status);
+              const pct = Math.round(((sIdx + 1) / ORDER_STATUSES.length) * 100);
+              return (
+                <div
+                  key={o.id}
+                  onClick={() => setSelectedId(o.id)}
+                  className={`p-4 border text-left cursor-pointer transition-all duration-150 rounded-lg ${
+                    isSelected
+                      ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-sm"
+                      : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                  }`}
                 >
-                  {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </label>
-              </span>
-            </div>
-            <div className="px-5 py-4 grid md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className={`${labelCls} mb-1`}>Client</span>
-                <p className="font-medium">{o.name}</p>
-                <p className="text-[var(--muted)] text-[13px]">{o.company || "—"} · {o.email}</p>
-              </div>
-              <div>
-                <span className={`${labelCls} mb-1`}>Items</span>
-                {o.items.map((i, k) => <p key={k} className="text-[13px]">{i.name}{i.rush ? " (rush)" : ""}</p>)}
-              </div>
-              <div>
-                <span className={`${labelCls} mb-1`}>Payment</span>
-                <p className="text-[13px]">Total {formatMoney(o.total)} · paid {formatMoney(o.amountPaid)}</p>
-                {o.balanceDue > 0 && <p className="text-[13px] dept-accent">Balance {formatMoney(o.balanceDue)}</p>}
-                {o.promo && <p className="font-meta text-[9px] text-[var(--muted)] mt-1">Promo {o.promo} (−{formatMoney(o.discount)})</p>}
-                <RecordPayment order={o} onDone={reload} />
-              </div>
-              <div>
-                <span className={`${labelCls} mb-1`}>Files / goals</span>
-                <div className="flex flex-col gap-1">
-                  {o.files.length === 0 && <p className="text-[13px] text-[var(--muted)]">No files</p>}
-                  {o.files.map((f, i) => <FileLink key={i} f={f} />)}
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="font-meta text-[9px] text-[var(--muted)]">
+                      #ORD-{o.id.slice(0, 7).toUpperCase()}
+                    </span>
+                    <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded-full border ${getStatusColor(o.status)}`}>
+                      {o.status}
+                    </span>
+                  </div>
+
+                  <h4 className="font-display text-sm font-bold uppercase line-clamp-1 leading-snug">
+                    {o.items.map((i) => i.name).join(" · ")}
+                  </h4>
+
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 truncate">
+                    {o.name} {o.company ? `(${o.company})` : ""} · {o.email}
+                  </p>
+
+                  <div className="mt-3 flex items-center justify-between text-[11px] font-meta text-[var(--muted)]">
+                    <span>Step {sIdx + 1}/8 · {pct}%</span>
+                    <span className="font-semibold text-[var(--ink)]">
+                      {o.balanceDue > 0 ? (
+                        <span className="text-amber-600">Balance {formatMoney(o.balanceDue)}</span>
+                      ) : (
+                        <span className="dept-accent">Paid {formatMoney(o.amountPaid)}</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Micro progress bar */}
+                  <div className="w-full bg-[var(--line)] h-1 rounded-full overflow-hidden mt-2">
+                    <div
+                      className="h-full transition-all duration-300"
+                      style={{
+                        width: `${pct}%`,
+                        background: o.status === "COMPLETED" ? "rgb(16 185 129)" : "var(--dept)",
+                      }}
+                    />
+                  </div>
                 </div>
-                {o.details?.goals && <p className="text-[12px] text-[var(--muted)] line-clamp-2 mt-1">{o.details.goals}</p>}
-                <button className="font-meta text-[10px] dept-accent mt-2" onClick={() => setOpenMsg(openMsg === o.id ? null : o.id)}>
-                  {openMsg === o.id ? "Close messages ↑" : "Messages ↓"}
+              );
+            })}
+          </div>
+
+          {/* RIGHT COLUMN: Interactive Studio Operations Cockpit */}
+          {current && (
+            <div className="lg:col-span-8 border border-[var(--line-strong)] bg-[var(--panel)] rounded-xl overflow-hidden shadow-sm">
+              {/* Cockpit Header */}
+              <div className="p-6 border-b border-[var(--line)] bg-[var(--bg)] flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="idx">/studio-operations</span>
+                    <span className="font-meta text-[10px] text-[var(--muted)]">· #ORD-{current.id.slice(0, 8).toUpperCase()}</span>
+                  </div>
+                  <h2 className="font-display text-xl font-bold uppercase">
+                    {current.items.map((i) => i.name).join(" · ")}
+                  </h2>
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                    Client: <strong className="text-[var(--ink)]">{current.name}</strong> ({current.email}) {current.company ? `· ${current.company}` : ""}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="admin-order-status-select" className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold">Status:</label>
+                    <select
+                      id="admin-order-status-select"
+                      aria-label="Order status"
+                      value={current.status}
+                      onChange={async (e) => {
+                        const next = e.target.value as OrderRecord["status"];
+                        const ok = await mutate(() => setOrderStatus(current.id, next), `Status → ${next}`);
+                        if (ok) {
+                          await postMessage(current.id, "studio", `🚀 Project status updated to: ${next}`, "Social Kon10 Studio");
+                          reload();
+                        }
+                      }}
+                      className={`${inputCls} !w-auto !py-1.5 font-meta text-[10px] font-bold rounded`}
+                    >
+                      {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <RemoveButton onRemove={() => deleteOrder(current.id)} onDone={reload} />
+                </div>
+              </div>
+
+              {/* Visual Milestone Progress Tracker & Step Advancer */}
+              <div className="px-6 py-4 border-b border-[var(--line)] bg-[var(--dept-soft)]/50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-meta text-[10px] uppercase font-bold text-[var(--dept)] tracking-wider">
+                    Phase {ORDER_STATUSES.indexOf(current.status) + 1} of 8: {current.status}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-meta text-[10px] text-[var(--muted)]">
+                      {Math.round(((ORDER_STATUSES.indexOf(current.status) + 1) / ORDER_STATUSES.length) * 100)}%
+                    </span>
+                    {ORDER_STATUSES.indexOf(current.status) < ORDER_STATUSES.length - 1 && (
+                      <button
+                        onClick={advanceNextStatus}
+                        className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px]"
+                      >
+                        Advance Phase →
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="w-full bg-[var(--line)] h-2 rounded-full overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-500"
+                    style={{
+                      width: `${Math.round(((ORDER_STATUSES.indexOf(current.status) + 1) / ORDER_STATUSES.length) * 100)}%`,
+                      background: current.status === "COMPLETED" ? "rgb(16 185 129)" : "var(--dept)",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Sub-Tabs Navigation */}
+              <div className="flex border-b border-[var(--line)] bg-[var(--bg)] px-4" role="tablist">
+                <button
+                  onClick={() => setCockpitTab("overview")}
+                  className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+                    cockpitTab === "overview" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  📌 Client, Scope &amp; Financials
+                </button>
+                <button
+                  onClick={() => setCockpitTab("chat")}
+                  className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+                    cockpitTab === "chat" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  💬 Client Chat Thread
+                </button>
+                <button
+                  onClick={() => setCockpitTab("vault")}
+                  className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+                    cockpitTab === "vault" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  📂 Deliverables Vault ({current.files.length})
                 </button>
               </div>
-            </div>
-            {openMsg === o.id && (
-              <div className="px-5 pb-5">
-                <MessageThread orderId={o.id} from="studio" author="Social Kon10" />
+
+              {/* Sub-Tab Content */}
+              <div className="p-6">
+                {/* TAB 1: Client, Scope & Financials */}
+                {cockpitTab === "overview" && (
+                  <div className="flex flex-col gap-6">
+                    {/* Client Intake & Contact */}
+                    <div>
+                      <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Client Details &amp; Brief</h4>
+                      <div className="border border-[var(--line)] p-4 rounded-lg bg-[var(--bg)] space-y-2 text-xs">
+                        <div className="grid sm:grid-cols-2 gap-3">
+                          <div>
+                            <span className="font-meta text-[9px] text-[var(--muted)] block">Contact Name</span>
+                            <p className="font-bold">{current.name}</p>
+                          </div>
+                          <div>
+                            <span className="font-meta text-[9px] text-[var(--muted)] block">Email</span>
+                            <a href={`mailto:${current.email}`} className="dept-accent hover:underline">{current.email}</a>
+                          </div>
+                        </div>
+                        {current.company && (
+                          <div>
+                            <span className="font-meta text-[9px] text-[var(--muted)] block">Company / Brand</span>
+                            <p>{current.company}</p>
+                          </div>
+                        )}
+                        {current.details?.goals && (
+                          <div className="pt-2 border-t border-[var(--line)]">
+                            <span className="font-meta text-[9px] text-[var(--muted)] block mb-1">Project Goals &amp; Intake Notes</span>
+                            <p className="p-3 bg-[var(--panel)] border border-[var(--line)] rounded text-[12px] whitespace-pre-wrap leading-relaxed">
+                              {current.details.goals}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Scope of Work */}
+                    <div>
+                      <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Scope of Work</h4>
+                      <div className="border border-[var(--line)] rounded-lg divide-y divide-[var(--line)] bg-[var(--bg)]">
+                        {current.items.map((it, idx) => (
+                          <div key={idx} className="p-3.5 flex items-center justify-between text-xs">
+                            <div>
+                              <p className="font-bold font-display uppercase">
+                                {it.name} {it.rush ? <span className="text-amber-500 font-meta text-[9px]">(Rush)</span> : ""}
+                              </p>
+                              {it.tierLabel && <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">{it.tierLabel} Tier</p>}
+                              {it.addons.length > 0 && (
+                                <p className="font-meta text-[9px] dept-accent mt-0.5">
+                                  Add-ons: {it.addons.map((a) => a.name).join(" · ")}
+                                </p>
+                              )}
+                            </div>
+                            <span className="font-display font-bold">{formatMoney(it.unitPrice)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Financial Summary & Payment Recording */}
+                    <div>
+                      <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Financials &amp; Balance</h4>
+                      <div className="border border-[var(--line)] p-4 rounded-lg bg-[var(--bg)] space-y-2 text-xs">
+                        <div className="flex justify-between text-[var(--muted)]">
+                          <span>Total Engagement</span>
+                          <span className="font-bold text-[var(--ink)]">{formatMoney(current.total)}</span>
+                        </div>
+                        {current.discount > 0 && (
+                          <div className="flex justify-between text-emerald-600">
+                            <span>Discount {current.promo ? `(${current.promo})` : ""}</span>
+                            <span>−{formatMoney(current.discount)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[var(--muted)]">
+                          <span>Amount Received</span>
+                          <span className="text-emerald-600 font-bold">{formatMoney(current.amountPaid)}</span>
+                        </div>
+                        <div className="flex justify-between items-center pt-2 border-t border-[var(--line)]">
+                          <div>
+                            <span className="font-bold">Remaining Balance</span>
+                            <p className="font-meta text-[9px] text-[var(--muted)]">Due upon deliverable completion</p>
+                          </div>
+                          <span className="font-display text-base font-bold text-[var(--ink)]">
+                            {current.balanceDue > 0 ? formatMoney(current.balanceDue) : "PAID IN FULL"}
+                          </span>
+                        </div>
+
+                        <RecordPayment order={current} onDone={reload} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: Studio / Client Chat */}
+                {cockpitTab === "chat" && (
+                  <div>
+                    <MessageThread orderId={current.id} from="studio" author="Social Kon10" />
+                  </div>
+                )}
+
+                {/* TAB 3: Deliverables Vault & Upload Engine */}
+                {cockpitTab === "vault" && (
+                  <div
+                    className="relative"
+                    onDragOver={handleVaultDragOver}
+                    onDragEnter={handleVaultDragOver}
+                    onDragLeave={handleVaultDragLeave}
+                    onDrop={handleVaultDrop}
+                  >
+                    {/* Full-Tab Drop Overlay */}
+                    {dragOverVault && (
+                      <div className="absolute inset-0 z-30 bg-[var(--dept)]/15 backdrop-blur-sm border-2 border-dashed border-[var(--dept)] rounded-xl flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-150">
+                        <span className="text-4xl mb-2 animate-bounce">📥</span>
+                        <p className="font-display text-sm font-bold uppercase text-[var(--dept)]">
+                          Drop deliverables to upload to order
+                        </p>
+                        <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                          Proofs, vector packages, exported PDFs, PSD/AI masters
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider">
+                          Deliverables &amp; Assets
+                        </h4>
+                        <p className="text-xs text-[var(--muted)] mt-0.5">
+                          Upload proofs or final master files for the client to review and download.
+                        </p>
+                      </div>
+                      <div>
+                        <input
+                          ref={vaultInputRef}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={handleVaultUpload}
+                        />
+                        <button
+                          onClick={() => vaultInputRef.current?.click()}
+                          disabled={uploadingVault}
+                          className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px]"
+                        >
+                          {uploadingVault ? "Uploading…" : "+ Upload Deliverable"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Animated Upload Spinner & Live Progress Card */}
+                    {uploadingVault && (
+                      <div className="mb-5 p-4 border border-[var(--dept)] bg-[var(--dept-soft)] rounded-xl flex items-center justify-between gap-4 animate-in fade-in">
+                        <div className="flex items-center gap-3">
+                          <svg
+                            className="animate-spin h-6 w-6 text-[var(--dept)] shrink-0"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                          </svg>
+                          <div>
+                            <p className="font-display text-xs font-bold uppercase text-[var(--dept)]">
+                              Uploading Deliverables… {uploadProgress ? `(${uploadProgress.current} of ${uploadProgress.total})` : ""}
+                            </p>
+                            <p className="font-meta text-[10px] text-[var(--muted)] truncate max-w-xs sm:max-w-md mt-0.5">
+                              {uploadProgress?.filename ? uploadProgress.filename : "Storing asset in Cloud Storage…"}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="font-meta text-[9px] px-2 py-1 bg-[var(--bg)] border border-[var(--dept)]/40 rounded dept-accent shrink-0 animate-pulse">
+                          Uploading
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Interactive Dropzone */}
+                    <div
+                      onClick={() => vaultInputRef.current?.click()}
+                      className={`p-5 mb-5 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${
+                        dragOverVault
+                          ? "border-[var(--dept)] bg-[var(--dept-soft)] shadow-inner"
+                          : "border-[var(--line)] bg-[var(--bg)] hover:border-[var(--dept)] hover:bg-[var(--dept-soft)]/30"
+                      }`}
+                    >
+                      <div className="flex flex-col items-center justify-center gap-1.5">
+                        <span className="text-2xl">☁️</span>
+                        <p className="font-display text-xs font-bold uppercase">
+                          {uploadingVault ? "Uploading to vault…" : "Drag & drop deliverable files here, or click to browse"}
+                        </p>
+                        <p className="font-meta text-[9px] text-[var(--muted)]">
+                          Supports PNG, JPG, WebP, SVG, PDF, AI, PSD, EPS, ZIP up to 25MB each
+                        </p>
+                      </div>
+                    </div>
+
+                    {current.files.length === 0 ? (
+                      <div className="p-8 border border-dashed border-[var(--line)] text-center rounded-lg">
+                        <span className="text-3xl block mb-2">📂</span>
+                        <p className="font-display text-xs font-bold uppercase">No files attached to this order</p>
+                        <p className="font-meta text-[10px] text-[var(--muted)] mt-1 max-w-xs mx-auto">
+                          Upload design proofs or final files above so the client can access them in their portal.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        {current.files.map((file, i) => (
+                          <AdminDeliverableItem key={i} file={file} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
-          </article>
-        ))}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -413,19 +942,6 @@ function Products() {
 
 /* ================= CONTENT MANAGER (edit-in-place + uploads) ================= */
 
-/** Two-step destructive confirm (2026: no blocking window.confirm). */
-function RemoveButton({ onRemove, onDone }: { onRemove: () => Promise<void>; onDone: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-  if (!confirming) {
-    return <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors shrink-0" onClick={() => setConfirming(true)}>Remove</button>;
-  }
-  return (
-    <span className="flex gap-2 shrink-0">
-      <button className="font-meta text-[10px] text-red-600" onClick={async () => { const ok = await mutate(onRemove, "Removed"); if (ok) onDone(); setConfirming(false); }}>Confirm remove</button>
-      <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => setConfirming(false)}>Keep</button>
-    </span>
-  );
-}
 
 interface Field { key: string; label: string; area?: boolean; optional?: boolean; hint?: string }
 
