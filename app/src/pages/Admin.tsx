@@ -3055,7 +3055,7 @@ function ClientDesignsManager() {
                 {/* Admin Actions */}
                 <div className="pt-3 border-t border-[var(--line)] flex flex-wrap items-center gap-1.5">
                   <a
-                    href={`/editor/${d.templateSlug || d.id}?client=${encodeURIComponent(d.email || "")}`}
+                    href={`/editor/${d.templateSlug || d.id}?designId=${d.id}&client=${encodeURIComponent(d.email || "")}`}
                     target="_blank"
                     rel="noreferrer"
                     className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm"

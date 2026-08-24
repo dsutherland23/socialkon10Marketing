@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ActiveSelection, Canvas, Circle, FabricImage, Gradient, Group, Line, Path, PencilBrush, Point, Polygon, Rect, Shadow,
@@ -36,7 +36,7 @@ import {
   type EditorObject, type Kon10Doc, type Kon10Field, type FadeMaskDirection,
 } from "../lib/editor";
 import {
-  clearDraft, createDesign, deleteVersion, findDesignFor, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion,
+  clearDraft, createDesign, deleteVersion, findDesignFor, getCustomerDesignById, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion,
   type CustomerDesign, type DesignVersion,
 } from "../lib/editor-store";
 import {
@@ -700,6 +700,9 @@ const SHORTCUTS: [string, string][] = [
 
 export default function Editor() {
   const { slug } = useParams();
+  const [searchParams] = useSearchParams();
+  const clientParam = searchParams.get("client") || searchParams.get("email");
+  const designIdParam = searchParams.get("designId");
   const navigate = useNavigate();
   const isAuthor = window.location.pathname.startsWith("/editor/author/");
   useSEO({ title: "KON10 Studio — Social Kon10 Marketing", description: "Create. Customize. Download." });
@@ -890,7 +893,7 @@ export default function Editor() {
   const retouchApi = useRef<{ down: (opt: { e: Event }) => boolean; move: (opt: { e: Event }) => void; up: () => void }>({ down: () => false, move: () => { }, up: () => { } });
 
   const masterDocRef = useRef<Kon10Doc | null>(null);
-  const email = user?.email ?? "demo@local";
+  const email = clientParam || user?.email || "demo@local";
   const canvasSize = useMemo(() => sizeOverride ?? (tpl ? parseCanvasSize(tpl.dimensions) : { width: 1080, height: 1350 }), [tpl, sizeOverride]);
 
   /* ---- Canva Parity Suite State ---- */
@@ -1445,31 +1448,59 @@ export default function Editor() {
           return resolvedMaster;
         }
 
-        let d = await findDesignFor(email, tpl.slug, user?.uid ?? null);
+        let d: CustomerDesign | null = null;
+
+        // 1. Direct design ID lookup (e.g. from Admin or Co-Design link)
+        if (designIdParam) {
+          d = await getCustomerDesignById(designIdParam);
+        }
+
+        // 2. Client email lookup
+        if (!d && clientParam && tpl) {
+          d = await findDesignFor(clientParam, tpl.slug, null);
+        }
+
+        // 3. Slug as customer design ID lookup
+        if (!d && slug) {
+          d = await getCustomerDesignById(slug);
+        }
+
+        // 4. Default user lookup
+        if (!d && tpl) {
+          d = await findDesignFor(email, tpl.slug, user?.uid ?? null);
+        }
+
+        // 5. Create new design if none exists
         if (!d) {
           d = await createDesign({
-            uid: user?.uid ?? null, email, templateSlug: tpl.slug,
-            title: tpl.name, canvasJson: JSON.stringify(resolvedMaster), thumbnail: "",
+            uid: user?.uid ?? null,
+            email,
+            templateSlug: tpl?.slug || slug || "custom",
+            title: tpl?.name || "Untitled Design",
+            canvasJson: JSON.stringify(resolvedMaster),
+            thumbnail: "",
           });
-          track("editor_opened", { template: tpl.slug, fresh: true });
+          track("editor_opened", { template: tpl?.slug || slug, fresh: true });
         } else {
-          track("editor_opened", { template: tpl.slug, fresh: false });
+          track("editor_opened", { template: d.templateSlug || tpl?.slug, fresh: false });
         }
         setDesign(d);
 
         try {
-          // 1. Check local draft (instant offline IndexedDB/localStorage)
-          const draft = (await readDraftAsync(d.id)) || readDraft(d.id);
-          if (draft?.canvasJson) {
-            try {
-              const draftParsed = JSON.parse(draft.canvasJson) as Kon10Doc;
-              if (draftParsed && draftParsed.fabric) {
-                return draftParsed;
-              }
-            } catch { /* ignore */ }
+          // Check local draft only if working on own design (not reviewing a specific remote design)
+          if (!designIdParam && !clientParam) {
+            const draft = (await readDraftAsync(d.id)) || readDraft(d.id);
+            if (draft?.canvasJson) {
+              try {
+                const draftParsed = JSON.parse(draft.canvasJson) as Kon10Doc;
+                if (draftParsed && draftParsed.fabric) {
+                  return draftParsed;
+                }
+              } catch { /* ignore */ }
+            }
           }
 
-          // 2. Load remote Firestore / Storage design
+          // Load remote Firestore / Storage design
           let rawJson = d.canvasJson;
           if (rawJson?.startsWith("storage://")) {
             try {
@@ -1481,26 +1512,18 @@ export default function Editor() {
             }
           }
 
-          const saved = JSON.parse(rawJson) as Kon10Doc;
-          const masterLayerCount = ((resolvedMaster?.fabric as { objects?: unknown[] })?.objects?.length ?? 0);
-          const savedLayerCount = ((saved?.fabric as { objects?: unknown[] })?.objects?.length ?? 0);
-          
-          // If customer's saved design is from an old procedural seed doc,
-          // overwrite with the master template doc!
-          const isSeedDoc = (
-            saved.schemaVersion !== "1.2" ||
-            !Array.isArray((saved.fabric as Record<string, unknown>)?.objects) ||
-            ((saved.fabric as { objects: unknown[] })?.objects?.some((o) => String((o as { kId?: string }).kId ?? "").startsWith("seed_"))) ||
-            (savedLayerCount <= 9 && masterLayerCount > 9)
-          );
-
-          if (isSeedDoc && masterLayerCount > 0) {
-            void saveDesign(d.id, { canvasJson: JSON.stringify(resolvedMaster) });
-            clearDraft(d.id);
-            return resolvedMaster;
+          if (rawJson) {
+            try {
+              const saved = JSON.parse(rawJson) as Kon10Doc;
+              if (saved && (saved.fabric || (saved as unknown as { objects?: unknown[] }).objects)) {
+                return saved;
+              }
+            } catch (err) {
+              console.warn("Failed to parse saved canvas JSON:", err);
+            }
           }
 
-          return saved;
+          return resolvedMaster;
         } catch {
           return resolvedMaster;
         }
