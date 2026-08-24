@@ -12,6 +12,7 @@ import { Reveal } from "../lib/motion";
 import { FinalCta } from "../components/blocks";
 import { CustomProjectCta, TalkToUs } from "../components/TalkToUs";
 import { useMoney } from "../lib/money";
+import { useShop } from "../lib/shop";
 
 /* ------------------------------------------------------------------
    DESIGN SERVICE PAGE (PRD §5/§10/§11/§16/§25/§48) — hybrid commerce:
@@ -304,8 +305,9 @@ export default function DesignServicePage() {
   const { slug } = useParams();
   const navigate = useNavigate();
   useDepartment("brand");
-  const { services, categories } = useDesignCatalog();
+  const { services, categories, sizes, options } = useDesignCatalog();
   const pkg = useDesignPackage();
+  const { add: addToShop } = useShop();
   const s = services.find((x) => x.slug === slug);
 
   useSEO({
@@ -334,11 +336,30 @@ export default function DesignServicePage() {
     });
   };
 
-  /** Journey A fast path: add the configured service and go straight to checkout. */
+  /** Journey A fast path: add the configured service directly to cart and go straight to checkout. */
   const order = (sel: ConfigSelection) => {
+    const line = priceLine(s, sel, { sizes, options });
+    const selectedOptions = (line.options || []).map((opt) => ({
+      id: opt.id,
+      name: opt.name,
+      price: opt.amount,
+    }));
+
+    addToShop({
+      serviceSlug: s.slug,
+      name: `${s.name}${line.tier ? ` (${line.tier.name})` : ""}${line.size ? ` · ${line.size.name}` : ""}`,
+      unitPrice: line.unitBase || s.price,
+      tierLabel: line.tier?.name,
+      addons: selectedOptions,
+      rush: false,
+      billing: "one_time",
+      depositPct: 100,
+    });
+
     pkg.add(s.slug, sel);
+    sessionStorage.setItem("sk_quick_checkout", "1");
     track("checkout_start", { service: s.slug, via: "order-now" });
-    toast.success(`${s.name} added — taking you to checkout`);
+    toast.success(`${s.name} added to cart — proceeding to checkout`);
     navigate("/checkout");
   };
 
