@@ -524,19 +524,61 @@ export async function updateParticipant(
   const meeting = await getMeetingById(meetingId);
   if (!meeting) return;
 
-  const existingIdx = meeting.participants.findIndex((p) => p.id === participantId);
-  let updatedList: MeetingParticipant[];
+  const pEmail = (updates.email || "").toLowerCase().trim();
+  const pUserId = updates.userId || "";
+  const isHostRole = updates.role === "host";
 
+  let existingIdx = meeting.participants.findIndex((p) => p.id === participantId);
+
+  // If ID didn't match, check if this is the host to prevent duplicate host entries
+  if (existingIdx === -1 && isHostRole) {
+    existingIdx = meeting.participants.findIndex((p) => p.role === "host");
+  }
+
+  // Check matching email
+  if (existingIdx === -1 && pEmail && !pEmail.endsWith("@guest.local")) {
+    existingIdx = meeting.participants.findIndex((p) => p.email?.toLowerCase().trim() === pEmail);
+  }
+
+  // Check matching userId
+  if (existingIdx === -1 && pUserId) {
+    existingIdx = meeting.participants.findIndex((p) => p.userId === pUserId);
+  }
+
+  let updatedList: MeetingParticipant[];
   if (existingIdx >= 0) {
     updatedList = [...meeting.participants];
-    updatedList[existingIdx] = { ...updatedList[existingIdx], ...updates };
+    updatedList[existingIdx] = {
+      ...updatedList[existingIdx],
+      ...updates,
+      id: participantId || updatedList[existingIdx].id,
+    };
   } else {
-    // New participant joining
-    const newP = updates as MeetingParticipant;
+    const newP = { id: participantId, ...updates } as MeetingParticipant;
     updatedList = [...meeting.participants, newP];
   }
 
-  await updateMeeting(meeting.id, { participants: updatedList });
+  // Deduplicate: guarantee at most ONE host and unique participant sessions
+  const seenHost = false;
+  let hasHost = seenHost;
+  const seenIds = new Set<string>();
+  const deduplicated: MeetingParticipant[] = [];
+
+  for (const p of updatedList) {
+    if (p.role === "host") {
+      if (!hasHost) {
+        hasHost = true;
+        deduplicated.push(p);
+      }
+    } else {
+      if (!seenIds.has(p.id)) {
+        seenIds.add(p.id);
+        deduplicated.push(p);
+      }
+    }
+  }
+
+  await updateMeeting(meeting.id, { participants: deduplicated });
 }
 
 export async function admitParticipant(meetingId: string, participantId: string): Promise<void> {

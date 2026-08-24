@@ -147,11 +147,40 @@ export default function MeetingRoom() {
 
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
-
-  // Breakout Rooms
   const [newRoomName, setNewRoomName] = useState("");
 
-  const isHost = meeting ? (meeting.hostEmail.toLowerCase() === user?.email?.toLowerCase() || isAdmin) : false;
+  const isHost = Boolean(
+    meeting && (
+      isAdmin ||
+      user?.email?.toLowerCase().trim() === "socialkon10@gmail.com" ||
+      user?.email?.toLowerCase().trim() === "admin@socialkon10.pro" ||
+      (user?.email && meeting.hostEmail && user.email.toLowerCase().trim() === meeting.hostEmail.toLowerCase().trim()) ||
+      (user?.uid && meeting.hostId && user.uid === meeting.hostId)
+    )
+  );
+
+  const hostParticipant = meeting?.participants.find((p) => p.role === "host");
+  const effectiveMyId = isHost && hostParticipant ? hostParticipant.id : myParticipantId;
+
+  const activeParticipants = (meeting?.participants || [])
+    .filter((p) => p.status === "joined" || p.status === "admitted")
+    .filter((p, idx, arr) => {
+      if (p.role === "host") {
+        return arr.findIndex((x) => x.role === "host") === idx;
+      }
+      return arr.findIndex((x) => x.id === p.id) === idx;
+    });
+
+  const waitingParticipants = (meeting?.participants || [])
+    .filter((p) => p.status === "waiting")
+    .filter((p, idx, arr) => arr.findIndex((x) => x.id === p.id) === idx);
+
+  const otherConnectedParticipants = activeParticipants.filter((p) => {
+    if (p.id === effectiveMyId || p.id === myParticipantId) return false;
+    if (isHost && p.role === "host") return false;
+    if (user?.email && p.email && p.email.toLowerCase().trim() === user.email.toLowerCase().trim()) return false;
+    return true;
+  });
 
   // 1. Load & Subscribe to Meeting
   useEffect(() => {
@@ -370,12 +399,15 @@ export default function MeetingRoom() {
     const myRole: ParticipantRole = isHost ? "host" : isAdmin ? "cohost" : "participant";
     const initialStatus: ParticipantStatus = (meeting.waitingRoomEnabled && !isHost) ? "waiting" : "joined";
 
+    const hostParticipant = meeting.participants.find((p) => p.role === "host");
+    const activeParticipantId = isHost && hostParticipant ? hostParticipant.id : myParticipantId;
+
     const participantData: MeetingParticipant = {
-      id: myParticipantId,
+      id: activeParticipantId,
       meetingId: meeting.id,
       userId: user?.uid,
-      email: user?.email || `${displayName.toLowerCase().replace(/\s+/g, ".")}@guest.local`,
-      displayName: displayName.trim() || "Participant",
+      email: user?.email || (isHost ? meeting.hostEmail : `${displayName.toLowerCase().replace(/\s+/g, ".")}@guest.local`),
+      displayName: isHost ? (user?.displayName || meeting.hostName || "Host (Studio)") : (displayName.trim() || "Participant"),
       role: myRole,
       status: initialStatus,
       joinedAt: initialStatus === "joined" ? new Date().toISOString() : undefined,
@@ -388,7 +420,7 @@ export default function MeetingRoom() {
       connectionQuality: "excellent",
     };
 
-    await updateParticipant(meeting.id, myParticipantId, participantData);
+    await updateParticipant(meeting.id, activeParticipantId, participantData);
 
     if (initialStatus === "waiting") {
       setPhase("waiting_room");
@@ -685,6 +717,35 @@ export default function MeetingRoom() {
             Host: <strong className="text-[var(--ink)]">{meeting.hostName}</strong> · {formattedDate} at {formattedTime} ({userTimezone})
           </p>
         </div>
+
+        {/* Host Waiting Room Banner in Lobby */}
+        {isHost && waitingParticipants.length > 0 && (
+          <div className="mb-6 p-4 sm:p-5 bg-amber-500/15 border-2 border-amber-500/50 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg animate-pulse">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">⏳</span>
+              <div>
+                <h3 className="font-display text-sm font-bold uppercase text-amber-300">
+                  {waitingParticipants.length} Participant{waitingParticipants.length > 1 ? "s" : ""} in Waiting Room
+                </h3>
+                <p className="font-meta text-[10px] text-neutral-300 mt-0.5">
+                  {waitingParticipants.map((p) => p.displayName).join(", ")} {waitingParticipants.length > 1 ? "are" : "is"} waiting to be admitted.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={async () => {
+                  await admitAllParticipants(meeting.id);
+                  handleJoinFromLobby();
+                }}
+                className="btn btn-dept w-full sm:w-auto !py-2.5 !px-4 font-display text-xs font-bold uppercase shadow-md"
+              >
+                ⚡ Admit &amp; Enter Room →
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-12 gap-6 sm:gap-8 items-start">
           {/* LEFT: Video Preview & Volume Level */}
@@ -1021,9 +1082,6 @@ export default function MeetingRoom() {
   /* -------------------------------------------------------------
      STATE 4: LIVE ZOOM-STYLE MEETING ROOM
   ------------------------------------------------------------- */
-  const activeParticipants = meeting.participants.filter((p) => p.status === "joined" || p.status === "admitted");
-  const waitingParticipants = meeting.participants.filter((p) => p.status === "waiting");
-
   return (
     <div className="fixed inset-0 z-50 h-[100dvh] max-h-[100dvh] w-screen bg-neutral-950 text-white flex flex-col select-none overflow-hidden">
       {/* Floating Animated Emoji Reactions */}
@@ -1038,6 +1096,43 @@ export default function MeetingRoom() {
           </div>
         ))}
       </div>
+
+      {/* Floating Waiting Room Admission Banner */}
+      {isHost && waitingParticipants.length > 0 && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-amber-950/95 border-2 border-amber-500 backdrop-blur-md px-4 py-3 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-4 max-w-lg w-[92%] animate-in slide-in-from-top-4 duration-200">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl animate-bounce">🔔</span>
+            <div>
+              <h4 className="font-display text-xs font-bold uppercase text-amber-300">
+                {waitingParticipants.length} Person Waiting in Lobby
+              </h4>
+              <p className="font-meta text-[9.5px] text-neutral-300 truncate max-w-xs">
+                {waitingParticipants.map((p) => p.displayName).join(", ")}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {waitingParticipants.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => admitParticipant(meeting.id, p.id)}
+                className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase"
+              >
+                ✓ Admit {p.displayName.split(" ")[0]}
+              </button>
+            ))}
+            {waitingParticipants.length > 1 && (
+              <button
+                onClick={() => admitAllParticipants(meeting.id)}
+                className="font-meta text-[10px] px-3 py-1.5 bg-amber-500 text-black font-bold rounded-lg hover:bg-amber-400"
+              >
+                Admit All
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Top Header Bar */}
       <div className="h-12 sm:h-14 px-3 sm:px-6 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between shrink-0">
@@ -1324,7 +1419,7 @@ export default function MeetingRoom() {
             </div>
 
             {/* Other Connected Participants */}
-            {activeParticipants.filter((p) => p.id !== myParticipantId).map((p) => {
+            {otherConnectedParticipants.map((p) => {
               const rStream = remoteStreams.get(p.id);
               const hasVideo = rStream && rStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live") && !p.isVideoOff;
 
