@@ -175,6 +175,21 @@ export interface MockupAnnotationState {
   pins: CanvasPin[];
 }
 
+export interface ApprovedDeliverableRecord {
+  id: string;
+  mockupId: string;
+  mockupTitle: string;
+  mockupCategory: string;
+  mockupImage: string;
+  approved: boolean; // true = Approved Concept, false = Revision Requested
+  approvedBy: string;
+  approvedAt: string;
+  feedbackText: string;
+  pinsCount: number;
+  pins: CanvasPin[]; // permanent preservation of all dropped pins & notes
+  strokesCount: number;
+}
+
 export interface LiveProofingState {
   active: boolean;
   mockupIndex: number;
@@ -184,6 +199,7 @@ export interface LiveProofingState {
   laserPointer?: { x: number; y: number; updatedAt: number; senderName: string };
   zoomLevel?: number;
   feedbackNotes?: ProofingFeedbackNote[];
+  approvedDeliverables?: ApprovedDeliverableRecord[];
   updatedAt: string;
 }
 
@@ -1078,25 +1094,56 @@ export async function submitMeetingProofFeedback(
   meetingId: string,
   senderName: string,
   text: string,
-  approved: boolean
-): Promise<void> {
+  approved: boolean,
+  mockup?: ProofingMockupItem,
+  pinsSnapshot?: CanvasPin[],
+  strokesCount?: number
+): Promise<ApprovedDeliverableRecord> {
   const meeting = await getMeetingById(meetingId);
-  if (!meeting) return;
+  const noteId = `note_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const nowIso = new Date().toISOString();
 
   const note: ProofingFeedbackNote = {
-    id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: noteId,
     senderName,
     text: text.trim(),
     approved,
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso,
   };
 
-  const existingNotes = meeting.liveProofing?.feedbackNotes || [];
+  const approvalRecord: ApprovedDeliverableRecord = {
+    id: `appr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    mockupId: mockup?.id || "mockup_unknown",
+    mockupTitle: mockup?.title || "Project Deliverable",
+    mockupCategory: mockup?.category || "Design Concept",
+    mockupImage: mockup?.image || "",
+    approved,
+    approvedBy: senderName,
+    approvedAt: nowIso,
+    feedbackText: text.trim(),
+    pinsCount: pinsSnapshot?.length || 0,
+    pins: pinsSnapshot ? [...pinsSnapshot] : [],
+    strokesCount: strokesCount || 0,
+  };
+
+  const existingNotes = meeting?.liveProofing?.feedbackNotes || [];
   const updatedNotes = [...existingNotes, note];
+  const existingApprovals = meeting?.liveProofing?.approvedDeliverables || [];
+  const updatedApprovals = [...existingApprovals, approvalRecord];
 
   await setMeetingLiveProofing(meetingId, {
     feedbackNotes: updatedNotes,
+    approvedDeliverables: updatedApprovals,
   });
+
+  try {
+    const key = `sk_approved_proofs_${normalizeRoomCode(meetingId)}`;
+    const saved = JSON.parse(localStorage.getItem(key) || "[]");
+    saved.push(approvalRecord);
+    localStorage.setItem(key, JSON.stringify(saved));
+  } catch {}
+
+  return approvalRecord;
 }
 
 /** Update strokes and pins for a specific mockup/artwork in real-time */

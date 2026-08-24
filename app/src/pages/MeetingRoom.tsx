@@ -52,6 +52,7 @@ import {
   playMessageNotificationSound,
   playDoorbellChime,
   playHandRaiseChime,
+  playSuccessChime,
   triggerHapticFeedback,
   WebRTCMeshSession,
   type MediaDeviceList,
@@ -175,8 +176,18 @@ export default function MeetingRoom() {
   const [activeProofTool, setActiveProofTool] = useState<ProofingTool>("laser");
   const [proofStrokeColor, setProofStrokeColor] = useState("#06b6d4"); // Default Cyan
   const [proofStrokeWidth, setProofStrokeWidth] = useState(3);
-  const [canvasBackdrop, setCanvasBackdrop] = useState<"slate" | "black" | "white" | "grid">("slate");
-  const [safeZoneOverlay, setSafeZoneOverlay] = useState<"none" | "social_reels" | "thirds">("none");
+  const [canvasBackdrop, setCanvasBackdrop] = useState<"slate" | "black" | "white" | "grid" | "checker">("slate");
+  const [safeZoneOverlay, setSafeZoneOverlay] = useState<
+    | "none"
+    | "tiktok_reels_shorts"
+    | "ig_feed_grid"
+    | "facebook_feed_ad"
+    | "youtube_thumb"
+    | "linkedin_post"
+    | "print_bleed"
+    | "thirds"
+    | "golden_ratio"
+  >("none");
 
   // Markup Annotations
   const [mockupStrokes, setMockupStrokes] = useState<CanvasStroke[]>([]);
@@ -203,6 +214,14 @@ export default function MeetingRoom() {
   const [pinCommentDraft, setPinCommentDraft] = useState("");
   const [selectedPinDetail, setSelectedPinDetail] = useState<CanvasPin | null>(null);
   const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
+
+  // Approved Deliverables Archive & Sign-Off State
+  const [showApprovedArchiveModal, setShowApprovedArchiveModal] = useState(false);
+
+  // A/B Revision Split Comparison State
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareMockupIdx, setCompareMockupIdx] = useState(1);
+  const [compareSplitPos, setCompareSplitPos] = useState(50); // 0-100%
 
   const [proofingIndex, setProofingIndex] = useState(0);
   const [laserPointer, setLaserPointer] = useState<{ x: number; y: number; active: boolean; senderName?: string }>({ x: 50, y: 50, active: false });
@@ -582,6 +601,30 @@ export default function MeetingRoom() {
     prevProofingActive.current = !!proofing.active;
   }, [meeting?.liveProofing, phase, isHost]);
 
+  // 11b. Concept Approval & Sign-Off Real-Time Notification for Host & Attendees
+  const prevApprovalsCount = useRef(0);
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const approvals = meeting.liveProofing?.approvedDeliverables || [];
+    if (approvals.length > prevApprovalsCount.current && prevApprovalsCount.current >= 0) {
+      const latest = approvals[approvals.length - 1];
+      if (latest) {
+        if (latest.approved) {
+          playSuccessChime();
+          triggerHapticFeedback([100, 50, 100, 50, 200]);
+          toast.success(
+            `🎉 Concept Approved: "${latest.mockupTitle}" signed off by ${latest.approvedBy}! (${latest.pinsCount} pin notes preserved)`
+          );
+        } else {
+          toast.info(
+            `📝 Revision Requested: "${latest.mockupTitle}" by ${latest.approvedBy} (${latest.pinsCount} pin notes recorded)`
+          );
+        }
+      }
+    }
+    prevApprovalsCount.current = approvals.length;
+  }, [meeting?.liveProofing?.approvedDeliverables, phase]);
+
   // 12. High-speed Laser Pointer Channel
   useEffect(() => {
     if (!meeting || phase !== "in_meeting") return;
@@ -647,11 +690,20 @@ export default function MeetingRoom() {
 
   // Handlers
   const handleToggleFullscreen = () => {
+    const el = document.fullscreenElement ? null : (meetingContainerRef.current || document.documentElement);
     if (!document.fullscreenElement) {
-      meetingContainerRef.current?.requestFullscreen?.().catch(() => {});
+      if (el?.requestFullscreen) {
+        el.requestFullscreen().catch(() => {});
+      } else if ((el as any)?.webkitRequestFullscreen) {
+        (el as any).webkitRequestFullscreen();
+      }
       setIsFullscreen(true);
     } else {
-      document.exitFullscreen?.().catch(() => {});
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if ((document as any)?.webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
       setIsFullscreen(false);
     }
   };
@@ -1147,6 +1199,143 @@ export default function MeetingRoom() {
     );
   };
 
+  const renderSafeZoneOverlay = (overlay: typeof safeZoneOverlay) => {
+    if (overlay === "none") return null;
+
+    if (overlay === "tiktok_reels_shorts") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-pink-500/50 select-none">
+          <div className="absolute top-0 inset-x-0 h-[14%] bg-pink-500/15 border-b border-pink-500/40 flex items-center justify-between px-3 text-pink-300 font-meta text-[8.5px]">
+            <span className="font-bold">📱 TikTok / IG Reels Header Safe Zone</span>
+            <span className="opacity-75">14% Clearance</span>
+          </div>
+          <div className="absolute bottom-0 inset-x-0 h-[22%] bg-pink-500/15 border-t border-pink-500/40 flex items-center justify-between px-3 text-pink-300 font-meta text-[8.5px]">
+            <span className="font-bold">💬 Bottom Safe Zone (Caption &amp; Audio Bar)</span>
+            <span className="opacity-75">22% Clearance</span>
+          </div>
+          <div className="absolute right-0 top-[18%] bottom-[22%] w-[16%] bg-pink-500/15 border-l border-pink-500/40 flex items-center justify-center text-pink-300 font-meta text-[8px] [writing-mode:vertical-lr] text-center font-bold tracking-wider">
+            ❤️ 💬 ↗️ Interaction Rail Safe Zone
+          </div>
+          <div className="absolute top-[14%] bottom-[22%] left-0 right-[16%] border border-dashed border-cyan-400/40 pointer-events-none" />
+        </div>
+      );
+    }
+
+    if (overlay === "ig_feed_grid") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 flex items-center justify-center select-none">
+          <div className="relative w-full h-full border-2 border-amber-400/60">
+            <div className="absolute top-0 inset-x-0 h-[10%] bg-black/40 border-b border-dashed border-amber-400/60 flex items-center justify-center font-meta text-[8px] text-amber-300 font-bold">
+              ✂️ 1:1 Profile Grid Crop Margin (Top 10%)
+            </div>
+            <div className="absolute top-[10%] bottom-[10%] inset-x-0 border-2 border-amber-400 bg-amber-400/5 flex items-center justify-center font-meta text-[9px] text-amber-300 font-bold">
+              <span className="bg-black/80 px-2 py-0.5 rounded border border-amber-400/50">
+                📸 1:1 Instagram Profile Grid Preview (1080x1080)
+              </span>
+            </div>
+            <div className="absolute bottom-0 inset-x-0 h-[10%] bg-black/40 border-t border-dashed border-amber-400/60 flex items-center justify-center font-meta text-[8px] text-amber-300 font-bold">
+              ✂️ 1:1 Profile Grid Crop Margin (Bottom 10%)
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (overlay === "facebook_feed_ad") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-blue-500/50 select-none">
+          <div className="absolute top-0 inset-x-0 h-[10%] bg-blue-500/15 border-b border-blue-500/40 flex items-center justify-between px-3 text-blue-300 font-meta text-[8.5px]">
+            <span className="font-bold">👥 Facebook Primary Text Safe Margin</span>
+            <span className="opacity-75">10%</span>
+          </div>
+          <div className="absolute bottom-0 inset-x-0 h-[18%] bg-blue-500/15 border-t border-blue-500/40 flex items-center justify-between px-3 text-blue-300 font-meta text-[8.5px]">
+            <span className="font-bold">🔘 Headline &amp; CTA Button Safe Zone</span>
+            <span className="opacity-75">18%</span>
+          </div>
+          <div className="absolute top-[10%] bottom-[18%] inset-x-0 border border-dashed border-blue-400/40" />
+        </div>
+      );
+    }
+
+    if (overlay === "youtube_thumb") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-red-500/50 select-none">
+          <div className="absolute bottom-2 right-2 w-[24%] h-[18%] bg-red-950/90 border-2 border-red-500 rounded-lg flex flex-col items-center justify-center text-red-200 font-meta text-[8px] font-bold shadow-lg">
+            <span>⏱️ 04:12</span>
+            <span className="text-[6.5px] uppercase">Duration Badge Safe Zone</span>
+          </div>
+          <div className="absolute top-0 left-0 w-[45%] h-[14%] bg-red-500/15 border-r border-b border-red-500/40 flex items-center px-2 text-red-300 font-meta text-[8px] font-bold">
+            ▶️ Title &amp; Channel Watch Later Zone
+          </div>
+        </div>
+      );
+    }
+
+    if (overlay === "linkedin_post") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-sky-500/50 select-none">
+          <div className="absolute inset-[6%] border border-dashed border-sky-400/60 flex items-center justify-center">
+            <span className="bg-black/80 px-2 py-0.5 rounded text-[8px] font-meta text-sky-300 font-bold border border-sky-500/40">
+              💼 LinkedIn Post &amp; Carousel Core Safe Area
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    if (overlay === "print_bleed") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 border-4 border-red-500 select-none">
+          <div className="absolute inset-0 border-2 border-red-500/80 flex items-start justify-start p-1 text-[7px] text-red-400 font-mono font-bold">
+            🔴 0.125" BLEED LINE
+          </div>
+          <div className="absolute inset-[3.5%] border-2 border-dashed border-cyan-400 flex items-start justify-start p-1 text-[7px] text-cyan-300 font-mono font-bold">
+            ✂️ TRIM CUT LINE
+          </div>
+          <div className="absolute inset-[7%] border-2 border-emerald-500 flex items-center justify-center text-[8px] text-emerald-300 font-mono font-bold">
+            <span className="bg-black/80 px-2 py-0.5 rounded border border-emerald-500/50">
+              ✅ INNER CONTENT SAFE ZONE
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    if (overlay === "thirds") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 grid grid-cols-3 grid-rows-3 border border-yellow-400/40 select-none">
+          <div className="border-r border-b border-yellow-400/30 relative"><div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 shadow-sm" /></div>
+          <div className="border-r border-b border-yellow-400/30 relative"><div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 shadow-sm" /></div>
+          <div className="border-b border-yellow-400/30" />
+          <div className="border-r border-b border-yellow-400/30 relative"><div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 shadow-sm" /></div>
+          <div className="border-r border-b border-yellow-400/30 relative"><div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 shadow-sm" /></div>
+          <div className="border-b border-yellow-400/30" />
+          <div className="border-r border-yellow-400/30" />
+          <div className="border-r border-yellow-400/30" />
+          <div />
+        </div>
+      );
+    }
+
+    if (overlay === "golden_ratio") {
+      return (
+        <div className="absolute inset-0 pointer-events-none z-15 border border-amber-400/40 select-none">
+          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-amber-400/40 -translate-x-1/2" />
+          <div className="absolute top-1/2 left-0 right-0 h-px bg-amber-400/40 -translate-y-1/2" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-amber-400 flex items-center justify-center font-meta text-[6px] text-amber-300 font-bold">
+            🎯 Optical
+          </div>
+          <div className="absolute left-[38.2%] top-0 bottom-0 w-px border-l border-dashed border-amber-300/30" />
+          <div className="absolute left-[61.8%] top-0 bottom-0 w-px border-l border-dashed border-amber-300/30" />
+          <div className="absolute top-[38.2%] left-0 right-0 h-px border-t border-dashed border-amber-300/30" />
+          <div className="absolute top-[61.8%] left-0 right-0 h-px border-t border-dashed border-amber-300/30" />
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   const handleSaveNewPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingPinCoord || !meeting || !activeMockup || !pinCommentDraft.trim()) return;
@@ -1428,12 +1617,42 @@ export default function MeetingRoom() {
     }
   };
 
+  const handleSampleColorEyeDropper = async () => {
+    if (typeof window !== "undefined" && "EyeDropper" in window) {
+      try {
+        const eyeDropper = new (window as any).EyeDropper();
+        const result = await eyeDropper.open();
+        if (result?.sRGBHex) {
+          setProofStrokeColor(result.sRGBHex);
+          navigator.clipboard.writeText(result.sRGBHex).catch(() => {});
+          toast.success(`Color sampled & copied: ${result.sRGBHex}`);
+        }
+      } catch {
+        // Canceled
+      }
+    } else {
+      toast.info("Click a color from the quick palette to select.");
+    }
+  };
+
   const handleSubmitProofFeedback = async (approved: boolean) => {
     if (!meeting) return;
     const text = proofFeedbackDraft.trim() || (approved ? "Deliverable concept approved by client!" : "Revision requested.");
     setProofFeedbackDraft("");
-    await submitMeetingProofFeedback(meeting.id, displayName, text, approved);
-    toast.success(approved ? "Concept approved!" : "Feedback recorded.");
+    await submitMeetingProofFeedback(
+      meeting.id,
+      displayName,
+      text,
+      approved,
+      activeMockup,
+      mockupPins,
+      mockupStrokes.length
+    );
+    toast.success(
+      approved
+        ? `✓ Approved: ${activeMockup.title} (${mockupPins.length} pin ${mockupPins.length === 1 ? 'note' : 'notes'} saved)`
+        : `Revision recorded: ${activeMockup.title} (${mockupPins.length} pin ${mockupPins.length === 1 ? 'note' : 'notes'} saved)`
+    );
   };
 
   const handleToggleProofingSession = async () => {
@@ -2958,90 +3177,54 @@ export default function MeetingRoom() {
                     )}
                   </div>
 
-                  {/* Markup Toolbar & Color Presets */}
-                  <div className="flex flex-wrap items-center justify-between gap-1 p-1.5 bg-neutral-900/90 rounded-lg border border-neutral-700/80 text-[10px]">
-                    {/* Tool Buttons */}
-                    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-                      {[
-                        { id: "laser", icon: "🎯", label: "Laser" },
-                        { id: "pen", icon: "✏️", label: "Pen" },
-                        { id: "vanishing", icon: "✨", label: "Vanish" },
-                        { id: "highlighter", icon: "🖊️", label: "Marker" },
-                        { id: "arrow", icon: "➡️", label: "Arrow" },
-                        { id: "rect", icon: "🔲", label: "Box" },
-                        { id: "circle", icon: "⭕", label: "Circle" },
-                        { id: "pin", icon: "📍", label: "Pin" },
-                      ].map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => setActiveProofTool(t.id as any)}
-                          className={`px-1.5 py-1 rounded flex items-center gap-0.5 font-bold transition-all ${
-                            activeProofTool === t.id
-                              ? "bg-[var(--dept)] text-black font-extrabold shadow-sm scale-105"
-                              : "bg-neutral-800 text-neutral-300 hover:text-white"
-                          }`}
-                          title={`${t.label} Tool (or Right-Click Canvas)`}
-                        >
-                          <span>{t.icon}</span>
-                          <span className="hidden sm:inline text-[8px]">{t.label}</span>
-                        </button>
-                      ))}
+                  {/* Clean Deliverable Header & Quick Actions */}
+                  <div className="flex items-center justify-between gap-2 p-2 bg-neutral-900/90 rounded-xl border border-neutral-700/80">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <h4 className="font-display text-xs font-bold uppercase text-white truncate">
+                          {activeMockup.title}
+                        </h4>
+                        {meeting?.liveProofing?.approvedDeliverables?.some((a) => a.mockupId === activeMockup.id && a.approved) && (
+                          <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-meta text-[7.5px] px-1.5 py-0.2 rounded-full font-bold uppercase shrink-0">
+                            ✓ Approved
+                          </span>
+                        )}
+                      </div>
+                      <p className="font-meta text-[8.5px] text-neutral-400 truncate">
+                        Deliverable {proofingIndex + 1} of {proofingMockups.length} · {activeMockup.category}
+                      </p>
                     </div>
 
-                    {/* Color Dots & Actions */}
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      <div className="flex items-center gap-1">
-                        {["#06b6d4", "#ec4899", "#eab308", "#22c55e", "#ef4444", "#ffffff"].map((c) => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => setProofStrokeColor(c)}
-                            style={{ backgroundColor: c }}
-                            className={`w-3.5 h-3.5 rounded-full border ${
-                              proofStrokeColor === c ? "ring-2 ring-white scale-110 border-white" : "border-black/50 opacity-75 hover:opacity-100"
-                            }`}
-                            title="Color"
-                          />
-                        ))}
-                      </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowApprovedArchiveModal(true)}
+                        className="px-2 py-1 rounded-lg bg-cyan-950/70 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/30 text-[9px] font-bold flex items-center gap-1"
+                        title="View Approved Deliverables & Preserved Pins"
+                      >
+                        <span>📜</span>
+                        <span className="hidden sm:inline">Sign-Offs</span>
+                      </button>
 
-                      <div className="flex items-center gap-1 border-l border-neutral-700 pl-1.5">
-                        <button
-                          type="button"
-                          onClick={handleUndoAnnotations}
-                          disabled={undoStack.length === 0}
-                          className="px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-[9px] font-bold"
-                          title="Undo Markup"
-                        >
-                          ⤺
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleRedoAnnotations}
-                          disabled={redoStack.length === 0}
-                          className="px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-[9px] font-bold"
-                          title="Redo Markup"
-                        >
-                          ⤻
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleClearAnnotations}
-                          className="px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-red-950 text-red-400 text-[9px] font-bold"
-                          title="Clear Markups"
-                        >
-                          🧹
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleExportMarkedProof}
-                          className="px-1.5 py-0.5 rounded bg-emerald-900/60 hover:bg-emerald-800 text-emerald-300 text-[9px] font-bold"
-                          title="Export Marked Image"
-                        >
-                          💾
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCompareMode(true)}
+                        className="px-2 py-1 rounded-lg bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/30 text-[9px] font-bold flex items-center gap-1"
+                        title="A/B Split Version Comparison"
+                      >
+                        <span>↔️</span>
+                        <span className="hidden sm:inline">A/B Diff</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsProofingMaximized(true)}
+                        className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white text-[9px] font-bold flex items-center gap-1"
+                        title="Open Theater Mode / Fullscreen"
+                      >
+                        <span>⛶</span>
+                        <span className="hidden sm:inline">Theater</span>
+                      </button>
                     </div>
                   </div>
 
@@ -3052,13 +3235,15 @@ export default function MeetingRoom() {
                     onPointerMove={handleCanvasPointerMove}
                     onPointerUp={handleCanvasPointerUp}
                     onPointerCancel={handleCanvasPointerUp}
-                    className={`relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 select-none shadow-lg touch-none ${
+                    className={`relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 select-none shadow-lg touch-none transition-colors duration-200 ${
                       canvasBackdrop === "black"
                         ? "bg-black"
                         : canvasBackdrop === "white"
-                        ? "bg-white"
+                        ? "bg-white text-black"
                         : canvasBackdrop === "grid"
-                        ? "bg-neutral-900 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:16px_16px]"
+                        ? "bg-neutral-900 bg-[radial-gradient(#475569_1.5px,transparent_1.5px)] [background-size:20px_20px]"
+                        : canvasBackdrop === "checker"
+                        ? "bg-neutral-900 bg-[repeating-conic-gradient(#1e293b_0%_25%,#0f172a_0%_50%)] [background-size:24px_24px]"
                         : "bg-slate-950"
                     } ${
                       activeProofTool === "laser"
@@ -3068,6 +3253,18 @@ export default function MeetingRoom() {
                         : "cursor-crosshair"
                     }`}
                   >
+                    {/* Live Concept Approval Banner */}
+                    {meeting?.liveProofing?.approvedDeliverables?.some((a) => a.mockupId === activeMockup.id && a.approved) && (
+                      <div className="absolute top-2 inset-x-2 z-25 bg-emerald-950/90 border border-emerald-500/60 rounded-xl px-2.5 py-1 flex items-center justify-between text-emerald-200 font-meta text-[8.5px] shadow-lg backdrop-blur-xs">
+                        <span className="font-bold flex items-center gap-1">
+                          <span>✓</span> Concept Approved by {meeting.liveProofing.approvedDeliverables.find((a) => a.mockupId === activeMockup.id)?.approvedBy}
+                        </span>
+                        <span className="text-emerald-400 font-mono">
+                          {mockupPins.length} Pin {mockupPins.length === 1 ? "Note" : "Notes"} Saved
+                        </span>
+                      </div>
+                    )}
+
                     <img
                       src={activeMockup.image}
                       alt={activeMockup.title}
@@ -3080,6 +3277,9 @@ export default function MeetingRoom() {
                       {renderActiveStrokePreview()}
                       {vanishingStrokes.map((stroke) => renderCanvasStroke(stroke))}
                     </svg>
+
+                    {/* Safe Zone Overlays */}
+                    {renderSafeZoneOverlay(safeZoneOverlay)}
 
                     {/* Numbered Pins with Hover Message Preview */}
                     {mockupPins.map((pin) => {
@@ -3603,156 +3803,33 @@ export default function MeetingRoom() {
       {isProofingMaximized && (
         <div className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-md flex flex-col p-2 sm:p-4 animate-in zoom-in-95 duration-200 select-none">
           {/* Top Theater Header Bar */}
-          <div className="flex flex-wrap items-center justify-between pb-2 border-b border-neutral-800 shrink-0 gap-2">
+          <div className="flex flex-wrap items-center justify-between pb-3 border-b border-neutral-800 shrink-0 gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
-              <span className="text-xl">🎨</span>
+              <div className="w-8 h-8 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-sm font-bold shrink-0">
+                🎨
+              </div>
               <div className="min-w-0">
-                <h3 className="font-display text-sm font-bold uppercase text-white truncate max-w-xs sm:max-w-md">
-                  {activeMockup.title}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display text-sm font-bold uppercase text-white truncate max-w-xs sm:max-w-md">
+                    {activeMockup.title}
+                  </h3>
+                  {meeting?.liveProofing?.approvedDeliverables?.some((a) => a.mockupId === activeMockup.id && a.approved) ? (
+                    <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-meta text-[8px] px-2 py-0.5 rounded-full font-bold uppercase shrink-0">
+                      ✓ Concept Approved
+                    </span>
+                  ) : (
+                    <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-[var(--dept)] text-black font-extrabold uppercase shrink-0">
+                      Deliverable {proofingIndex + 1}/{proofingMockups.length}
+                    </span>
+                  )}
+                </div>
                 <p className="font-meta text-[9px] text-neutral-400">
-                  Deliverable #{proofingIndex + 1} of {proofingMockups.length} · {activeMockup.category} {activeMockup.uploadedBy ? `· by ${activeMockup.uploadedBy}` : ""}
+                  {activeMockup.category} {activeMockup.uploadedBy ? `· by ${activeMockup.uploadedBy}` : ""} · Right-click canvas for tools &amp; safe zones
                 </p>
               </div>
             </div>
 
-            {/* Showcase Markup Toolbar in Theater Mode */}
-            <div className="flex items-center gap-1.5 bg-neutral-900/90 p-1.5 rounded-xl border border-neutral-800">
-              {/* Tool Buttons */}
-              <div className="flex items-center gap-1">
-                {[
-                  { id: "laser", icon: "🎯", label: "Laser" },
-                  { id: "pen", icon: "✏️", label: "Pen" },
-                  { id: "vanishing", icon: "✨", label: "Vanish" },
-                  { id: "highlighter", icon: "🖊️", label: "Marker" },
-                  { id: "arrow", icon: "➡️", label: "Arrow" },
-                  { id: "rect", icon: "🔲", label: "Box" },
-                  { id: "circle", icon: "⭕", label: "Circle" },
-                  { id: "pin", icon: "📍", label: "Pin" },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setActiveProofTool(t.id as any)}
-                    className={`px-2 py-1 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all ${
-                      activeProofTool === t.id
-                        ? "bg-[var(--dept)] text-black font-extrabold shadow-sm scale-105"
-                        : "bg-neutral-800 text-neutral-300 hover:text-white"
-                    }`}
-                    title={`${t.label} (or Right-Click Canvas)`}
-                  >
-                    <span>{t.icon}</span>
-                    <span className="hidden md:inline">{t.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Color Swatches */}
-              <div className="hidden sm:flex items-center gap-1 border-l border-neutral-700 pl-1.5">
-                {["#06b6d4", "#ec4899", "#eab308", "#22c55e", "#ef4444", "#ffffff"].map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setProofStrokeColor(c)}
-                    style={{ backgroundColor: c }}
-                    className={`w-4 h-4 rounded-full border ${
-                      proofStrokeColor === c ? "ring-2 ring-white scale-110 border-white" : "border-black/50 opacity-75 hover:opacity-100"
-                    }`}
-                  />
-                ))}
-              </div>
-
-              {/* Stroke Width */}
-              <div className="hidden lg:flex items-center gap-1 border-l border-neutral-700 pl-1.5 font-mono text-[9px]">
-                {[2, 4, 8].map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={() => setProofStrokeWidth(w)}
-                    className={`px-1.5 py-0.5 rounded ${
-                      proofStrokeWidth === w ? "bg-[var(--dept)] text-black font-bold" : "bg-neutral-800 text-neutral-400"
-                    }`}
-                  >
-                    {w}px
-                  </button>
-                ))}
-              </div>
-
-              {/* Backdrop Modes */}
-              <div className="hidden xl:flex items-center gap-1 border-l border-neutral-700 pl-1.5">
-                {[
-                  { id: "slate", label: "Slate" },
-                  { id: "black", label: "Dark" },
-                  { id: "white", label: "Light" },
-                  { id: "grid", label: "Grid" },
-                ].map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => setCanvasBackdrop(b.id as any)}
-                    className={`px-1.5 py-0.5 text-[8px] rounded font-meta uppercase font-bold ${
-                      canvasBackdrop === b.id ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-neutral-400"
-                    }`}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Safe Zone Overlay Dropdown */}
-              <div className="hidden sm:flex items-center border-l border-neutral-700 pl-1.5">
-                <select
-                  value={safeZoneOverlay}
-                  onChange={(e) => setSafeZoneOverlay(e.target.value as any)}
-                  className="bg-neutral-800 border border-neutral-700 text-[9px] rounded-lg px-2 py-1 outline-none text-neutral-300"
-                >
-                  <option value="none">Guides: None</option>
-                  <option value="social_reels">📱 Reels/TikTok 9:16</option>
-                  <option value="thirds">📐 Rule of Thirds</option>
-                </select>
-              </div>
-
-              {/* Undo / Redo / Clear / Export */}
-              <div className="flex items-center gap-1 border-l border-neutral-700 pl-1.5">
-                <button
-                  type="button"
-                  onClick={handleUndoAnnotations}
-                  disabled={undoStack.length === 0}
-                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-xs font-bold"
-                  title="Undo Markup"
-                >
-                  ⤺
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRedoAnnotations}
-                  disabled={redoStack.length === 0}
-                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-xs font-bold"
-                  title="Redo Markup"
-                >
-                  ⤻
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearAnnotations}
-                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-red-950 text-red-400 text-xs font-bold"
-                  title="Clear Markups"
-                >
-                  🧹
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExportMarkedProof}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-900/70 hover:bg-emerald-800 text-emerald-300 text-[10px] font-bold flex items-center gap-1"
-                  title="Export Marked Proof as PNG"
-                >
-                  <span>💾</span>
-                  <span className="hidden md:inline">Export</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Actions & Zoom */}
+            {/* Actions, Navigation, Fullscreen & Zoom */}
             <div className="flex items-center gap-2">
               {isHost && (
                 <button
@@ -3763,6 +3840,26 @@ export default function MeetingRoom() {
                   <span>📁</span> + Upload
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setShowApprovedArchiveModal(true)}
+                className="px-2.5 py-1.5 rounded-lg bg-cyan-950/70 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-1 shadow-sm"
+                title="View Approved Deliverables & Preserved Pins"
+              >
+                <span>📜</span>
+                <span className="hidden sm:inline">Sign-Offs</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCompareMode(true)}
+                className="px-2.5 py-1.5 rounded-lg bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1 shadow-sm"
+                title="A/B Split Version Comparison"
+              >
+                <span>↔️</span>
+                <span className="hidden sm:inline">A/B Diff</span>
+              </button>
 
               <div className="flex items-center bg-neutral-800 rounded-lg p-0.5 border border-neutral-700">
                 <button
@@ -3788,6 +3885,16 @@ export default function MeetingRoom() {
                   Reset
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={handleToggleFullscreen}
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold flex items-center gap-1"
+                title={isFullscreen ? "Exit Fullscreen (Esc)" : "Enter True Fullscreen"}
+              >
+                <span>{isFullscreen ? "🗗" : "⛶"}</span>
+                <span className="hidden lg:inline text-[9px] font-meta uppercase">{isFullscreen ? "Exit FS" : "Fullscreen"}</span>
+              </button>
 
               <div className="flex gap-1">
                 <button
@@ -3827,13 +3934,15 @@ export default function MeetingRoom() {
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerUp}
-              className={`relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 transition-transform duration-200 select-none touch-none ${
+              className={`relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 transition-all duration-200 select-none touch-none ${
                 canvasBackdrop === "black"
                   ? "bg-black"
                   : canvasBackdrop === "white"
-                  ? "bg-white"
+                  ? "bg-white text-black"
                   : canvasBackdrop === "grid"
-                  ? "bg-neutral-900 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px]"
+                  ? "bg-neutral-900 bg-[radial-gradient(#475569_1.5px,transparent_1.5px)] [background-size:20px_20px]"
+                  : canvasBackdrop === "checker"
+                  ? "bg-neutral-900 bg-[repeating-conic-gradient(#1e293b_0%_25%,#0f172a_0%_50%)] [background-size:24px_24px]"
                   : "bg-slate-950"
               } ${
                 activeProofTool === "laser"
@@ -3856,6 +3965,9 @@ export default function MeetingRoom() {
                 {renderActiveStrokePreview()}
                 {vanishingStrokes.map((stroke) => renderCanvasStroke(stroke))}
               </svg>
+
+              {/* Safe Zone Overlays (Instagram, TikTok, Facebook, YouTube, LinkedIn, Print) */}
+              {renderSafeZoneOverlay(safeZoneOverlay)}
 
               {/* Numbered Pins with Hover Message Preview */}
               {mockupPins.map((pin) => {
@@ -3926,35 +4038,6 @@ export default function MeetingRoom() {
                   </div>
                 );
               })}
-
-              {/* Safe Zone Overlays */}
-              {safeZoneOverlay === "social_reels" && (
-                <div className="absolute inset-0 pointer-events-none z-15 border-2 border-pink-500/40">
-                  <div className="absolute top-0 inset-x-0 h-[14%] bg-pink-500/10 border-b border-pink-500/30 flex items-center justify-center font-meta text-[8px] text-pink-300">
-                    Header Safe Area (Reels)
-                  </div>
-                  <div className="absolute bottom-0 inset-x-0 h-[22%] bg-pink-500/10 border-t border-pink-500/30 flex items-center justify-center font-meta text-[8px] text-pink-300">
-                    Caption & Audio Safe Area (Reels)
-                  </div>
-                  <div className="absolute right-0 top-[20%] bottom-[25%] w-[15%] bg-pink-500/10 border-l border-pink-500/30 flex items-center justify-center font-meta text-[8px] text-pink-300 [writing-mode:vertical-lr]">
-                    Action Buttons Safe Zone
-                  </div>
-                </div>
-              )}
-
-              {safeZoneOverlay === "thirds" && (
-                <div className="absolute inset-0 pointer-events-none z-15 grid grid-cols-3 grid-rows-3 border border-yellow-400/30">
-                  <div className="border-r border-b border-yellow-400/20" />
-                  <div className="border-r border-b border-yellow-400/20" />
-                  <div className="border-b border-yellow-400/20" />
-                  <div className="border-r border-b border-yellow-400/20" />
-                  <div className="border-r border-b border-yellow-400/20" />
-                  <div className="border-b border-yellow-400/20" />
-                  <div className="border-r border-yellow-400/20" />
-                  <div className="border-r border-yellow-400/20" />
-                  <div />
-                </div>
-              )}
 
               {/* Glowing Laser Pointer Indicator */}
               {laserPointer.active && (
@@ -4229,6 +4312,17 @@ export default function MeetingRoom() {
                     }`}
                   />
                 ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCanvasContextMenu(null);
+                    handleSampleColorEyeDropper();
+                  }}
+                  className="w-4 h-4 rounded bg-neutral-800 hover:bg-neutral-700 text-white flex items-center justify-center text-[9px]"
+                  title="Eyedropper"
+                >
+                  🎨
+                </button>
               </div>
             </div>
 
@@ -4258,11 +4352,17 @@ export default function MeetingRoom() {
               <select
                 value={safeZoneOverlay}
                 onChange={(e) => setSafeZoneOverlay(e.target.value as any)}
-                className="bg-neutral-800 border border-neutral-700 text-[9px] rounded px-1.5 py-0.5 outline-none text-neutral-300"
+                className="bg-neutral-800 border border-neutral-700 text-[9px] rounded px-1.5 py-0.5 outline-none text-neutral-300 font-meta"
               >
                 <option value="none">None</option>
-                <option value="social_reels">📱 Reels/TikTok 9:16</option>
+                <option value="tiktok_reels_shorts">📱 TikTok / Reels (9:16)</option>
+                <option value="ig_feed_grid">📸 IG 4:5 / 1:1 Grid</option>
+                <option value="facebook_feed_ad">👥 Facebook Ads (1:1/4:5)</option>
+                <option value="youtube_thumb">▶️ YouTube Thumb (16:9)</option>
+                <option value="linkedin_post">💼 LinkedIn Post</option>
+                <option value="print_bleed">🖨️ Print 0.125" Bleed</option>
                 <option value="thirds">📐 Rule of Thirds</option>
+                <option value="golden_ratio">🌀 Golden Ratio</option>
               </select>
             </div>
 
@@ -4274,6 +4374,7 @@ export default function MeetingRoom() {
                   { id: "black", label: "Dark" },
                   { id: "white", label: "Light" },
                   { id: "grid", label: "Grid" },
+                  { id: "checker", label: "Check" },
                 ].map((b) => (
                   <button
                     key={b.id}
@@ -4522,6 +4623,260 @@ export default function MeetingRoom() {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approved Deliverables & Pin History Sign-Off Archive Modal */}
+      {showApprovedArchiveModal && (
+        <div className="fixed inset-0 z-[170] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100 select-none">
+          <div className="w-full max-w-2xl bg-neutral-900 border border-neutral-700 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] text-white">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/60">
+              <div className="flex items-center gap-2.5">
+                <span className="text-2xl">📜</span>
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase tracking-wider text-cyan-300">
+                    Approved Deliverables &amp; Revision Log
+                  </h3>
+                  <p className="text-[10px] text-neutral-400 font-meta">
+                    Permanent audit record of client concept approvals, revision requests, and numbered pin notes.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowApprovedArchiveModal(false)}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center text-xs font-bold text-neutral-300 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Approvals & Pins List */}
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4">
+              {(!meeting?.liveProofing?.approvedDeliverables || meeting.liveProofing.approvedDeliverables.length === 0) ? (
+                <div className="text-center py-12 space-y-3">
+                  <span className="text-4xl block opacity-40">📂</span>
+                  <p className="text-xs text-neutral-400 font-meta">
+                    No approved deliverables recorded yet in this session.
+                  </p>
+                  <p className="text-[10px] text-neutral-500 max-w-sm mx-auto">
+                    When you or the client clicks <strong className="text-emerald-400">[✓ Approve Concept]</strong> on any mockup, all dropped revision pins and notes are permanently preserved here.
+                  </p>
+                </div>
+              ) : (
+                meeting.liveProofing.approvedDeliverables.map((record, i) => (
+                  <div
+                    key={record.id || i}
+                    className="bg-neutral-950/80 border border-neutral-800 rounded-2xl p-4 space-y-3 hover:border-neutral-700 transition-colors shadow-lg"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-3">
+                        {record.mockupImage && (
+                          <img
+                            src={record.mockupImage}
+                            alt={record.mockupTitle}
+                            className="w-14 h-14 rounded-xl object-cover border border-neutral-700 shrink-0"
+                          />
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-xs font-bold text-white">{record.mockupTitle}</h4>
+                            <span
+                              className={`font-meta text-[8px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                record.approved
+                                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                  : "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                              }`}
+                            >
+                              {record.approved ? "✓ Approved" : "Revision Requested"}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-neutral-400 font-meta mt-0.5">
+                            {record.mockupCategory} • By <strong className="text-neutral-200">{record.approvedBy}</strong> • {new Date(record.approvedAt).toLocaleDateString()} {new Date(record.approvedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="font-meta text-[9px] bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 px-2 py-1 rounded-lg font-bold">
+                          📍 {record.pinsCount} {record.pinsCount === 1 ? "Pin Note" : "Pin Notes"} Saved
+                        </span>
+                      </div>
+                    </div>
+
+                    {record.feedbackText && (
+                      <p className="text-[11px] text-neutral-300 italic bg-neutral-900/60 p-2 rounded-xl border border-neutral-800">
+                        "{record.feedbackText}"
+                      </p>
+                    )}
+
+                    {/* Preserved Pins Details */}
+                    {record.pins && record.pins.length > 0 && (
+                      <div className="pt-2 border-t border-neutral-800/80 space-y-1.5">
+                        <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block">
+                          Preserved Numbered Pin Feedback:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {record.pins.map((pin) => (
+                            <div
+                              key={pin.id}
+                              className="p-2 rounded-xl bg-neutral-900/90 border border-neutral-800 text-[10px] space-y-1"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-[var(--dept)]">
+                                  #{pin.number} • {pin.senderName || "Client"}
+                                </span>
+                                <span className={`text-[7.5px] uppercase font-bold px-1 rounded ${pin.resolved ? "text-emerald-400 bg-emerald-950" : "text-cyan-300 bg-cyan-950"}`}>
+                                  {pin.resolved ? "Resolved" : "Active"}
+                                </span>
+                              </div>
+                              <p className="text-neutral-300 line-clamp-2 leading-relaxed">
+                                {pin.text}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer with Sign-Off Export */}
+            <div className="p-4 border-t border-neutral-800 flex items-center justify-between bg-neutral-950/80">
+              <span className="text-[10px] font-meta text-neutral-400">
+                {meeting?.liveProofing?.approvedDeliverables?.length || 0} approved deliverable records
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const approvals = meeting?.liveProofing?.approvedDeliverables || [];
+                    const summary = JSON.stringify(approvals, null, 2);
+                    const blob = new Blob([summary], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `Proofing_SignOff_Log_${meeting?.roomId || "session"}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    toast.success("Sign-Off Log downloaded!");
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-black text-xs font-bold font-meta uppercase shadow-md flex items-center gap-1.5"
+                >
+                  <span>📄</span> Export Sign-Off Log
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowApprovedArchiveModal(false)}
+                  className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* A/B Split Revision Compare Modal */}
+      {compareMode && (
+        <div className="fixed inset-0 z-[170] bg-black/90 backdrop-blur-md flex flex-col p-4 select-none animate-in fade-in duration-100">
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">↔️</span>
+              <div>
+                <h3 className="font-display text-sm font-bold uppercase tracking-wider text-purple-300">
+                  A/B Revision Version Comparison
+                </h3>
+                <p className="text-[10px] text-neutral-400 font-meta">
+                  Drag the center divider to inspect differences between Version A and Version B.
+                </p>
+              </div>
+            </div>
+
+            {/* Version B Selector */}
+            <div className="flex items-center gap-2">
+              <span className="font-meta text-xs text-neutral-400 hidden sm:inline">Compare with:</span>
+              <select
+                value={compareMockupIdx}
+                onChange={(e) => setCompareMockupIdx(Number(e.target.value))}
+                className="bg-neutral-800 border border-neutral-700 text-xs rounded-lg px-2.5 py-1 text-white outline-none"
+              >
+                {proofingMockups.map((m, idx) => (
+                  <option key={m.id} value={idx} disabled={idx === proofingIndex}>
+                    {idx === proofingIndex ? `(Current) ${m.title}` : `Version B: ${m.title}`}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setCompareMode(false)}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center font-bold text-sm text-white ml-2"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Split View Area */}
+          <div className="flex-1 flex items-center justify-center p-2 relative overflow-hidden">
+            <div className="relative aspect-video max-h-[75vh] w-full max-w-5xl rounded-2xl overflow-hidden border-2 border-purple-500/40 shadow-2xl bg-neutral-950">
+              {/* Version B (Background) */}
+              <img
+                src={proofingMockups[compareMockupIdx]?.image || activeMockup.image}
+                alt="Version B"
+                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+              />
+              <div className="absolute top-3 right-3 bg-purple-950/90 border border-purple-500/50 px-2.5 py-1 rounded-full text-[9px] font-meta text-purple-200 font-bold shadow-md">
+                Version B: {proofingMockups[compareMockupIdx]?.title || "Revised Deliverable"}
+              </div>
+
+              {/* Version A (Foreground with clip-path) */}
+              <div
+                className="absolute inset-0 overflow-hidden"
+                style={{ clipPath: `inset(0 ${100 - compareSplitPos}% 0 0)` }}
+              >
+                <img
+                  src={activeMockup.image}
+                  alt="Version A"
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                />
+                <div className="absolute top-3 left-3 bg-cyan-950/90 border border-cyan-500/50 px-2.5 py-1 rounded-full text-[9px] font-meta text-cyan-200 font-bold shadow-md">
+                  Version A (Current): {activeMockup.title}
+                </div>
+              </div>
+
+              {/* Draggable Divider Line */}
+              <div
+                className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_15px_rgba(255,255,255,0.8)] cursor-ew-resize flex items-center justify-center pointer-events-none"
+                style={{ left: `${compareSplitPos}%` }}
+              >
+                <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center font-bold text-xs shadow-2xl border-2 border-purple-600">
+                  ↔️
+                </div>
+              </div>
+
+              {/* Transparent Slider Input across Canvas */}
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={compareSplitPos}
+                onChange={(e) => setCompareSplitPos(Number(e.target.value))}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-30"
+              />
+            </div>
+          </div>
+
+          <div className="text-center pb-2">
+            <span className="font-meta text-xs text-neutral-400 bg-neutral-900 px-3 py-1 rounded-full border border-neutral-800">
+              Drag anywhere horizontally across the screen to slide comparison ({compareSplitPos}% Split)
+            </span>
           </div>
         </div>
       )}

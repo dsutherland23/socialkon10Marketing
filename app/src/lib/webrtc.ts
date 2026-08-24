@@ -621,3 +621,44 @@ export function playHandRaiseChime(): void {
     }, 1000);
   } catch {}
 }
+
+/** Play a celebratory success chime when a deliverable concept is approved */
+export function playSuccessChime(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Harmonious major triad arpeggio (C5 523.25 Hz, E5 659.25 Hz, G5 783.99 Hz, C6 1046.50 Hz)
+    const tones = [
+      { freq: 523.25, start: now, dur: 0.35 },
+      { freq: 659.25, start: now + 0.1, dur: 0.35 },
+      { freq: 783.99, start: now + 0.2, dur: 0.45 },
+      { freq: 1046.5, start: now + 0.32, dur: 0.9 },
+    ];
+
+    tones.forEach(({ freq, start, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.22, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(start + dur + 0.05);
+    });
+
+    setTimeout(() => {
+      ctx.close();
+    }, 1800);
+  } catch {}
+}
+
