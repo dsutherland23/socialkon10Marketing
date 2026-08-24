@@ -500,6 +500,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
   const [revisionText, setRevisionText] = useState("");
   const [busyAction, setBusyAction] = useState(false);
   const [uploadingVault, setUploadingVault] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; filename: string } | null>(null);
   const [dragOverVault, setDragOverVault] = useState(false);
   const vaultInputRef = useRef<HTMLInputElement>(null);
 
@@ -584,18 +585,24 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     const files = Array.from(fileList);
     if (files.length === 0) return;
     setUploadingVault(true);
+    setUploadProgress({ current: 1, total: files.length, filename: files[0].name });
     try {
-      await attachFiles(current.id, files);
+      await attachFiles(current.id, files, (curr, tot, name) => {
+        setUploadProgress({ current: curr, total: tot, filename: name });
+      });
       toast.success(`${files.length} file(s) added to project vault.`);
       onReload();
-    } catch {
-      toast.error("Failed to upload files.");
+    } catch (err) {
+      console.error("Vault upload failed:", err);
+      toast.error("Failed to upload files. Please try again.");
+    } finally {
+      setUploadingVault(false);
+      setUploadProgress(null);
     }
-    setUploadingVault(false);
   };
 
   const handleVaultUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
+    if (e.target.files && e.target.files.length > 0) {
       await processVaultFiles(e.target.files);
       e.target.value = "";
     }
@@ -619,6 +626,8 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
   const handleVaultDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    // Only clear if leaving the container
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setDragOverVault(false);
   };
 
@@ -999,6 +1008,45 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                     </button>
                   </div>
                 </div>
+
+                {/* Uploading Spinner & Progress Card */}
+                {uploadingVault && (
+                  <div className="mb-5 p-4 border border-[var(--dept)] bg-[var(--dept-soft)] rounded-xl flex items-center justify-between gap-4 animate-in fade-in">
+                    <div className="flex items-center gap-3">
+                      <svg
+                        className="animate-spin h-6 w-6 text-[var(--dept)] shrink-0"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                        />
+                      </svg>
+                      <div>
+                        <p className="font-display text-xs font-bold uppercase text-[var(--dept)]">
+                          Uploading to Vault… {uploadProgress ? `(${uploadProgress.current} of ${uploadProgress.total})` : ""}
+                        </p>
+                        <p className="font-meta text-[10px] text-[var(--muted)] truncate max-w-xs sm:max-w-md mt-0.5">
+                          {uploadProgress?.filename ? uploadProgress.filename : "Encrypting and storing asset in Cloud Storage…"}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-meta text-[9px] px-2 py-1 bg-[var(--bg)] border border-[var(--dept)]/40 rounded dept-accent shrink-0 animate-pulse">
+                      Uploading
+                    </span>
+                  </div>
+                )}
 
                 {/* Interactive Drag & Drop Area */}
                 <div

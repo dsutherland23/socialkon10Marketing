@@ -250,18 +250,61 @@ export async function setOrderStatus(id: string, status: OrderStatus): Promise<v
   await updateDoc(doc(db, "orders", id), { status });
 }
 
-/** Upload project files to Storage and attach their paths to the order. */
-export async function attachFiles(orderId: string, files: File[]): Promise<{ name: string; size: number; path?: string }[]> {
-  if (!firebaseReady || !storage || !db || files.length === 0) {
-    return files.map((f) => ({ name: f.name, size: f.size }));
-  }
-  const out = [];
-  for (const f of files) {
+/** Upload project files to Storage and attach their paths to the order (with resilient local fallback). */
+export async function attachFiles(
+  orderId: string,
+  files: File[],
+  onProgress?: (fileIndex: number, totalFiles: number, fileName: string) => void
+): Promise<{ name: string; size: number; path?: string }[]> {
+  if (files.length === 0) return [];
+  const out: { name: string; size: number; path?: string }[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    onProgress?.(i + 1, files.length, f.name);
     const path = `orders/${orderId}/${Date.now()}-${f.name.replace(/[^\w.-]/g, "_")}`;
-    await uploadBytes(ref(storage, path), f);
-    out.push({ name: f.name, size: f.size, path });
+
+    let uploaded = false;
+    if (firebaseReady && storage) {
+      try {
+        await uploadBytes(ref(storage, path), f);
+        out.push({ name: f.name, size: f.size, path });
+        uploaded = true;
+      } catch (err) {
+        console.warn("Storage upload failed, falling back to local storage:", err);
+      }
+    }
+
+    if (!uploaded) {
+      try {
+        const buf = await f.arrayBuffer();
+        const localKey = `local://${path}`;
+        await storeLocalBinary(localKey, buf);
+        out.push({ name: f.name, size: f.size, path: localKey });
+      } catch {
+        out.push({ name: f.name, size: f.size });
+      }
+    }
   }
-  await updateDoc(doc(db, "orders", orderId), { files: out });
+
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDoc(doc(db, "orders", orderId));
+      const existing = (snap.exists() ? (snap.data().files || []) : []) as { name: string; size: number; path?: string }[];
+      const combined = [...existing, ...out];
+      await updateDoc(doc(db, "orders", orderId), { files: combined });
+    } catch (err) {
+      console.warn("Error updating order files in Firestore:", err);
+    }
+  } else {
+    // Demo mode: update sk-demo-orders in IndexedDB
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet(
+      "sk-demo-orders",
+      orders.map((o) => (o.id === orderId ? { ...o, files: [...(o.files || []), ...out] } : o))
+    );
+  }
+
   return out;
 }
 
