@@ -500,6 +500,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
   const [revisionText, setRevisionText] = useState("");
   const [busyAction, setBusyAction] = useState(false);
   const [uploadingVault, setUploadingVault] = useState(false);
+  const [dragOverVault, setDragOverVault] = useState(false);
   const vaultInputRef = useRef<HTMLInputElement>(null);
 
   // Keep selectedId valid
@@ -579,11 +580,11 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     setBusyAction(false);
   };
 
-  const handleVaultUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
+  const processVaultFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
     setUploadingVault(true);
     try {
-      const files = Array.from(e.target.files);
       await attachFiles(current.id, files);
       toast.success(`${files.length} file(s) added to project vault.`);
       onReload();
@@ -591,6 +592,34 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
       toast.error("Failed to upload files.");
     }
     setUploadingVault(false);
+  };
+
+  const handleVaultUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      await processVaultFiles(e.target.files);
+      e.target.value = "";
+    }
+  };
+
+  const handleVaultDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverVault(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await processVaultFiles(e.dataTransfer.files);
+    }
+  };
+
+  const handleVaultDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragOverVault) setDragOverVault(true);
+  };
+
+  const handleVaultDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverVault(false);
   };
 
   return (
@@ -924,7 +953,26 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
 
             {/* SUB-TAB 3: Deliverables Vault */}
             {cockpitTab === "vault" && (
-              <div>
+              <div
+                className="relative"
+                onDragOver={handleVaultDragOver}
+                onDragEnter={handleVaultDragOver}
+                onDragLeave={handleVaultDragLeave}
+                onDrop={handleVaultDrop}
+              >
+                {/* Drag & Drop Full-Tab Overlay */}
+                {dragOverVault && (
+                  <div className="absolute inset-0 z-30 bg-[var(--dept)]/15 backdrop-blur-sm border-2 border-dashed border-[var(--dept)] rounded-xl flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-150">
+                    <span className="text-4xl mb-2 animate-bounce">📥</span>
+                    <p className="font-display text-sm font-bold uppercase text-[var(--dept)]">
+                      Drop files to upload to project vault
+                    </p>
+                    <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                      Logos, graphics, brand briefs, fonts, or reference images
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider">
@@ -949,6 +997,26 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                     >
                       {uploadingVault ? "Uploading…" : "+ Upload File"}
                     </button>
+                  </div>
+                </div>
+
+                {/* Interactive Drag & Drop Area */}
+                <div
+                  onClick={() => vaultInputRef.current?.click()}
+                  className={`p-5 mb-5 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${
+                    dragOverVault
+                      ? "border-[var(--dept)] bg-[var(--dept-soft)] shadow-inner"
+                      : "border-[var(--line)] bg-[var(--bg)] hover:border-[var(--dept)] hover:bg-[var(--dept-soft)]/30"
+                  }`}
+                >
+                  <div className="flex flex-col items-center justify-center gap-1.5">
+                    <span className="text-2xl">☁️</span>
+                    <p className="font-display text-xs font-bold uppercase">
+                      {uploadingVault ? "Uploading to vault…" : "Drag & drop files here, or click to browse"}
+                    </p>
+                    <p className="font-meta text-[9px] text-[var(--muted)]">
+                      Supports PNG, JPG, WebP, SVG, PDF, AI, PSD, EPS, DOCX up to 25MB each
+                    </p>
                   </div>
                 </div>
 
