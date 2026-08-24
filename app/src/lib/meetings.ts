@@ -148,6 +148,33 @@ export const DEFAULT_PROOFING_MOCKUPS: ProofingMockupItem[] = [
   },
 ];
 
+export interface CanvasStroke {
+  id: string;
+  tool: "pen" | "highlighter" | "arrow" | "rect" | "circle";
+  color: string;
+  width: number;
+  points: { x: number; y: number }[]; // percentage coordinates 0-100
+  vanishing?: boolean;
+  senderName: string;
+  createdAt: string;
+}
+
+export interface CanvasPin {
+  id: string;
+  number: number;
+  x: number; // percentage 0-100
+  y: number; // percentage 0-100
+  text: string;
+  resolved?: boolean;
+  senderName: string;
+  createdAt: string;
+}
+
+export interface MockupAnnotationState {
+  strokes: CanvasStroke[];
+  pins: CanvasPin[];
+}
+
 export interface LiveProofingState {
   active: boolean;
   mockupIndex: number;
@@ -1070,6 +1097,166 @@ export async function submitMeetingProofFeedback(
   await setMeetingLiveProofing(meetingId, {
     feedbackNotes: updatedNotes,
   });
+}
+
+/** Update strokes and pins for a specific mockup/artwork in real-time */
+export async function updateMockupAnnotations(
+  meetingId: string,
+  mockupId: string,
+  data: { strokes?: CanvasStroke[]; pins?: CanvasPin[] }
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  const safeMockupId = mockupId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  // 1. Broadcast channel for instantaneous cross-tab/window sync
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_ann_${normId}_${safeMockupId}`);
+      bc.postMessage(data);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  // 2. High-speed Firestore subcollection doc: /meetings/{normId}/annotations/{safeMockupId}
+  if (firebaseReady && db) {
+    try {
+      await setDoc(
+        doc(db, "meetings", normId, "annotations", safeMockupId),
+        cleanFirestoreObject({
+          ...data,
+          updatedAt: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn("Firestore annotation write notice:", err);
+    }
+  }
+}
+
+/** Subscribe to real-time markup strokes and pins for an artwork */
+export function subscribeToMockupAnnotations(
+  meetingId: string,
+  mockupId: string,
+  onUpdate: (data: MockupAnnotationState) => void
+): Unsubscribe {
+  const normId = normalizeRoomCode(meetingId);
+  const safeMockupId = mockupId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  let bc: BroadcastChannel | null = null;
+  let unsubDoc: Unsubscribe = () => {};
+
+  // 1. Broadcast Channel listener
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_ann_${normId}_${safeMockupId}`);
+      bc.onmessage = (e) => {
+        if (e.data && (e.data.strokes || e.data.pins)) {
+          onUpdate({
+            strokes: e.data.strokes || [],
+            pins: e.data.pins || [],
+          });
+        }
+      };
+    }
+  } catch {}
+
+  // 2. Real-time Firestore Subcollection Listener
+  if (firebaseReady && db) {
+    try {
+      unsubDoc = onSnapshot(
+        doc(db, "meetings", normId, "annotations", safeMockupId),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data) {
+              onUpdate({
+                strokes: (data.strokes as CanvasStroke[]) || [],
+                pins: (data.pins as CanvasPin[]) || [],
+              });
+            }
+          }
+        }
+      );
+    } catch (err) {
+      console.warn("Firestore annotation subscribe notice:", err);
+    }
+  }
+
+  return () => {
+    if (bc) bc.close();
+    unsubDoc();
+  };
+}
+
+/** Broadcast a vanishing ink stroke to all attendees (disappears automatically) */
+export function sendVanishingStroke(
+  meetingId: string,
+  mockupId: string,
+  stroke: CanvasStroke
+): void {
+  const normId = normalizeRoomCode(meetingId);
+  const safeMockupId = mockupId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_vanish_${normId}_${safeMockupId}`);
+      bc.postMessage(stroke);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  if (firebaseReady && db) {
+    try {
+      setDoc(
+        doc(db, "meetings", normId, "vanishing", safeMockupId),
+        cleanFirestoreObject(stroke)
+      ).catch(() => {});
+    } catch {}
+  }
+}
+
+/** Subscribe to vanishing ink strokes from peers */
+export function subscribeToVanishingStrokes(
+  meetingId: string,
+  mockupId: string,
+  onStroke: (stroke: CanvasStroke) => void
+): Unsubscribe {
+  const normId = normalizeRoomCode(meetingId);
+  const safeMockupId = mockupId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  let bc: BroadcastChannel | null = null;
+  let unsubDoc: Unsubscribe = () => {};
+
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_vanish_${normId}_${safeMockupId}`);
+      bc.onmessage = (e) => {
+        if (e.data && e.data.points) {
+          onStroke(e.data);
+        }
+      };
+    }
+  } catch {}
+
+  if (firebaseReady && db) {
+    try {
+      unsubDoc = onSnapshot(
+        doc(db, "meetings", normId, "vanishing", safeMockupId),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data && data.points) {
+              onStroke(data as any);
+            }
+          }
+        }
+      );
+    } catch {}
+  }
+
+  return () => {
+    if (bc) bc.close();
+    unsubDoc();
+  };
 }
 
 /* ---------------- Call History & Active Calls ---------------- */

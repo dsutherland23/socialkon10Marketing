@@ -33,8 +33,14 @@ import {
   submitMeetingProofFeedback,
   addMeetingProofingArtwork,
   removeMeetingProofingArtwork,
+  updateMockupAnnotations,
+  subscribeToMockupAnnotations,
+  sendVanishingStroke,
+  subscribeToVanishingStrokes,
   DEFAULT_PROOFING_MOCKUPS,
   type ProofingMockupItem,
+  type CanvasStroke,
+  type CanvasPin,
 } from "../lib/meetings";
 import {
   getMediaDevices,
@@ -104,6 +110,8 @@ function VideoTile({
    - Host moderation: mute, stop video, kick, lock meeting, end for all
 ------------------------------------------------------------------- */
 
+export type ProofingTool = "laser" | "pen" | "vanishing" | "highlighter" | "arrow" | "rect" | "circle" | "pin";
+
 export default function MeetingRoom() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
@@ -163,7 +171,38 @@ export default function MeetingRoom() {
   const [showScreenShareMenu, setShowScreenShareMenu] = useState(false);
   const meetingContainerRef = useRef<HTMLDivElement>(null);
 
-  // 2026 Creative Live Deliverables Proofing State
+  // 2026 Creative Live Deliverables Proofing & Showcase Canvas State
+  const [activeProofTool, setActiveProofTool] = useState<ProofingTool>("laser");
+  const [proofStrokeColor, setProofStrokeColor] = useState("#06b6d4"); // Default Cyan
+  const [proofStrokeWidth, setProofStrokeWidth] = useState(3);
+  const [canvasBackdrop, setCanvasBackdrop] = useState<"slate" | "black" | "white" | "grid">("slate");
+  const [safeZoneOverlay, setSafeZoneOverlay] = useState<"none" | "social_reels" | "thirds">("none");
+
+  // Markup Annotations
+  const [mockupStrokes, setMockupStrokes] = useState<CanvasStroke[]>([]);
+  const [mockupPins, setMockupPins] = useState<CanvasPin[]>([]);
+  const [vanishingStrokes, setVanishingStrokes] = useState<CanvasStroke[]>([]);
+  const [undoStack, setUndoStack] = useState<{ strokes: CanvasStroke[]; pins: CanvasPin[] }[]>([]);
+  const [redoStack, setRedoStack] = useState<{ strokes: CanvasStroke[]; pins: CanvasPin[] }[]>([]);
+
+  // In-Progress Drawing
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [activeDrawingPoints, setActiveDrawingPoints] = useState<{ x: number; y: number }[]>([]);
+
+  // Right-Click Context Menu State (Appears right under cursor)
+  const [canvasContextMenu, setCanvasContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    canvasX: number;
+    canvasY: number;
+  } | null>(null);
+
+  // Pin Drop & Comment Details
+  const [pendingPinCoord, setPendingPinCoord] = useState<{ x: number; y: number } | null>(null);
+  const [pinCommentDraft, setPinCommentDraft] = useState("");
+  const [selectedPinDetail, setSelectedPinDetail] = useState<CanvasPin | null>(null);
+
   const [proofingIndex, setProofingIndex] = useState(0);
   const [laserPointer, setLaserPointer] = useState<{ x: number; y: number; active: boolean; senderName?: string }>({ x: 50, y: 50, active: false });
   const [isProofingMaximized, setIsProofingMaximized] = useState(false);
@@ -561,6 +600,50 @@ export default function MeetingRoom() {
     }
   }, [chatMessages, activeDrawer]);
 
+  // 14. Real-Time Markup Annotations & Vanishing Ink Sync for current artwork
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting" || !activeMockup?.id) return;
+
+    const unsubAnn = subscribeToMockupAnnotations(meeting.id, activeMockup.id, (data) => {
+      setMockupStrokes(data.strokes || []);
+      setMockupPins(data.pins || []);
+    });
+
+    const unsubVanish = subscribeToVanishingStrokes(meeting.id, activeMockup.id, (stroke) => {
+      setVanishingStrokes((prev) => [...prev, stroke]);
+      setTimeout(() => {
+        setVanishingStrokes((prev) => prev.filter((s) => s.id !== stroke.id));
+      }, 3500);
+    });
+
+    return () => {
+      unsubAnn();
+      unsubVanish();
+    };
+  }, [meeting?.id, activeMockup?.id, phase]);
+
+  // 15. Close Canvas Context Menu on global click or Escape
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      if (canvasContextMenu?.visible) {
+        setCanvasContextMenu(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setCanvasContextMenu(null);
+        setPendingPinCoord(null);
+        setSelectedPinDetail(null);
+      }
+    };
+    window.addEventListener("click", handleGlobalClick);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("click", handleGlobalClick);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [canvasContextMenu]);
+
   // Handlers
   const handleToggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -744,6 +827,19 @@ export default function MeetingRoom() {
     }
   };
 
+  const getCanvasCoords = (
+    e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
+    target: HTMLElement
+  ): { x: number; y: number } | null => {
+    const rect = target.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const clientX = "touches" in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
+    return { x, y };
+  };
+
   const handleLaserClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
@@ -753,6 +849,285 @@ export default function MeetingRoom() {
     if (meeting) {
       await updateMeetingLaserPointer(meeting.id, x, y, displayName);
     }
+  };
+
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const canvasX = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const canvasY = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+    const posX = Math.min(window.innerWidth - 270, Math.max(10, e.clientX));
+    const posY = Math.min(window.innerHeight - 440, Math.max(10, e.clientY));
+
+    setCanvasContextMenu({
+      visible: true,
+      x: posX,
+      y: posY,
+      canvasX,
+      canvasY,
+    });
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button === 2) return; // Right-click handled by onContextMenu
+    const coords = getCanvasCoords(e, e.currentTarget);
+    if (!coords) return;
+
+    if (activeProofTool === "laser") {
+      handleLaserClick(e);
+      return;
+    }
+
+    if (activeProofTool === "pin") {
+      setPendingPinCoord(coords);
+      return;
+    }
+
+    setIsDrawing(true);
+    setActiveDrawingPoints([coords]);
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDrawing) return;
+    const coords = getCanvasCoords(e, e.currentTarget);
+    if (!coords) return;
+
+    setActiveDrawingPoints((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last) return [coords];
+      const dist = Math.hypot(coords.x - last.x, coords.y - last.y);
+      if (dist > 0.3) {
+        return [...prev, coords];
+      }
+      return prev;
+    });
+  };
+
+  const handleCanvasMouseUp = async () => {
+    if (!isDrawing || activeDrawingPoints.length === 0 || !meeting || !activeMockup) {
+      setIsDrawing(false);
+      setActiveDrawingPoints([]);
+      return;
+    }
+
+    const isVanishing = activeProofTool === "vanishing";
+    const newStroke: CanvasStroke = {
+      id: `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      tool: isVanishing ? "pen" : (activeProofTool as any),
+      color: proofStrokeColor,
+      width: proofStrokeWidth,
+      points: activeDrawingPoints,
+      vanishing: isVanishing,
+      senderName: displayName,
+      createdAt: new Date().toISOString(),
+    };
+
+    setIsDrawing(false);
+    setActiveDrawingPoints([]);
+
+    if (isVanishing) {
+      setVanishingStrokes((prev) => [...prev, newStroke]);
+      sendVanishingStroke(meeting.id, activeMockup.id, newStroke);
+      setTimeout(() => {
+        setVanishingStrokes((prev) => prev.filter((s) => s.id !== newStroke.id));
+      }, 3500);
+    } else {
+      const updatedStrokes = [...mockupStrokes, newStroke];
+      setUndoStack((prev) => [...prev, { strokes: mockupStrokes, pins: mockupPins }]);
+      setRedoStack([]);
+      setMockupStrokes(updatedStrokes);
+      await updateMockupAnnotations(meeting.id, activeMockup.id, {
+        strokes: updatedStrokes,
+        pins: mockupPins,
+      });
+    }
+  };
+
+  const handleSaveNewPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingPinCoord || !meeting || !activeMockup || !pinCommentDraft.trim()) return;
+
+    const newPin: CanvasPin = {
+      id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      number: mockupPins.length + 1,
+      x: pendingPinCoord.x,
+      y: pendingPinCoord.y,
+      text: pinCommentDraft.trim(),
+      resolved: false,
+      senderName: displayName,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedPins = [...mockupPins, newPin];
+    setUndoStack((prev) => [...prev, { strokes: mockupStrokes, pins: mockupPins }]);
+    setRedoStack([]);
+    setMockupPins(updatedPins);
+    setPendingPinCoord(null);
+    setPinCommentDraft("");
+
+    await updateMockupAnnotations(meeting.id, activeMockup.id, {
+      strokes: mockupStrokes,
+      pins: updatedPins,
+    });
+    toast.success(`Pin #${newPin.number} dropped!`);
+  };
+
+  const handleToggleResolvePin = async (pinId: string) => {
+    if (!meeting || !activeMockup) return;
+    const updated = mockupPins.map((p) => (p.id === pinId ? { ...p, resolved: !p.resolved } : p));
+    setMockupPins(updated);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, {
+      strokes: mockupStrokes,
+      pins: updated,
+    });
+  };
+
+  const handleDeletePin = async (pinId: string) => {
+    if (!meeting || !activeMockup) return;
+    const updated = mockupPins.filter((p) => p.id !== pinId);
+    setMockupPins(updated);
+    if (selectedPinDetail?.id === pinId) setSelectedPinDetail(null);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, {
+      strokes: mockupStrokes,
+      pins: updated,
+    });
+    toast.info("Pin removed.");
+  };
+
+  const handleUndoAnnotations = async () => {
+    if (undoStack.length === 0 || !meeting || !activeMockup) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack((stack) => stack.slice(0, -1));
+    setRedoStack((stack) => [...stack, { strokes: mockupStrokes, pins: mockupPins }]);
+    setMockupStrokes(prev.strokes);
+    setMockupPins(prev.pins);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, prev);
+    toast.info("Undo markup");
+  };
+
+  const handleRedoAnnotations = async () => {
+    if (redoStack.length === 0 || !meeting || !activeMockup) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack((stack) => stack.slice(0, -1));
+    setUndoStack((stack) => [...stack, { strokes: mockupStrokes, pins: mockupPins }]);
+    setMockupStrokes(next.strokes);
+    setMockupPins(next.pins);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, next);
+    toast.info("Redo markup");
+  };
+
+  const handleClearAnnotations = async () => {
+    if (!meeting || !activeMockup) return;
+    if (mockupStrokes.length === 0 && mockupPins.length === 0) return;
+    setUndoStack((prev) => [...prev, { strokes: mockupStrokes, pins: mockupPins }]);
+    setMockupStrokes([]);
+    setMockupPins([]);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, { strokes: [], pins: [] });
+    toast.info("Canvas markups cleared.");
+  };
+
+  const handleExportMarkedProof = () => {
+    if (!activeMockup) return;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = activeMockup.image;
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1400, img.naturalWidth || 1400);
+      canvas.height = Math.max(900, img.naturalHeight || 900);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      if (canvasBackdrop === "black") {
+        ctx.fillStyle = "#000000";
+      } else if (canvasBackdrop === "white") {
+        ctx.fillStyle = "#ffffff";
+      } else {
+        ctx.fillStyle = "#0a0a0a";
+      }
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      mockupStrokes.forEach((stroke) => {
+        if (!stroke.points || stroke.points.length < 2) return;
+        ctx.save();
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.width * (canvas.width / 900);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        if (stroke.tool === "highlighter") ctx.globalAlpha = 0.45;
+
+        if (stroke.tool === "rect" && stroke.points.length >= 2) {
+          const p0 = stroke.points[0];
+          const p1 = stroke.points[stroke.points.length - 1];
+          const x = (p0.x / 100) * canvas.width;
+          const y = (p0.y / 100) * canvas.height;
+          const w = ((p1.x - p0.x) / 100) * canvas.width;
+          const h = ((p1.y - p0.y) / 100) * canvas.height;
+          ctx.strokeRect(x, y, w, h);
+        } else if (stroke.tool === "circle" && stroke.points.length >= 2) {
+          const p0 = stroke.points[0];
+          const p1 = stroke.points[stroke.points.length - 1];
+          const cx = ((p0.x + p1.x) / 2 / 100) * canvas.width;
+          const cy = ((p0.y + p1.y) / 2 / 100) * canvas.height;
+          const rx = Math.abs((p1.x - p0.x) / 2 / 100) * canvas.width;
+          const ry = Math.abs((p1.y - p0.y) / 2 / 100) * canvas.height;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          stroke.points.forEach((pt, i) => {
+            const px = (pt.x / 100) * canvas.width;
+            const py = (pt.y / 100) * canvas.height;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+
+      mockupPins.forEach((pin) => {
+        const px = (pin.x / 100) * canvas.width;
+        const py = (pin.y / 100) * canvas.height;
+        ctx.save();
+        ctx.fillStyle = pin.resolved ? "#10b981" : "#06b6d4";
+        ctx.beginPath();
+        ctx.arc(px, py, 14 * (canvas.width / 900), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 2 * (canvas.width / 900);
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${11 * (canvas.width / 900)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(pin.number), px, py);
+        ctx.restore();
+      });
+
+      // Studio Footer Stamping
+      ctx.fillStyle = "rgba(0,0,0,0.85)";
+      ctx.fillRect(0, canvas.height - 40, canvas.width, 40);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(`Social Kon10 Studio · ${activeMockup.title} · ${new Date().toLocaleDateString()}`, 20, canvas.height - 15);
+
+      const link = document.createElement("a");
+      link.download = `proof-${activeMockup.title.toLowerCase().replace(/\s+/g, "-")}-review.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast.success("Marked Proof Exported!");
+    };
+    img.onerror = () => {
+      toast.error("Could not load image for export.");
+    };
   };
 
   const handleArtworkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2352,16 +2727,281 @@ export default function MeetingRoom() {
                     )}
                   </div>
 
-                  {/* Interactive Proofing Canvas */}
+                  {/* Markup Toolbar & Color Presets */}
+                  <div className="flex flex-wrap items-center justify-between gap-1 p-1.5 bg-neutral-900/90 rounded-lg border border-neutral-700/80 text-[10px]">
+                    {/* Tool Buttons */}
+                    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                      {[
+                        { id: "laser", icon: "🎯", label: "Laser" },
+                        { id: "pen", icon: "✏️", label: "Pen" },
+                        { id: "vanishing", icon: "✨", label: "Vanish" },
+                        { id: "highlighter", icon: "🖊️", label: "Marker" },
+                        { id: "arrow", icon: "➡️", label: "Arrow" },
+                        { id: "rect", icon: "🔲", label: "Box" },
+                        { id: "circle", icon: "⭕", label: "Circle" },
+                        { id: "pin", icon: "📍", label: "Pin" },
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setActiveProofTool(t.id as any)}
+                          className={`px-1.5 py-1 rounded flex items-center gap-0.5 font-bold transition-all ${
+                            activeProofTool === t.id
+                              ? "bg-[var(--dept)] text-black font-extrabold shadow-sm scale-105"
+                              : "bg-neutral-800 text-neutral-300 hover:text-white"
+                          }`}
+                          title={`${t.label} Tool (or Right-Click Canvas)`}
+                        >
+                          <span>{t.icon}</span>
+                          <span className="hidden sm:inline text-[8px]">{t.label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Color Dots & Actions */}
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <div className="flex items-center gap-1">
+                        {["#06b6d4", "#ec4899", "#eab308", "#22c55e", "#ef4444", "#ffffff"].map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setProofStrokeColor(c)}
+                            style={{ backgroundColor: c }}
+                            className={`w-3.5 h-3.5 rounded-full border ${
+                              proofStrokeColor === c ? "ring-2 ring-white scale-110 border-white" : "border-black/50 opacity-75 hover:opacity-100"
+                            }`}
+                            title="Color"
+                          />
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-1 border-l border-neutral-700 pl-1.5">
+                        <button
+                          type="button"
+                          onClick={handleUndoAnnotations}
+                          disabled={undoStack.length === 0}
+                          className="px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-[9px] font-bold"
+                          title="Undo Markup"
+                        >
+                          ⤺
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRedoAnnotations}
+                          disabled={redoStack.length === 0}
+                          className="px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-[9px] font-bold"
+                          title="Redo Markup"
+                        >
+                          ⤻
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearAnnotations}
+                          className="px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-red-950 text-red-400 text-[9px] font-bold"
+                          title="Clear Markups"
+                        >
+                          🧹
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExportMarkedProof}
+                          className="px-1.5 py-0.5 rounded bg-emerald-900/60 hover:bg-emerald-800 text-emerald-300 text-[9px] font-bold"
+                          title="Export Marked Image"
+                        >
+                          💾
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Interactive Proofing Canvas with Markup SVG Overlay & Right-Click */}
                   <div
-                    onClick={handleLaserClick}
-                    className="relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 cursor-crosshair group shadow-lg bg-black select-none"
+                    onContextMenu={handleCanvasContextMenu}
+                    onMouseDown={handleCanvasMouseDown}
+                    onMouseMove={handleCanvasMouseMove}
+                    onMouseUp={handleCanvasMouseUp}
+                    onTouchStart={(e) => {
+                      const coords = getCanvasCoords(e, e.currentTarget);
+                      if (!coords) return;
+                      if (activeProofTool === "pin") {
+                        setPendingPinCoord(coords);
+                        return;
+                      }
+                      if (activeProofTool !== "laser") {
+                        setIsDrawing(true);
+                        setActiveDrawingPoints([coords]);
+                      }
+                    }}
+                    onTouchMove={(e) => {
+                      if (!isDrawing) return;
+                      const coords = getCanvasCoords(e, e.currentTarget);
+                      if (!coords) return;
+                      setActiveDrawingPoints((prev) => [...prev, coords]);
+                    }}
+                    onTouchEnd={handleCanvasMouseUp}
+                    className={`relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 select-none shadow-lg ${
+                      canvasBackdrop === "black"
+                        ? "bg-black"
+                        : canvasBackdrop === "white"
+                        ? "bg-white"
+                        : canvasBackdrop === "grid"
+                        ? "bg-neutral-900 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:16px_16px]"
+                        : "bg-slate-950"
+                    } ${
+                      activeProofTool === "laser"
+                        ? "cursor-crosshair"
+                        : activeProofTool === "pin"
+                        ? "cursor-pointer"
+                        : "cursor-crosshair"
+                    }`}
                   >
                     <img
                       src={activeMockup.image}
                       alt={activeMockup.title}
-                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300 pointer-events-none"
+                      className="w-full h-full object-contain pointer-events-none"
                     />
+
+                    {/* SVG Vector Drawing Layer */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                      {mockupStrokes.map((stroke) => {
+                        if (!stroke.points || stroke.points.length < 2) return null;
+                        if (stroke.tool === "rect") {
+                          const p0 = stroke.points[0];
+                          const p1 = stroke.points[stroke.points.length - 1];
+                          const x = Math.min(p0.x, p1.x);
+                          const y = Math.min(p0.y, p1.y);
+                          const w = Math.abs(p1.x - p0.x);
+                          const h = Math.abs(p1.y - p0.y);
+                          return (
+                            <rect
+                              key={stroke.id}
+                              x={`${x}%`}
+                              y={`${y}%`}
+                              width={`${w}%`}
+                              height={`${h}%`}
+                              fill="none"
+                              stroke={stroke.color}
+                              strokeWidth={stroke.width}
+                              strokeDasharray="4 2"
+                            />
+                          );
+                        }
+                        if (stroke.tool === "circle") {
+                          const p0 = stroke.points[0];
+                          const p1 = stroke.points[stroke.points.length - 1];
+                          const cx = (p0.x + p1.x) / 2;
+                          const cy = (p0.y + p1.y) / 2;
+                          const rx = Math.abs(p1.x - p0.x) / 2;
+                          const ry = Math.abs(p1.y - p0.y) / 2;
+                          return (
+                            <ellipse
+                              key={stroke.id}
+                              cx={`${cx}%`}
+                              cy={`${cy}%`}
+                              rx={`${rx}%`}
+                              ry={`${ry}%`}
+                              fill="none"
+                              stroke={stroke.color}
+                              strokeWidth={stroke.width}
+                            />
+                          );
+                        }
+                        const pathData = stroke.points
+                          .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+                          .join(" ");
+                        return (
+                          <path
+                            key={stroke.id}
+                            d={pathData}
+                            fill="none"
+                            stroke={stroke.color}
+                            strokeWidth={stroke.width}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity={stroke.tool === "highlighter" ? 0.45 : 1}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        );
+                      })}
+
+                      {/* Active Drawing Stroke Preview */}
+                      {isDrawing && activeDrawingPoints.length >= 2 && (
+                        activeProofTool === "rect" ? (
+                          <rect
+                            x={`${Math.min(activeDrawingPoints[0].x, activeDrawingPoints[activeDrawingPoints.length - 1].x)}%`}
+                            y={`${Math.min(activeDrawingPoints[0].y, activeDrawingPoints[activeDrawingPoints.length - 1].y)}%`}
+                            width={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x)}%`}
+                            height={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y)}%`}
+                            fill="none"
+                            stroke={proofStrokeColor}
+                            strokeWidth={proofStrokeWidth}
+                            strokeDasharray="4 2"
+                          />
+                        ) : activeProofTool === "circle" ? (
+                          <ellipse
+                            cx={`${(activeDrawingPoints[0].x + activeDrawingPoints[activeDrawingPoints.length - 1].x) / 2}%`}
+                            cy={`${(activeDrawingPoints[0].y + activeDrawingPoints[activeDrawingPoints.length - 1].y) / 2}%`}
+                            rx={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x) / 2}%`}
+                            ry={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y) / 2}%`}
+                            fill="none"
+                            stroke={proofStrokeColor}
+                            strokeWidth={proofStrokeWidth}
+                          />
+                        ) : (
+                          <path
+                            d={activeDrawingPoints.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ")}
+                            fill="none"
+                            stroke={proofStrokeColor}
+                            strokeWidth={proofStrokeWidth}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity={activeProofTool === "highlighter" ? 0.45 : 1}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        )
+                      )}
+
+                      {/* Vanishing Ink Live Strokes */}
+                      {vanishingStrokes.map((stroke) => {
+                        if (!stroke.points || stroke.points.length < 2) return null;
+                        const pathData = stroke.points
+                          .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+                          .join(" ");
+                        return (
+                          <path
+                            key={stroke.id}
+                            d={pathData}
+                            fill="none"
+                            stroke={stroke.color}
+                            strokeWidth={stroke.width + 1}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="animate-pulse"
+                          />
+                        );
+                      })}
+                    </svg>
+
+                    {/* Numbered Pins */}
+                    {mockupPins.map((pin) => (
+                      <div
+                        key={pin.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedPinDetail(pin);
+                        }}
+                        className="absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer group"
+                        style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
+                      >
+                        <div
+                          className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center font-bold text-[9px] sm:text-[10px] text-white shadow-lg border-2 border-white transition-transform group-hover:scale-125 ${
+                            pin.resolved ? "bg-emerald-500 ring-2 ring-emerald-300" : "bg-[var(--dept)] text-black ring-2 ring-cyan-300"
+                          }`}
+                        >
+                          {pin.number}
+                        </div>
+                      </div>
+                    ))}
 
                     {/* Glowing Laser Pointer Indicator */}
                     {laserPointer.active && (
@@ -2381,8 +3021,9 @@ export default function MeetingRoom() {
                       </div>
                     )}
 
+                    {/* Right-Click Hint Badge */}
                     <div className="absolute bottom-1.5 right-1.5 bg-black/80 backdrop-blur-sm px-2 py-0.5 rounded text-[8px] text-neutral-300 flex items-center gap-1 pointer-events-none z-20">
-                      <span>🎯</span> Tap image to point
+                      <span>⚡</span> Right-click for markup menu
                     </div>
                   </div>
 
@@ -2812,10 +3453,10 @@ export default function MeetingRoom() {
 
       {/* Fullscreen / Theater Mode Maximized Proofing Modal */}
       {isProofingMaximized && (
-        <div className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-md flex flex-col p-3 sm:p-6 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-md flex flex-col p-2 sm:p-4 animate-in zoom-in-95 duration-200 select-none">
           {/* Top Theater Header Bar */}
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0 gap-2">
-            <div className="flex items-center gap-3 min-w-0">
+          <div className="flex flex-wrap items-center justify-between pb-2 border-b border-neutral-800 shrink-0 gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
               <span className="text-xl">🎨</span>
               <div className="min-w-0">
                 <h3 className="font-display text-sm font-bold uppercase text-white truncate max-w-xs sm:max-w-md">
@@ -2827,7 +3468,143 @@ export default function MeetingRoom() {
               </div>
             </div>
 
-            {/* Controls & Actions */}
+            {/* Showcase Markup Toolbar in Theater Mode */}
+            <div className="flex items-center gap-1.5 bg-neutral-900/90 p-1.5 rounded-xl border border-neutral-800">
+              {/* Tool Buttons */}
+              <div className="flex items-center gap-1">
+                {[
+                  { id: "laser", icon: "🎯", label: "Laser" },
+                  { id: "pen", icon: "✏️", label: "Pen" },
+                  { id: "vanishing", icon: "✨", label: "Vanish" },
+                  { id: "highlighter", icon: "🖊️", label: "Marker" },
+                  { id: "arrow", icon: "➡️", label: "Arrow" },
+                  { id: "rect", icon: "🔲", label: "Box" },
+                  { id: "circle", icon: "⭕", label: "Circle" },
+                  { id: "pin", icon: "📍", label: "Pin" },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setActiveProofTool(t.id as any)}
+                    className={`px-2 py-1 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all ${
+                      activeProofTool === t.id
+                        ? "bg-[var(--dept)] text-black font-extrabold shadow-sm scale-105"
+                        : "bg-neutral-800 text-neutral-300 hover:text-white"
+                    }`}
+                    title={`${t.label} (or Right-Click Canvas)`}
+                  >
+                    <span>{t.icon}</span>
+                    <span className="hidden md:inline">{t.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Color Swatches */}
+              <div className="hidden sm:flex items-center gap-1 border-l border-neutral-700 pl-1.5">
+                {["#06b6d4", "#ec4899", "#eab308", "#22c55e", "#ef4444", "#ffffff"].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setProofStrokeColor(c)}
+                    style={{ backgroundColor: c }}
+                    className={`w-4 h-4 rounded-full border ${
+                      proofStrokeColor === c ? "ring-2 ring-white scale-110 border-white" : "border-black/50 opacity-75 hover:opacity-100"
+                    }`}
+                  />
+                ))}
+              </div>
+
+              {/* Stroke Width */}
+              <div className="hidden lg:flex items-center gap-1 border-l border-neutral-700 pl-1.5 font-mono text-[9px]">
+                {[2, 4, 8].map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setProofStrokeWidth(w)}
+                    className={`px-1.5 py-0.5 rounded ${
+                      proofStrokeWidth === w ? "bg-[var(--dept)] text-black font-bold" : "bg-neutral-800 text-neutral-400"
+                    }`}
+                  >
+                    {w}px
+                  </button>
+                ))}
+              </div>
+
+              {/* Backdrop Modes */}
+              <div className="hidden xl:flex items-center gap-1 border-l border-neutral-700 pl-1.5">
+                {[
+                  { id: "slate", label: "Slate" },
+                  { id: "black", label: "Dark" },
+                  { id: "white", label: "Light" },
+                  { id: "grid", label: "Grid" },
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setCanvasBackdrop(b.id as any)}
+                    className={`px-1.5 py-0.5 text-[8px] rounded font-meta uppercase font-bold ${
+                      canvasBackdrop === b.id ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-neutral-400"
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Safe Zone Overlay Dropdown */}
+              <div className="hidden sm:flex items-center border-l border-neutral-700 pl-1.5">
+                <select
+                  value={safeZoneOverlay}
+                  onChange={(e) => setSafeZoneOverlay(e.target.value as any)}
+                  className="bg-neutral-800 border border-neutral-700 text-[9px] rounded-lg px-2 py-1 outline-none text-neutral-300"
+                >
+                  <option value="none">Guides: None</option>
+                  <option value="social_reels">📱 Reels/TikTok 9:16</option>
+                  <option value="thirds">📐 Rule of Thirds</option>
+                </select>
+              </div>
+
+              {/* Undo / Redo / Clear / Export */}
+              <div className="flex items-center gap-1 border-l border-neutral-700 pl-1.5">
+                <button
+                  type="button"
+                  onClick={handleUndoAnnotations}
+                  disabled={undoStack.length === 0}
+                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-xs font-bold"
+                  title="Undo Markup"
+                >
+                  ⤺
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRedoAnnotations}
+                  disabled={redoStack.length === 0}
+                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-xs font-bold"
+                  title="Redo Markup"
+                >
+                  ⤻
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAnnotations}
+                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-red-950 text-red-400 text-xs font-bold"
+                  title="Clear Markups"
+                >
+                  🧹
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportMarkedProof}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-900/70 hover:bg-emerald-800 text-emerald-300 text-[10px] font-bold flex items-center gap-1"
+                  title="Export Marked Proof as PNG"
+                >
+                  <span>💾</span>
+                  <span className="hidden md:inline">Export</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Actions & Zoom */}
             <div className="flex items-center gap-2">
               {isHost && (
                 <button
@@ -2835,7 +3612,7 @@ export default function MeetingRoom() {
                   onClick={() => setShowUploadModal(true)}
                   className="font-meta text-[10px] px-3 py-1.5 bg-[var(--dept)] text-black rounded-lg font-bold hover:brightness-110 flex items-center gap-1.5 shadow-sm shrink-0"
                 >
-                  <span>📁</span> + Upload Artwork
+                  <span>📁</span> + Upload
                 </button>
               )}
 
@@ -2843,17 +3620,15 @@ export default function MeetingRoom() {
                 <button
                   type="button"
                   onClick={() => setProofZoom((z) => Math.max(0.75, z - 0.25))}
-                  className="px-2.5 py-1 text-xs hover:bg-neutral-700 rounded text-white"
-                  title="Zoom Out"
+                  className="px-2 py-1 text-xs hover:bg-neutral-700 rounded text-white"
                 >
                   -
                 </button>
-                <span className="font-mono text-[10px] px-2 text-neutral-300">{Math.round(proofZoom * 100)}%</span>
+                <span className="font-mono text-[10px] px-1.5 text-neutral-300">{Math.round(proofZoom * 100)}%</span>
                 <button
                   type="button"
                   onClick={() => setProofZoom((z) => Math.min(3, z + 0.25))}
-                  className="px-2.5 py-1 text-xs hover:bg-neutral-700 rounded text-white"
-                  title="Zoom In"
+                  className="px-2 py-1 text-xs hover:bg-neutral-700 rounded text-white"
                 >
                   +
                 </button>
@@ -2871,24 +3646,24 @@ export default function MeetingRoom() {
                   type="button"
                   onClick={() => handleSelectProof(proofingIndex - 1)}
                   disabled={proofingIndex === 0}
-                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold"
+                  className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold"
                 >
-                  ← Prev
+                  ←
                 </button>
                 <button
                   type="button"
                   onClick={() => handleSelectProof(proofingIndex + 1)}
                   disabled={proofingIndex === proofingMockups.length - 1}
-                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold"
+                  className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold"
                 >
-                  Next →
+                  →
                 </button>
               </div>
 
               <button
                 type="button"
                 onClick={() => setIsProofingMaximized(false)}
-                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-white flex items-center justify-center font-bold text-sm ml-2"
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-white flex items-center justify-center font-bold text-sm ml-1"
                 title="Close Theater Mode"
               >
                 ✕
@@ -2896,18 +3671,225 @@ export default function MeetingRoom() {
             </div>
           </div>
 
-          {/* Large High-Res Interactive Canvas */}
-          <div className="flex-1 flex items-center justify-center overflow-auto p-4 relative select-none">
+          {/* Large High-Res Interactive Canvas with Markup SVG Layer & Right-Click */}
+          <div className="flex-1 flex items-center justify-center overflow-auto p-2 sm:p-4 relative">
             <div
-              onClick={handleLaserClick}
-              className="relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 cursor-crosshair transition-transform duration-200"
+              onContextMenu={handleCanvasContextMenu}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseUp={handleCanvasMouseUp}
+              onTouchStart={(e) => {
+                const coords = getCanvasCoords(e, e.currentTarget);
+                if (!coords) return;
+                if (activeProofTool === "pin") {
+                  setPendingPinCoord(coords);
+                  return;
+                }
+                if (activeProofTool !== "laser") {
+                  setIsDrawing(true);
+                  setActiveDrawingPoints([coords]);
+                }
+              }}
+              onTouchMove={(e) => {
+                if (!isDrawing) return;
+                const coords = getCanvasCoords(e, e.currentTarget);
+                if (!coords) return;
+                setActiveDrawingPoints((prev) => [...prev, coords]);
+              }}
+              onTouchEnd={handleCanvasMouseUp}
+              className={`relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 transition-transform duration-200 select-none ${
+                canvasBackdrop === "black"
+                  ? "bg-black"
+                  : canvasBackdrop === "white"
+                  ? "bg-white"
+                  : canvasBackdrop === "grid"
+                  ? "bg-neutral-900 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px]"
+                  : "bg-slate-950"
+              } ${
+                activeProofTool === "laser"
+                  ? "cursor-crosshair"
+                  : activeProofTool === "pin"
+                  ? "cursor-pointer"
+                  : "cursor-crosshair"
+              }`}
               style={{ transform: `scale(${proofZoom})` }}
             >
               <img
                 src={activeMockup.image}
                 alt={activeMockup.title}
-                className="max-h-[72vh] w-auto object-contain rounded-2xl pointer-events-none"
+                className="max-h-[68vh] w-auto object-contain rounded-2xl pointer-events-none"
               />
+
+              {/* SVG Vector Drawing Layer */}
+              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                {mockupStrokes.map((stroke) => {
+                  if (!stroke.points || stroke.points.length < 2) return null;
+                  if (stroke.tool === "rect") {
+                    const p0 = stroke.points[0];
+                    const p1 = stroke.points[stroke.points.length - 1];
+                    const x = Math.min(p0.x, p1.x);
+                    const y = Math.min(p0.y, p1.y);
+                    const w = Math.abs(p1.x - p0.x);
+                    const h = Math.abs(p1.y - p0.y);
+                    return (
+                      <rect
+                        key={stroke.id}
+                        x={`${x}%`}
+                        y={`${y}%`}
+                        width={`${w}%`}
+                        height={`${h}%`}
+                        fill="none"
+                        stroke={stroke.color}
+                        strokeWidth={stroke.width}
+                        strokeDasharray="4 2"
+                      />
+                    );
+                  }
+                  if (stroke.tool === "circle") {
+                    const p0 = stroke.points[0];
+                    const p1 = stroke.points[stroke.points.length - 1];
+                    const cx = (p0.x + p1.x) / 2;
+                    const cy = (p0.y + p1.y) / 2;
+                    const rx = Math.abs(p1.x - p0.x) / 2;
+                    const ry = Math.abs(p1.y - p0.y) / 2;
+                    return (
+                      <ellipse
+                        key={stroke.id}
+                        cx={`${cx}%`}
+                        cy={`${cy}%`}
+                        rx={`${rx}%`}
+                        ry={`${ry}%`}
+                        fill="none"
+                        stroke={stroke.color}
+                        strokeWidth={stroke.width}
+                      />
+                    );
+                  }
+                  const pathData = stroke.points
+                    .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+                    .join(" ");
+                  return (
+                    <path
+                      key={stroke.id}
+                      d={pathData}
+                      fill="none"
+                      stroke={stroke.color}
+                      strokeWidth={stroke.width}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={stroke.tool === "highlighter" ? 0.45 : 1}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  );
+                })}
+
+                {/* Active Drawing Stroke Preview */}
+                {isDrawing && activeDrawingPoints.length >= 2 && (
+                  activeProofTool === "rect" ? (
+                    <rect
+                      x={`${Math.min(activeDrawingPoints[0].x, activeDrawingPoints[activeDrawingPoints.length - 1].x)}%`}
+                      y={`${Math.min(activeDrawingPoints[0].y, activeDrawingPoints[activeDrawingPoints.length - 1].y)}%`}
+                      width={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x)}%`}
+                      height={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y)}%`}
+                      fill="none"
+                      stroke={proofStrokeColor}
+                      strokeWidth={proofStrokeWidth}
+                      strokeDasharray="4 2"
+                    />
+                  ) : activeProofTool === "circle" ? (
+                    <ellipse
+                      cx={`${(activeDrawingPoints[0].x + activeDrawingPoints[activeDrawingPoints.length - 1].x) / 2}%`}
+                      cy={`${(activeDrawingPoints[0].y + activeDrawingPoints[activeDrawingPoints.length - 1].y) / 2}%`}
+                      rx={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x) / 2}%`}
+                      ry={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y) / 2}%`}
+                      fill="none"
+                      stroke={proofStrokeColor}
+                      strokeWidth={proofStrokeWidth}
+                    />
+                  ) : (
+                    <path
+                      d={activeDrawingPoints.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ")}
+                      fill="none"
+                      stroke={proofStrokeColor}
+                      strokeWidth={proofStrokeWidth}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={activeProofTool === "highlighter" ? 0.45 : 1}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )
+                )}
+
+                {/* Vanishing Ink Live Strokes */}
+                {vanishingStrokes.map((stroke) => {
+                  if (!stroke.points || stroke.points.length < 2) return null;
+                  const pathData = stroke.points
+                    .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+                    .join(" ");
+                  return (
+                    <path
+                      key={stroke.id}
+                      d={pathData}
+                      fill="none"
+                      stroke={stroke.color}
+                      strokeWidth={stroke.width + 1}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="animate-pulse"
+                    />
+                  );
+                })}
+              </svg>
+
+              {/* Numbered Pins */}
+              {mockupPins.map((pin) => (
+                <div
+                  key={pin.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedPinDetail(pin);
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer group"
+                  style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
+                >
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] text-white shadow-lg border-2 border-white transition-transform group-hover:scale-125 ${
+                      pin.resolved ? "bg-emerald-500 ring-2 ring-emerald-300" : "bg-[var(--dept)] text-black ring-2 ring-cyan-300"
+                    }`}
+                  >
+                    {pin.number}
+                  </div>
+                </div>
+              ))}
+
+              {/* Safe Zone Overlays */}
+              {safeZoneOverlay === "social_reels" && (
+                <div className="absolute inset-0 pointer-events-none z-15 border-2 border-pink-500/40">
+                  <div className="absolute top-0 inset-x-0 h-[14%] bg-pink-500/10 border-b border-pink-500/30 flex items-center justify-center font-meta text-[8px] text-pink-300">
+                    Header Safe Area (Reels)
+                  </div>
+                  <div className="absolute bottom-0 inset-x-0 h-[22%] bg-pink-500/10 border-t border-pink-500/30 flex items-center justify-center font-meta text-[8px] text-pink-300">
+                    Caption & Audio Safe Area (Reels)
+                  </div>
+                  <div className="absolute right-0 top-[20%] bottom-[25%] w-[15%] bg-pink-500/10 border-l border-pink-500/30 flex items-center justify-center font-meta text-[8px] text-pink-300 [writing-mode:vertical-lr]">
+                    Action Buttons Safe Zone
+                  </div>
+                </div>
+              )}
+
+              {safeZoneOverlay === "thirds" && (
+                <div className="absolute inset-0 pointer-events-none z-15 grid grid-cols-3 grid-rows-3 border border-yellow-400/30">
+                  <div className="border-r border-b border-yellow-400/20" />
+                  <div className="border-r border-b border-yellow-400/20" />
+                  <div className="border-b border-yellow-400/20" />
+                  <div className="border-r border-b border-yellow-400/20" />
+                  <div className="border-r border-b border-yellow-400/20" />
+                  <div className="border-b border-yellow-400/20" />
+                  <div className="border-r border-yellow-400/20" />
+                  <div className="border-r border-yellow-400/20" />
+                  <div />
+                </div>
+              )}
 
               {/* Glowing Laser Pointer Indicator */}
               {laserPointer.active && (
@@ -2926,11 +3908,16 @@ export default function MeetingRoom() {
                   </div>
                 </div>
               )}
+
+              {/* Right Click Tip */}
+              <div className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-sm px-2 py-0.5 rounded text-[8px] text-neutral-300 flex items-center gap-1 pointer-events-none z-20">
+                <span>⚡</span> Right-click for tool palette
+              </div>
             </div>
           </div>
 
           {/* Bottom Feedback Action Bar & Thumbnail Selector in Theater Mode */}
-          <div className="pt-3 border-t border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <div className="pt-2 border-t border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
             {/* Thumbnail Row in Theater Mode */}
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full sm:max-w-md no-scrollbar py-0.5">
               {proofingMockups.map((m, idx) => (
@@ -3112,6 +4099,295 @@ export default function MeetingRoom() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Right-Click Canvas Showcase Context Menu (Appears right under cursor) */}
+      {canvasContextMenu?.visible && (
+        <div
+          style={{ left: `${canvasContextMenu.x}px`, top: `${canvasContextMenu.y}px` }}
+          className="fixed z-[150] w-64 bg-neutral-900/95 backdrop-blur-md border border-neutral-700 rounded-2xl shadow-2xl p-2.5 text-xs text-white animate-in zoom-in-95 duration-100 space-y-2 select-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between pb-1.5 border-b border-neutral-800 px-1">
+            <span className="font-display text-[10px] font-bold uppercase tracking-wider text-[var(--dept)] flex items-center gap-1">
+              <span>⚡</span> Showcase Markup Tools
+            </span>
+            <span className="font-meta text-[8px] text-neutral-500">Right-Click Menu</span>
+          </div>
+
+          {/* Primary Tool Switcher Grid */}
+          <div className="grid grid-cols-4 gap-1">
+            {[
+              { id: "laser", icon: "🎯", label: "Laser" },
+              { id: "pen", icon: "✏️", label: "Pen" },
+              { id: "vanishing", icon: "✨", label: "Vanish" },
+              { id: "highlighter", icon: "🖊️", label: "Marker" },
+              { id: "arrow", icon: "➡️", label: "Arrow" },
+              { id: "rect", icon: "🔲", label: "Box" },
+              { id: "circle", icon: "⭕", label: "Circle" },
+              { id: "pin", icon: "📍", label: "Pin" },
+            ].map((tool) => (
+              <button
+                key={tool.id}
+                type="button"
+                onClick={() => {
+                  setActiveProofTool(tool.id as any);
+                  setCanvasContextMenu(null);
+                }}
+                className={`flex flex-col items-center justify-center p-1.5 rounded-xl border text-[9px] font-bold transition-colors ${
+                  activeProofTool === tool.id
+                    ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold shadow-sm"
+                    : "bg-neutral-800/80 border-neutral-700 text-neutral-300 hover:bg-neutral-700"
+                }`}
+              >
+                <span className="text-sm">{tool.icon}</span>
+                <span className="truncate mt-0.5">{tool.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Color Palette & Stroke Width in Context Menu */}
+          <div className="pt-1.5 border-t border-neutral-800 space-y-1.5">
+            <div className="flex items-center justify-between px-1">
+              <span className="font-meta text-[8px] uppercase text-neutral-400">Color:</span>
+              <div className="flex gap-1.5">
+                {["#06b6d4", "#ec4899", "#eab308", "#22c55e", "#ef4444", "#ffffff"].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setProofStrokeColor(c)}
+                    style={{ backgroundColor: c }}
+                    className={`w-4 h-4 rounded-full border ${
+                      proofStrokeColor === c ? "ring-2 ring-white scale-110 border-white" : "border-black/40 opacity-80 hover:opacity-100"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <span className="font-meta text-[8px] uppercase text-neutral-400">Width:</span>
+              <div className="flex gap-1">
+                {[2, 4, 8].map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setProofStrokeWidth(w)}
+                    className={`px-2 py-0.5 text-[9px] rounded font-mono ${
+                      proofStrokeWidth === w ? "bg-[var(--dept)] text-black font-bold" : "bg-neutral-800 text-neutral-400 hover:text-white"
+                    }`}
+                  >
+                    {w}px
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Overlays & Actions */}
+          <div className="pt-1.5 border-t border-neutral-800 flex flex-col gap-1">
+            <div className="flex items-center justify-between px-1">
+              <span className="font-meta text-[8px] uppercase text-neutral-400">Safe Overlay:</span>
+              <select
+                value={safeZoneOverlay}
+                onChange={(e) => setSafeZoneOverlay(e.target.value as any)}
+                className="bg-neutral-800 border border-neutral-700 text-[9px] rounded px-1.5 py-0.5 outline-none text-neutral-300"
+              >
+                <option value="none">None</option>
+                <option value="social_reels">📱 Reels/TikTok 9:16</option>
+                <option value="thirds">📐 Rule of Thirds</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <span className="font-meta text-[8px] uppercase text-neutral-400">Backdrop:</span>
+              <div className="flex gap-1">
+                {[
+                  { id: "slate", label: "Slate" },
+                  { id: "black", label: "Dark" },
+                  { id: "white", label: "Light" },
+                  { id: "grid", label: "Grid" },
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setCanvasBackdrop(b.id as any)}
+                    className={`px-1.5 py-0.5 text-[8px] rounded ${
+                      canvasBackdrop === b.id ? "bg-[var(--dept)] text-black font-bold" : "bg-neutral-800 text-neutral-400"
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Actions: Undo, Redo, Clear, Export */}
+          <div className="pt-1.5 border-t border-neutral-800 grid grid-cols-4 gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                handleUndoAnnotations();
+                setCanvasContextMenu(null);
+              }}
+              disabled={undoStack.length === 0}
+              className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-[8.5px] font-bold text-center"
+            >
+              ⤺ Undo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleRedoAnnotations();
+                setCanvasContextMenu(null);
+              }}
+              disabled={redoStack.length === 0}
+              className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-[8.5px] font-bold text-center"
+            >
+              ⤻ Redo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleClearAnnotations();
+                setCanvasContextMenu(null);
+              }}
+              className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-red-950 text-red-400 text-[8.5px] font-bold text-center"
+            >
+              🧹 Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleExportMarkedProof();
+                setCanvasContextMenu(null);
+              }}
+              className="px-1.5 py-1 rounded bg-emerald-900/50 hover:bg-emerald-800 text-emerald-300 text-[8.5px] font-bold text-center"
+            >
+              💾 Export
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Drop Pin Revision Comment Modal */}
+      {pendingPinCoord && (
+        <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
+          <div className="w-full max-w-sm bg-neutral-900 border border-neutral-700 p-5 rounded-2xl shadow-2xl text-white space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-[var(--dept)] text-black font-bold flex items-center justify-center text-xs">
+                  {mockupPins.length + 1}
+                </span>
+                <h4 className="font-display text-xs font-bold uppercase">Drop Revision Pin #{mockupPins.length + 1}</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingPinCoord(null)}
+                className="text-neutral-400 hover:text-white text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNewPin} className="space-y-3 text-xs">
+              <div>
+                <label className="font-meta text-[9px] uppercase font-bold text-neutral-400 block mb-1">
+                  Revision Note / Client Feedback *
+                </label>
+                <textarea
+                  autoFocus
+                  required
+                  rows={3}
+                  value={pinCommentDraft}
+                  onChange={(e) => setPinCommentDraft(e.target.value)}
+                  placeholder="e.g. Change this button label to 'Book Free Audit' and increase contrast."
+                  className="w-full bg-neutral-800 border border-neutral-700 px-3 py-2 rounded-xl text-xs outline-none focus:border-[var(--dept)] text-white placeholder-neutral-500 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={!pinCommentDraft.trim()}
+                  className="btn btn-dept flex-1 !py-2 font-display text-[10px] font-bold uppercase disabled:opacity-40"
+                >
+                  Drop Pin Here
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingPinCoord(null)}
+                  className="px-3 py-2 rounded-xl border border-neutral-700 text-neutral-400 hover:text-white text-[10px] font-bold uppercase"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* View / Manage Pin Detail Dialog */}
+      {selectedPinDetail && (
+        <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
+          <div className="w-full max-w-sm bg-neutral-900 border border-neutral-700 p-5 rounded-2xl shadow-2xl text-white space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-xs ${
+                    selectedPinDetail.resolved ? "bg-emerald-500 text-white" : "bg-[var(--dept)] text-black"
+                  }`}
+                >
+                  {selectedPinDetail.number}
+                </span>
+                <div>
+                  <h4 className="font-display text-xs font-bold uppercase">
+                    Pin #{selectedPinDetail.number} {selectedPinDetail.resolved ? "· Resolved" : "· Active"}
+                  </h4>
+                  <p className="font-meta text-[8px] text-neutral-400">
+                    By {selectedPinDetail.senderName} · {new Date(selectedPinDetail.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPinDetail(null)}
+                className="text-neutral-400 hover:text-white text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 bg-neutral-800/80 rounded-xl border border-neutral-700/80 text-xs leading-relaxed text-neutral-200">
+              <p className="whitespace-pre-wrap">{selectedPinDetail.text}</p>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  handleToggleResolvePin(selectedPinDetail.id);
+                  setSelectedPinDetail((prev) => (prev ? { ...prev, resolved: !prev.resolved } : null));
+                }}
+                className={`flex-1 py-2 rounded-xl font-display text-[10px] font-bold uppercase border transition-colors ${
+                  selectedPinDetail.resolved
+                    ? "bg-neutral-800 border-neutral-700 text-neutral-300 hover:bg-neutral-700"
+                    : "bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500"
+                }`}
+              >
+                {selectedPinDetail.resolved ? "Mark as Active" : "✓ Mark as Resolved"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeletePin(selectedPinDetail.id)}
+                className="px-3 py-2 rounded-xl border border-red-500/40 bg-red-950/30 text-red-300 hover:bg-red-900/50 text-[10px] font-bold uppercase"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
