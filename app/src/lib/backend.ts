@@ -695,29 +695,39 @@ export async function uploadChatAttachment(orderId: string, file: File): Promise
 
   let url = "";
   if (firebaseReady && storage) {
-    const storageRef = ref(storage, path);
-    await uploadBytes(storageRef, file, { contentType: file.type || "application/octet-stream" });
-    url = await getDownloadURL(storageRef);
-  } else {
-    // Demo mode: read as arrayBuffer/dataUrl
-    const buffer = await file.arrayBuffer();
-    await storeLocalBinary(path, buffer);
-    if (isImg) {
-      url = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-    } else {
-      const blob = new Blob([buffer], { type: file.type || "application/octet-stream" });
-      url = URL.createObjectURL(blob);
+    try {
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file, { contentType: file.type || "application/octet-stream" });
+      url = await getDownloadURL(storageRef);
+    } catch (storageErr) {
+      console.warn("Storage upload rejected/unavailable, falling back to embedded data URL:", storageErr);
+    }
+  }
+
+  if (!url) {
+    try {
+      const buffer = await file.arrayBuffer();
+      await storeLocalBinary(path, buffer);
+      if (isImg || file.size < 4 * 1024 * 1024) {
+        url = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => resolve("");
+          reader.readAsDataURL(file);
+        });
+      } else {
+        const blob = new Blob([buffer], { type: file.type || "application/octet-stream" });
+        url = URL.createObjectURL(blob);
+      }
+    } catch (e) {
+      console.error("Local buffer fallback error:", e);
     }
   }
 
   return {
     id: `ATT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: file.name,
-    url,
+    url: url || "#",
     size: file.size,
     type,
     mimeType: file.type,

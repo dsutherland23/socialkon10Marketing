@@ -12,10 +12,10 @@ service firebase.storage {
         && request.auth.token.email.lower() in ['socialkon10@gmail.com'];
     }
 
-    // Orders attachments: upload during checkout / order details
-    match /orders/{orderId}/{fileName} {
+    // Orders attachments: upload during checkout / order details / chat uploads
+    match /orders/{orderId}/{allPaths=**} {
       allow write: if request.resource.size < 25 * 1024 * 1024;
-      allow read: if isAdmin() || request.auth != null;
+      allow read: if true;
     }
 
     // Portfolio + CMS image uploads: admin writes, public reads
