@@ -370,23 +370,27 @@ export default function MeetingRoom() {
     }
   };
 
-  const handleToggleMic = () => {
+  const handleToggleMic = async () => {
+    if (!localStream || localStream.getAudioTracks().length === 0) {
+      await requestMediaPermissions();
+      return;
+    }
     const next = !isMicMuted;
     setIsMicMuted(next);
-    if (localStream) {
-      localStream.getAudioTracks().forEach((t) => (t.enabled = !next));
-    }
+    localStream.getAudioTracks().forEach((t) => (t.enabled = !next));
     if (meeting && phase === "in_meeting") {
       updateParticipant(meeting.id, myParticipantId, { isMuted: next });
     }
   };
 
-  const handleToggleVideo = () => {
+  const handleToggleVideo = async () => {
+    if (!localStream || localStream.getVideoTracks().length === 0) {
+      await requestMediaPermissions();
+      return;
+    }
     const next = !isVideoOff;
     setIsVideoOff(next);
-    if (localStream) {
-      localStream.getVideoTracks().forEach((t) => (t.enabled = !next));
-    }
+    localStream.getVideoTracks().forEach((t) => (t.enabled = !next));
     if (meeting && phase === "in_meeting") {
       updateParticipant(meeting.id, myParticipantId, { isVideoOff: next });
     }
@@ -623,61 +627,76 @@ export default function MeetingRoom() {
           </p>
         </div>
 
-        {/* Hardware access error/warning banner */}
-        {hardwareError && (
-          <div className="mb-6 p-4 border border-amber-500/40 bg-amber-500/10 text-amber-300 rounded-xl text-xs flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <span className="text-lg shrink-0">⚠️</span>
+        {/* Prominent Mobile Camera & Mic Permission Callout */}
+        {!localStream && (
+          <div className="mb-6 p-4 border-2 border-[var(--dept)] bg-[var(--dept-soft)] rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[var(--dept)] text-[var(--on-dept)] flex items-center justify-center text-xl shrink-0 font-bold">
+                📹
+              </div>
               <div>
-                <p className="font-bold uppercase tracking-wider text-[11px]">Camera &amp; Microphone Permission Needed</p>
-                <p className="mt-0.5 opacity-90">{hardwareError}</p>
-                <p className="font-meta text-[9.5px] mt-1 opacity-75">
-                  Mobile browsers require you to tap "Allow" below or enable access in your address bar.
+                <p className="font-display text-xs font-bold uppercase text-[var(--ink)]">
+                  Camera &amp; Microphone Access Required
+                </p>
+                <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+                  {hardwareError || 'Mobile browsers (Safari/Chrome) require you to tap "Allow" to enable your camera preview.'}
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowPermissionGuide(true)}
-              className="shrink-0 px-3 py-1.5 bg-amber-400 text-black font-display text-[9px] font-bold uppercase rounded-lg hover:bg-amber-300 shadow-sm"
-            >
-              📱 Mobile Guide
-            </button>
+            <div className="flex gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={requestMediaPermissions}
+                className="btn btn-dept !py-2 !px-4 font-display text-[10px] font-bold uppercase shadow-sm flex items-center gap-1.5"
+              >
+                <span>🎙️</span> Tap to Allow
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPermissionGuide(true)}
+                className="font-meta text-[10px] px-3 py-2 rounded-lg border border-[var(--line-strong)] bg-[var(--bg)] text-[var(--ink)] hover:border-[var(--dept)]"
+              >
+                📱 Guide
+              </button>
+            </div>
           </div>
         )}
 
         <div className="grid lg:grid-cols-12 gap-8 items-start">
           {/* LEFT: Video Preview & Volume Level */}
           <div className="lg:col-span-7 border border-[var(--line)] rounded-2xl bg-[var(--panel)] overflow-hidden shadow-lg p-4 sm:p-6">
-            <div className="relative aspect-video bg-neutral-950 rounded-xl overflow-hidden flex items-center justify-center border border-[var(--line)]">
+            <div className="relative aspect-video min-h-[220px] bg-neutral-950 rounded-xl overflow-hidden flex items-center justify-center border border-[var(--line)]">
               {!isVideoOff && localStream ? (
                 <VideoTile stream={localStream} muted={true} isMirrored={true} />
               ) : (
-                <div className="text-center p-6 flex flex-col items-center justify-center">
+                <div className="text-center p-6 flex flex-col items-center justify-center w-full h-full">
                   {!localStream ? (
-                    <div className="space-y-3">
-                      <div className="w-16 h-16 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-2xl mx-auto dept-accent">
+                    <div className="space-y-3 w-full max-w-sm flex flex-col items-center">
+                      <div className="w-16 h-16 rounded-2xl bg-[var(--dept-soft)] border-2 border-[var(--dept)] flex items-center justify-center text-3xl dept-accent shadow-md">
                         🎙️
                       </div>
                       <div>
-                        <p className="font-display text-xs font-bold uppercase text-white">Enable Camera &amp; Microphone</p>
-                        <p className="text-[11px] text-neutral-400 max-w-xs mt-1">
-                          Tap below to grant access or join with audio only.
+                        <p className="font-display text-sm font-bold uppercase text-white">
+                          Camera &amp; Microphone
+                        </p>
+                        <p className="text-xs text-neutral-300 mt-1">
+                          Tap below to grant access or join in listen mode.
                         </p>
                       </div>
-                      <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
+                      <div className="flex flex-col gap-2 w-full pt-1">
                         <button
                           type="button"
                           onClick={requestMediaPermissions}
-                          className="btn btn-dept !py-2 !px-4 font-display text-[10px] font-bold uppercase tracking-wider"
+                          className="btn btn-dept w-full !py-3 font-display text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-2"
                         >
-                          🎙️ Allow Media Access
+                          <span>🎙️</span> Tap to Enable Camera &amp; Mic
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowPermissionGuide(true)}
-                          className="font-meta text-[9.5px] px-3 py-1.5 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 hover:text-white"
+                          className="font-meta text-[10px] py-1.5 px-3 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 hover:text-white"
                         >
-                          📱 How-To Guide
+                          📱 How to Allow on iPhone / Android
                         </button>
                       </div>
                     </div>
@@ -692,29 +711,31 @@ export default function MeetingRoom() {
                 </div>
               )}
 
-              {/* In-Preview Controls */}
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-3 bg-neutral-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-neutral-700">
-                <button
-                  type="button"
-                  onClick={handleToggleMic}
-                  className={`p-2.5 rounded-full text-sm font-bold transition-colors ${
-                    isMicMuted ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
-                  }`}
-                  title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
-                >
-                  {isMicMuted ? "🔇" : "🎙️"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleToggleVideo}
-                  className={`p-2.5 rounded-full text-sm font-bold transition-colors ${
-                    isVideoOff ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
-                  }`}
-                  title={isVideoOff ? "Turn Video On" : "Turn Video Off"}
-                >
-                  {isVideoOff ? "🚫" : "📹"}
-                </button>
-              </div>
+              {/* In-Preview Controls (Only shown when localStream is active) */}
+              {localStream && (
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-3 bg-neutral-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-neutral-700 shadow-md">
+                  <button
+                    type="button"
+                    onClick={handleToggleMic}
+                    className={`p-2.5 rounded-full text-sm font-bold transition-colors ${
+                      isMicMuted ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
+                    }`}
+                    title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
+                  >
+                    {isMicMuted ? "🔇" : "🎙️"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleVideo}
+                    className={`p-2.5 rounded-full text-sm font-bold transition-colors ${
+                      isVideoOff ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
+                    }`}
+                    title={isVideoOff ? "Turn Video On" : "Turn Video Off"}
+                  >
+                    {isVideoOff ? "🚫" : "📹"}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Live Audio Level Meter */}
@@ -1138,8 +1159,17 @@ export default function MeetingRoom() {
               {!isVideoOff && localStream ? (
                 <VideoTile stream={localStream} muted={true} isMirrored={true} />
               ) : (
-                <div className="w-16 h-16 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-xl font-bold dept-accent">
-                  {displayName.slice(0, 2).toUpperCase()}
+                <div className="flex flex-col items-center justify-center p-4 text-center">
+                  <div className="w-16 h-16 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-xl font-bold dept-accent mb-2">
+                    {displayName.slice(0, 2).toUpperCase()}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleVideo}
+                    className="font-meta text-[9.5px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 hover:text-white rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <span>📹</span> Enable Camera
+                  </button>
                 </div>
               )}
 
