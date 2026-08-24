@@ -294,18 +294,23 @@ export class WebRTCMeshSession {
   }
 }
 
-/** Request screen share stream (window, tab, or entire display) */
-export async function getDisplayMediaStream(): Promise<MediaStream> {
+/** Request screen share stream (window, specific app software, tab, or entire display) */
+export async function getDisplayMediaStream(options?: {
+  preferWindow?: boolean;
+  withAudio?: boolean;
+}): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error("Screen sharing is not supported in this browser.");
   }
   return navigator.mediaDevices.getDisplayMedia({
     video: {
       cursor: "always",
-      displaySurface: "monitor",
+      displaySurface: options?.preferWindow ? "window" : undefined,
     } as any,
-    audio: true,
-  });
+    audio: options?.withAudio ?? true,
+    selfBrowserSurface: "include",
+    systemAudio: "include",
+  } as any);
 }
 
 /** Stop all tracks on a media stream */
@@ -580,5 +585,39 @@ export function playDoorbellChime(): void {
     setTimeout(() => {
       ctx.close();
     }, 1500);
+  } catch {}
+}
+
+/** Play an attention-grabbing dual-bell chime when a participant raises their hand */
+export function playHandRaiseChime(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const notes = [440.0, 880.0]; // A4 -> A5 ascending octave chime
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const start = now + i * 0.15;
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.5);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(start + 0.55);
+    });
+
+    setTimeout(() => {
+      ctx.close();
+    }, 1000);
   } catch {}
 }

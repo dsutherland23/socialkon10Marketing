@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -640,9 +641,10 @@ export async function sendMeetingChatMessage(
   message: string,
   recipientId?: string
 ): Promise<MeetingChatMessage> {
+  const normId = normalizeRoomCode(meetingId);
   const chatMsg: MeetingChatMessage = {
     id: `chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    meetingId,
+    meetingId: normId,
     senderId,
     senderName,
     senderRole,
@@ -651,16 +653,25 @@ export async function sendMeetingChatMessage(
     createdAt: new Date().toISOString(),
   };
 
+  // Broadcast via local channel for instant tab-to-tab responsiveness
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_chat_${normId}`);
+      bc.postMessage(chatMsg);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
   if (firebaseReady && db) {
     try {
-      await addDoc(collection(db, "meetings", meetingId, "chat"), chatMsg);
+      await addDoc(collection(db, "meetings", normId, "chat"), chatMsg);
       return chatMsg;
     } catch (err) {
       console.warn("Firestore chat error, using local storage:", err);
     }
   }
 
-  const key = `sk_chat_${meetingId}`;
+  const key = `sk_chat_${normId}`;
   const existing: MeetingChatMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
   existing.push(chatMsg);
   localStorage.setItem(key, JSON.stringify(existing));
@@ -671,29 +682,141 @@ export function subscribeToMeetingChat(
   meetingId: string,
   onMessages: (msgs: MeetingChatMessage[]) => void
 ): Unsubscribe {
+  const normId = normalizeRoomCode(meetingId);
+  let unsubFirestore = () => {};
+
   if (firebaseReady && db) {
-    const q = query(collection(db, "meetings", meetingId, "chat"), orderBy("createdAt", "asc"));
-    return onSnapshot(
-      q,
-      (snap) => {
-        onMessages(snap.docs.map((d) => d.data() as MeetingChatMessage));
-      },
-      () => {
-        const key = `sk_chat_${meetingId}`;
-        const local = JSON.parse(localStorage.getItem(key) || "[]");
-        onMessages(local);
-      }
-    );
+    try {
+      const q = query(collection(db, "meetings", normId, "chat"), orderBy("createdAt", "asc"));
+      unsubFirestore = onSnapshot(
+        q,
+        (snap) => {
+          onMessages(snap.docs.map((d) => d.data() as MeetingChatMessage));
+        },
+        (err) => {
+          console.warn("Firestore chat subscription error, fallback to local:", err);
+          const key = `sk_chat_${normId}`;
+          const local = JSON.parse(localStorage.getItem(key) || "[]");
+          onMessages(local);
+        }
+      );
+    } catch {
+      const key = `sk_chat_${normId}`;
+      const local = JSON.parse(localStorage.getItem(key) || "[]");
+      onMessages(local);
+    }
   }
 
-  const key = `sk_chat_${meetingId}`;
-  const poll = () => {
-    const local = JSON.parse(localStorage.getItem(key) || "[]");
-    onMessages(local);
+  let bc: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_chat_${normId}`);
+      bc.onmessage = (e) => {
+        if (e.data && e.data.message) {
+          const key = `sk_chat_${normId}`;
+          const current: MeetingChatMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
+          if (!current.some((m) => m.id === e.data.id)) {
+            current.push(e.data);
+            localStorage.setItem(key, JSON.stringify(current));
+            onMessages(current);
+          }
+        }
+      };
+    }
+  } catch {}
+
+  return () => {
+    unsubFirestore();
+    if (bc) bc.close();
   };
-  poll();
-  const interval = setInterval(poll, 1500);
-  return () => clearInterval(interval);
+}
+
+/* ---------------- Real-Time In-Meeting Emoji Reactions ---------------- */
+
+export interface MeetingReactionEvent {
+  id: string;
+  senderId: string;
+  senderName: string;
+  emoji: string;
+  x: number;
+  createdAt: number;
+}
+
+export async function sendMeetingReaction(
+  meetingId: string,
+  senderId: string,
+  senderName: string,
+  emoji: string,
+  x: number
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  const data: MeetingReactionEvent = {
+    id: `rx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    senderId,
+    senderName,
+    emoji,
+    x,
+    createdAt: Date.now(),
+  };
+
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_reactions_${normId}`);
+      bc.postMessage(data);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  if (firebaseReady && db) {
+    try {
+      await addDoc(collection(db, "meetings", normId, "reactions"), data);
+    } catch {}
+  }
+}
+
+export function subscribeToMeetingReactions(
+  meetingId: string,
+  onReaction: (rx: MeetingReactionEvent) => void
+): Unsubscribe {
+  const normId = normalizeRoomCode(meetingId);
+  let unsubFirestore = () => {};
+
+  if (firebaseReady && db) {
+    try {
+      const q = query(
+        collection(db, "meetings", normId, "reactions"),
+        orderBy("createdAt", "desc"),
+        limit(5)
+      );
+      unsubFirestore = onSnapshot(q, (snap) => {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const rx = change.doc.data() as MeetingReactionEvent;
+            if (Date.now() - rx.createdAt < 5000) {
+              onReaction(rx);
+            }
+          }
+        });
+      });
+    } catch {}
+  }
+
+  let bc: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_reactions_${normId}`);
+      bc.onmessage = (e) => {
+        if (e.data && e.data.emoji) {
+          onReaction(e.data);
+        }
+      };
+    }
+  } catch {}
+
+  return () => {
+    unsubFirestore();
+    if (bc) bc.close();
+  };
 }
 
 /* ---------------- Call History & Active Calls ---------------- */
