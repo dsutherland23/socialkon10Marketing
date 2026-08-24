@@ -243,6 +243,28 @@ export function isMeetingJoinable(meeting: MeetingRecord): { canJoin: boolean; r
   return { canJoin: true };
 }
 
+/* ---------------- Tolerant Room Code Normalization ---------------- */
+
+/** Normalize room IDs replacing all unicode dashes (en-dash, em-dash, non-breaking), URL prefixes, and whitespace */
+export function normalizeRoomCode(input: string): string {
+  if (!input) return "";
+  return input
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D—–-]/g, "-") // Convert all unicode hyphens/en-dashes/em-dashes to standard ASCII hyphen
+    .replace(/^https?:\/\/[^\/]+\/meet\//i, "")
+    .replace(/^socialkon10\.pro\/meet\//i, "")
+    .replace(/^www\.socialkon10\.pro\/meet\//i, "")
+    .replace(/^\/meet\//i, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+/** Extract pure alphanumeric characters for fuzzy key lookup (e.g. SKZZMNQSUWUZ) */
+export function getAlphanumericRoomKey(input: string): string {
+  if (!input) return "";
+  return normalizeRoomCode(input).replace(/[^A-Z0-9]/gi, "").toUpperCase();
+}
+
 /* ---------------- Meeting CRUD & Live Sync ---------------- */
 
 export async function createMeeting(
@@ -252,6 +274,7 @@ export async function createMeeting(
   const now = new Date().toISOString();
   // Using roomId as document ID ensures direct 1-step O(1) resolution and perfect realtime subscriptions!
   const id = roomId;
+  const alphaKey = getAlphanumericRoomKey(roomId);
 
   const meeting: MeetingRecord = {
     ...data,
@@ -265,6 +288,10 @@ export async function createMeeting(
   if (firebaseReady && db) {
     try {
       await setDoc(doc(db, "meetings", id), meeting);
+      if (alphaKey && alphaKey !== id) {
+        // Also save alphanumeric key alias so copy/paste variations match in 1 step!
+        await setDoc(doc(db, "meetings", alphaKey), meeting);
+      }
     } catch (err) {
       console.warn("Firestore createMeeting error, saving to IDB fallback:", err);
       await setIdbItem(STORE_MEETINGS, meeting);
@@ -286,6 +313,10 @@ export async function updateMeeting(
   if (firebaseReady && db) {
     try {
       await updateDoc(doc(db, "meetings", id), payload);
+      const alphaKey = getAlphanumericRoomKey(id);
+      if (alphaKey && alphaKey !== id) {
+        await updateDoc(doc(db, "meetings", alphaKey), payload).catch(() => {});
+      }
       return;
     } catch (err) {
       console.warn("Firestore updateMeeting error:", err);
@@ -303,6 +334,10 @@ export async function deleteMeeting(id: string): Promise<void> {
   if (firebaseReady && db) {
     try {
       await deleteDoc(doc(db, "meetings", id));
+      const alphaKey = getAlphanumericRoomKey(id);
+      if (alphaKey && alphaKey !== id) {
+        await deleteDoc(doc(db, "meetings", alphaKey)).catch(() => {});
+      }
     } catch (err) {
       console.warn("Firestore deleteMeeting error:", err);
     }
@@ -310,57 +345,63 @@ export async function deleteMeeting(id: string): Promise<void> {
   await removeIdbItem(STORE_MEETINGS, id);
 }
 
-/** Robust, case-insensitive, hyphen-tolerant meeting lookup */
+/** Robust, unicode-tolerant, case-insensitive meeting lookup */
 export async function getMeetingById(idOrRoomId: string): Promise<MeetingRecord | null> {
   if (!idOrRoomId) return null;
   const raw = idOrRoomId.trim();
-  const clean = raw.toUpperCase();
-  const digitsOnly = raw.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+  const normalized = normalizeRoomCode(raw);
+  const alphaKey = getAlphanumericRoomKey(raw);
 
   if (firebaseReady && db) {
     try {
-      // 1. Direct doc by uppercase ID
-      const snap1 = await getDoc(doc(db, "meetings", clean));
-      if (snap1.exists()) return snap1.data() as MeetingRecord;
+      // 1. Direct doc by normalized ID (e.g. SK-ZZM-NQSU-WUZ)
+      if (normalized) {
+        const snap1 = await getDoc(doc(db, "meetings", normalized));
+        if (snap1.exists()) return snap1.data() as MeetingRecord;
+      }
 
-      // 2. Direct doc by raw ID
-      const snap2 = await getDoc(doc(db, "meetings", raw));
-      if (snap2.exists()) return snap2.data() as MeetingRecord;
+      // 2. Direct doc by alphanumeric key (e.g. SKZZMNQSUWUZ)
+      if (alphaKey) {
+        const snap2 = await getDoc(doc(db, "meetings", alphaKey));
+        if (snap2.exists()) return snap2.data() as MeetingRecord;
+      }
 
-      // 3. Scan all meetings in collection (handles legacy docs & format variations)
+      // 3. Direct doc by raw ID
+      const snap3 = await getDoc(doc(db, "meetings", raw));
+      if (snap3.exists()) return snap3.data() as MeetingRecord;
+
+      // 4. Scan all meetings in collection (handles legacy docs & format variations)
       const allSnap = await getDocs(collection(db, "meetings"));
       const found = allSnap.docs
         .map((d) => d.data() as MeetingRecord)
         .find((m) => {
-          const mRoom = m.roomId?.toUpperCase() || "";
-          const mId = m.id?.toUpperCase() || "";
-          const mDigits = mRoom.replace(/[^A-Z0-9]/gi, "");
+          const mNorm = normalizeRoomCode(m.roomId || m.id || "");
+          const mAlpha = getAlphanumericRoomKey(m.roomId || m.id || "");
           return (
-            mRoom === clean ||
-            mId === clean ||
-            mRoom === raw ||
-            mId === raw ||
-            (digitsOnly.length >= 4 && mDigits === digitsOnly)
+            mNorm === normalized ||
+            mAlpha === alphaKey ||
+            (alphaKey.length >= 4 && mAlpha.includes(alphaKey)) ||
+            m.roomId === raw ||
+            m.id === raw
           );
         });
       if (found) return found;
     } catch (err) {
-      console.warn("Firestore getMeetingById error:", err);
+      console.warn("Firestore getMeetingById notice:", err);
     }
   }
 
   const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
   return (
     items.find((m) => {
-      const mRoom = m.roomId?.toUpperCase() || "";
-      const mId = m.id?.toUpperCase() || "";
-      const mDigits = mRoom.replace(/[^A-Z0-9]/gi, "");
+      const mNorm = normalizeRoomCode(m.roomId || m.id || "");
+      const mAlpha = getAlphanumericRoomKey(m.roomId || m.id || "");
       return (
-        mRoom === clean ||
-        mId === clean ||
-        mRoom === raw ||
-        mId === raw ||
-        (digitsOnly.length >= 4 && mDigits === digitsOnly)
+        mNorm === normalized ||
+        mAlpha === alphaKey ||
+        (alphaKey.length >= 4 && mAlpha.includes(alphaKey)) ||
+        m.roomId === raw ||
+        m.id === raw
       );
     }) || null
   );
@@ -370,7 +411,14 @@ export async function listAllMeetings(): Promise<MeetingRecord[]> {
   if (firebaseReady && db) {
     try {
       const snap = await getDocs(collection(db, "meetings"));
-      const list = snap.docs.map((d) => d.data() as MeetingRecord);
+      const map = new Map<string, MeetingRecord>();
+      snap.docs.forEach((d) => {
+        const data = d.data() as MeetingRecord;
+        if (data.id && !map.has(data.id)) {
+          map.set(data.id, data);
+        }
+      });
+      const list = Array.from(map.values());
       if (list.length > 0) {
         return list.sort((a, b) => new Date(b.scheduledStart).getTime() - new Date(a.scheduledStart).getTime());
       }
@@ -383,15 +431,21 @@ export async function listAllMeetings(): Promise<MeetingRecord[]> {
   return items.sort((a, b) => new Date(b.scheduledStart).getTime() - new Date(a.scheduledStart).getTime());
 }
 
-export async function listUserMeetings(userEmail: string): Promise<MeetingRecord[]> {
+export async function listUserMeetings(userEmail: string, aliases?: string[]): Promise<MeetingRecord[]> {
   const all = await listAllMeetings();
-  const emailNorm = userEmail.toLowerCase().trim();
+  const searchEmails = [userEmail, ...(aliases || [])]
+    .map((e) => e.toLowerCase().trim())
+    .filter(Boolean);
+
   return all.filter((m) => {
-    const hostMatch = m.hostEmail?.toLowerCase().trim() === emailNorm;
-    const partMatch = m.participants?.some(
-      (p) => p.email?.toLowerCase().trim() === emailNorm || p.displayName?.toLowerCase().trim() === emailNorm
-    );
-    return hostMatch || partMatch;
+    const hostEmail = m.hostEmail?.toLowerCase().trim() || "";
+    const isHost = searchEmails.includes(hostEmail);
+    const isParticipant = m.participants?.some((p) => {
+      const pEmail = p.email?.toLowerCase().trim() || "";
+      const pName = p.displayName?.toLowerCase().trim() || "";
+      return searchEmails.some((se) => pEmail === se || pName === se || (se.includes("@") && pEmail === se));
+    });
+    return isHost || isParticipant;
   });
 }
 
@@ -406,12 +460,13 @@ export function subscribeToMeeting(
   }
 
   const raw = idOrRoomId.trim();
-  const clean = raw.toUpperCase();
+  const normalized = normalizeRoomCode(raw);
+  const alphaKey = getAlphanumericRoomKey(raw);
+  const targetKey = normalized || alphaKey || raw;
 
   if (firebaseReady && db) {
-    // 1. First attach real-time snapshot to direct doc (clean uppercase)
-    const docRef = doc(db, "meetings", clean);
     let resolved = false;
+    const docRef = doc(db, "meetings", targetKey);
 
     const unsub = onSnapshot(
       docRef,
@@ -457,6 +512,7 @@ export function subscribeToMeeting(
     clearInterval(interval);
   };
 }
+
 
 /* ---------------- Participant Management & Moderation ---------------- */
 

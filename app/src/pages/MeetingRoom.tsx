@@ -24,6 +24,7 @@ import {
   sendWebRTCSignal,
   subscribeToWebRTCSignals,
   downloadCalendarIcs,
+  normalizeRoomCode,
 } from "../lib/meetings";
 import {
   getMediaDevices,
@@ -154,12 +155,13 @@ export default function MeetingRoom() {
 
   // 1. Load & Subscribe to Meeting
   useEffect(() => {
-    if (!roomId) {
+    const cleanRoomId = normalizeRoomCode(decodeURIComponent(roomId || ""));
+    if (!cleanRoomId) {
       setLoadingMeeting(false);
       return;
     }
     setLoadingMeeting(true);
-    const unsub = subscribeToMeeting(roomId, (m) => {
+    const unsub = subscribeToMeeting(cleanRoomId, (m) => {
       setMeeting(m);
       setLoadingMeeting(false);
 
@@ -614,15 +616,40 @@ export default function MeetingRoom() {
 
   if (!meeting) {
     return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
-        <span className="text-4xl mb-3">📡</span>
-        <h2 className="font-display text-xl font-bold uppercase">Meeting Not Found</h2>
-        <p className="text-xs text-[var(--muted)] mt-2">
-          The requested meeting room ID <code className="text-[var(--ink)]">"{roomId}"</code> does not exist or has expired.
+      <div className="min-h-[80vh] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto space-y-4">
+        <span className="text-4xl">📡</span>
+        <h2 className="font-display text-xl font-bold uppercase">Meeting Not Found or Inactive</h2>
+        <p className="text-xs text-[var(--muted)]">
+          The requested meeting room code <code className="text-[var(--ink)] font-bold">"{roomId}"</code> was not found. Please double-check the code or re-enter below.
         </p>
-        <button onClick={() => navigate("/client")} className="btn btn-dept mt-6">
-          Return to Portal
-        </button>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const form = e.currentTarget as HTMLFormElement;
+            const inputVal = (form.elements.namedItem("reCode") as HTMLInputElement).value.trim();
+            const clean = normalizeRoomCode(inputVal);
+            if (clean) navigate(`/meet/${clean}`);
+          }}
+          className="w-full p-4 bg-[var(--panel)] border border-[var(--line)] rounded-xl flex gap-2 shadow-sm"
+        >
+          <input
+            name="reCode"
+            type="text"
+            required
+            placeholder="Paste code or link (e.g. SK-ZZM-NQSU-WUZ)"
+            className="flex-1 bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs rounded-lg outline-none font-mono focus:border-[var(--dept)]"
+          />
+          <button type="submit" className="btn btn-dept !py-2 !px-3 font-display text-[10px] font-bold uppercase shrink-0">
+            Join →
+          </button>
+        </form>
+
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button onClick={() => navigate("/client")} className="btn btn-ghost !py-2 !px-4 text-xs">
+            Return to Client Portal
+          </button>
+        </div>
       </div>
     );
   }

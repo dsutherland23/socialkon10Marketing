@@ -29,6 +29,7 @@ import {
   downloadCalendarIcs,
   isMeetingJoinable,
   getMeetingShareDetails,
+  normalizeRoomCode,
   type MeetingRecord,
 } from "../lib/meetings";
 import {
@@ -1206,23 +1207,33 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
   );
 }
 
-function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
+function ClientMeetingsHub({ userEmail, userAliases }: { userEmail: string; userAliases?: string[] }) {
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [callingStudio, setCallingStudio] = useState(false);
 
   const reload = async () => {
-    const list = await listUserMeetings(userEmail);
+    const list = await listUserMeetings(userEmail, userAliases);
     setMeetings(list);
     setLoading(false);
   };
 
   useEffect(() => {
     reload();
-  }, [userEmail]);
+  }, [userEmail, JSON.stringify(userAliases)]);
 
-  const upcomingMeetings = meetings.filter((m) => m.status === "scheduled" || m.status === "live");
-  const pastMeetings = meetings.filter((m) => m.status === "completed");
+  // Check if a scheduled session is in the past / expired (>15 mins after end)
+  const isMeetingExpired = (m: MeetingRecord) => {
+    if (m.status === "completed" || m.status === "cancelled") return true;
+    if (m.status === "live") return false;
+    const startMs = new Date(m.scheduledStart).getTime();
+    const durationMs = (m.durationMinutes || 30) * 60000;
+    const endMs = m.scheduledEnd ? new Date(m.scheduledEnd).getTime() : startMs + durationMs;
+    return Date.now() > endMs + 15 * 60 * 1000;
+  };
+
+  const upcomingMeetings = meetings.filter((m) => !isMeetingExpired(m) && (m.status === "scheduled" || m.status === "live"));
+  const historyMeetings = meetings.filter((m) => isMeetingExpired(m) || m.status === "completed" || m.status === "cancelled");
 
   const handleRsvp = async (meetingId: string, participantId: string, status: "accepted" | "declined") => {
     await updateParticipant(meetingId, participantId, { status });
@@ -1352,7 +1363,7 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
           onSubmit={(e) => {
             e.preventDefault();
             const input = (e.currentTarget.elements.namedItem("joinCode") as HTMLInputElement).value.trim();
-            const clean = input.replace(/^https?:\/\/[^\/]+\/meet\//, "");
+            const clean = normalizeRoomCode(input);
             if (clean) window.open(`/meet/${clean}`, "_blank");
           }}
           className="flex w-full sm:w-auto gap-2"
@@ -1532,55 +1543,90 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
         )}
       </div>
 
-      {/* Past Completed Meetings & AI Summaries */}
-      {pastMeetings.length > 0 && (
+      {/* Compact History Section: Past & Missed Sessions */}
+      {historyMeetings.length > 0 && (
         <div className="space-y-4 pt-6 border-t border-[var(--line)]">
-          <h4 className="font-display text-sm font-bold uppercase tracking-wider">
-            Past Meetings &amp; Action Items ({pastMeetings.length})
-          </h4>
-          <div className="space-y-4">
-            {pastMeetings.map((m) => (
-              <div key={m.id} className="p-5 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h5 className="font-display text-sm font-bold uppercase">{m.title}</h5>
-                    <p className="font-meta text-[9px] text-[var(--muted)]">
-                      Completed on {new Date(m.scheduledStart).toLocaleDateString()} · Host: {m.hostName}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => downloadCalendarIcs(m)}
-                    className="font-meta text-[9px] px-2.5 py-1 rounded border border-[var(--line)] hover:border-[var(--dept)]"
-                  >
-                    .ICS
-                  </button>
-                </div>
+          <div className="flex items-center justify-between">
+            <h4 className="font-display text-sm font-bold uppercase tracking-wider">
+              Meeting &amp; Call History ({historyMeetings.length})
+            </h4>
+            <span className="font-meta text-[9px] text-[var(--muted)]">
+              Completed, missed &amp; past creative reviews
+            </span>
+          </div>
 
-                {m.intelligence && (
-                  <div className="p-4 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-xs space-y-3">
-                    <div>
-                      <p className="font-display font-bold uppercase dept-accent text-[10.5px]">✨ AI Summary</p>
-                      <p className="text-[var(--muted)] mt-1 leading-relaxed">{m.intelligence.summary}</p>
+          <div className="space-y-3">
+            {historyMeetings.map((m) => {
+              const isMissed = isMeetingExpired(m) && m.status !== "completed" && m.status !== "cancelled";
+              const isCompleted = m.status === "completed";
+              const dateStr = new Date(m.scheduledStart).toLocaleDateString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              });
+              const timeStr = new Date(m.scheduledStart).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              });
+
+              return (
+                <div
+                  key={m.id}
+                  className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm hover:border-[var(--dept)]/50 transition-colors"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-meta text-[8.5px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                          isCompleted
+                            ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
+                            : isMissed
+                            ? "bg-amber-500/10 text-amber-500 border-amber-500/30"
+                            : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"
+                        }`}
+                      >
+                        {isCompleted ? "✓ Completed" : isMissed ? "⏳ Missed / Expired" : "✕ " + m.status}
+                      </span>
+                      <h5 className="font-display text-xs font-bold uppercase text-[var(--ink)]">{m.title}</h5>
                     </div>
 
-                    {m.intelligence.actionItems.length > 0 && (
-                      <div className="pt-2 border-t border-[var(--line)]">
-                        <p className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] mb-1.5">Action Items</p>
-                        <div className="space-y-1">
-                          {m.intelligence.actionItems.map((act, idx) => (
-                            <div key={idx} className="flex items-start gap-2 text-[11px]">
-                              <span className="text-emerald-500">✓</span>
-                              <span className="text-[var(--ink)] font-medium">{act.task}</span>
-                              <span className="font-meta text-[9px] text-[var(--muted)] ml-auto">({act.dueDate})</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                    <p className="font-meta text-[9.5px] text-[var(--muted)]">
+                      📅 {dateStr} at {timeStr} · Host: {m.hostName} · Duration: {m.durationMinutes} mins
+                    </p>
+
+                    {isMissed && (
+                      <p className="font-meta text-[9px] text-amber-500/90 font-medium">
+                        ℹ️ Scheduled time has passed. Need to reconnect? Click Instant Call Studio below.
+                      </p>
+                    )}
+
+                    {m.intelligence?.summary && (
+                      <p className="text-xs text-[var(--muted)] line-clamp-2 pt-1">
+                        ✨ <strong className="text-[var(--ink)]">AI Summary:</strong> {m.intelligence.summary}
+                      </p>
                     )}
                   </div>
-                )}
-              </div>
-            ))}
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handleInstantCallStudio}
+                      disabled={callingStudio}
+                      className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase tracking-wider shadow-sm"
+                    >
+                      📞 Call Studio
+                    </button>
+                    <button
+                      onClick={() => downloadCalendarIcs(m)}
+                      className="font-meta text-[9px] px-2 py-1 rounded border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)]"
+                      title="Download .ICS"
+                    >
+                      .ICS
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1600,6 +1646,10 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
       setLoading(false);
     })();
   }, [user]);
+
+  const userAliases = Array.from(
+    new Set([user?.email, user?.displayName, ...orders.map((o) => o.email), ...orders.map((o) => o.name)].filter(Boolean) as string[])
+  );
 
   return (
     <div>
@@ -1626,7 +1676,7 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
       </div>
 
       {tab === "Meetings & Calls" && (
-        <ClientMeetingsHub userEmail={user?.email || ""} />
+        <ClientMeetingsHub userEmail={user?.email || ""} userAliases={userAliases} />
       )}
 
       {tab === "My Templates" && (loading ? (

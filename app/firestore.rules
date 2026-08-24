@@ -156,6 +156,28 @@ service cloud.firestore {
         || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
+    // Studio Meetings & Live Video Communications
+    match /meetings/{meetingId} {
+      allow read, write: if true;
+
+      match /chat/{chatId} {
+        allow read, write: if true;
+      }
+
+      match /signals/{signalId} {
+        allow read, write: if true;
+      }
+
+      match /{sub=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Live Calls & Consultation Records
+    match /call_history/{callId} {
+      allow read, write: if true;
+    }
+
     // Fallback block
     match /{document=**} {
       allow read, write: if false;
