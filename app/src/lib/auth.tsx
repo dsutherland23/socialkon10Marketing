@@ -7,6 +7,9 @@ import {
   signInWithPopup,
   sendPasswordResetEmail,
   sendEmailVerification,
+  sendSignInLinkToEmail,
+  isSignInWithEmailLink,
+  signInWithEmailLink,
   updateProfile,
   signOut as fbSignOut,
   type User,
@@ -31,6 +34,8 @@ interface AuthState {
   signInGoogle: () => Promise<string | null>;
   resetPassword: (email: string) => Promise<string | null>;
   resendVerification: () => Promise<string | null>;
+  sendMagicLink: (email: string) => Promise<string | null>;
+  completeMagicLink: () => Promise<string | null>;
   signOut: () => Promise<void>;
 }
 
@@ -41,6 +46,8 @@ const AuthCtx = createContext<AuthState>({
   signInGoogle: async () => "Auth unavailable",
   resetPassword: async () => "Auth unavailable",
   resendVerification: async () => "Auth unavailable",
+  sendMagicLink: async () => "Auth unavailable",
+  completeMagicLink: async () => "Auth unavailable",
   signOut: async () => {},
 });
 
@@ -121,6 +128,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!auth?.currentUser) return "Not signed in.";
       try {
         await sendEmailVerification(auth.currentUser);
+        return null;
+      } catch (e) { return errMsg(e); }
+    },
+
+    sendMagicLink: async (email) => {
+      const g = guard(); if (g) return g;
+      try {
+        const actionCodeSettings = {
+          url: `${window.location.origin}/client?magic=1`,
+          handleCodeInApp: true,
+        };
+        await sendSignInLinkToEmail(auth!, email, actionCodeSettings);
+        localStorage.setItem("sk_magic_link_email", email);
+        return null;
+      } catch (e) { return errMsg(e); }
+    },
+
+    completeMagicLink: async () => {
+      if (!auth || !isSignInWithEmailLink(auth, window.location.href)) return null;
+      let email = localStorage.getItem("sk_magic_link_email");
+      if (!email) email = window.prompt("Please confirm your email address for sign-in:");
+      if (!email) return "Email required to complete sign-in.";
+      try {
+        await signInWithEmailLink(auth, email, window.location.href);
+        localStorage.removeItem("sk_magic_link_email");
+        // Strip the magic link params from the URL without a hard reload
+        const url = new URL(window.location.href);
+        url.searchParams.delete("apiKey");
+        url.searchParams.delete("oobCode");
+        url.searchParams.delete("mode");
+        url.searchParams.delete("magic");
+        window.history.replaceState({}, "", url.toString());
         return null;
       } catch (e) { return errMsg(e); }
     },

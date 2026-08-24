@@ -539,8 +539,23 @@ function Dashboard() {
 
 export default function ClientPortal() {
   useDepartment(null);
-  const { user, loading } = useAuth();
+  const { user, loading, completeMagicLink } = useAuth();
   useSEO({ title: "Client Portal — Social Kon10 Marketing", description: "Track your project status, payments, files and next steps.", path: "/client" });
+
+  // Enhancement 4: complete passwordless magic-link sign-in when user lands here from email
+  useEffect(() => {
+    if (!firebaseReady) return;
+    completeMagicLink().then(async (err) => {
+      if (!err && firebaseReady) {
+        // Give Firebase auth state a moment to update, then claim any guest orders
+        setTimeout(async () => {
+          const { auth } = await import("../lib/firebase");
+          if (auth?.currentUser) await claimOrders(auth.currentUser);
+        }, 800);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <section className="wrap pt-14 md:pt-20 pb-24 min-h-[70vh]">

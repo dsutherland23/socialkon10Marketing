@@ -311,6 +311,14 @@ export default function TemplateDetail() {
     navigate("/checkout");
   };
 
+  /** Enhancement 3: 1-click "Buy Now" — skips straight to the Payment step. */
+  const buyNow = () => {
+    add(templateCartItem(tpl, license, false));
+    track("template_buy_now", { template: tpl.slug, license });
+    sessionStorage.setItem("sk_quick_checkout", "1");
+    navigate("/checkout");
+  };
+
   /* free templates — account required, same entitlement architecture (§34) */
   const claimFree = async () => {
     if (firebaseReady && !user) {
@@ -406,12 +414,18 @@ export default function TemplateDetail() {
                   </Link>
                 </>
               ) : (
-                <button className="btn btn-dept justify-center" onClick={() => buy(false)}>
-                  Buy Template — {money(price)} <span className="btn-arrow" aria-hidden>→</span>
-                </button>
+                <>
+                  <button className="btn btn-dept justify-center" onClick={() => buy(false)}>
+                    Buy Template — {money(price)} <span className="btn-arrow" aria-hidden>→</span>
+                  </button>
+                  {/* Enhancement 3: Buy Now skips directly to Payment */}
+                  <button className="btn btn-fill justify-center" onClick={buyNow}>
+                    ⚡ Buy Now — Skip to Payment
+                  </button>
+                </>
               )}
               {tpl.customizeAvailable && !free && (
-                <button className="btn btn-fill justify-center" onClick={() => buy(true)}>
+                <button className="btn btn-ghost justify-center" onClick={() => buy(true)}>
                   Template + Professional Customization — {money(price + tpl.customizePrice)}
                 </button>
               )}

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { CONTACT, formatMoney } from "../lib/data";
 import { useDepartment } from "../lib/dept";
@@ -20,6 +20,16 @@ const STEPS = ["Project", "Details", "Files", "Payment", "Done"] as const;
 const ACCEPTED = [".pdf", ".jpg", ".jpeg", ".png", ".svg", ".docx", ".zip", ".mp4", ".mp3"];
 const MAX_MB = 25;
 
+/** Google G icon — used on the "Continue with Google" button */
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+    <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+    <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+    <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+    <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+  </svg>
+);
+
 interface Details { name: string; company: string; email: string; phone: string; website: string; industry: string; audience: string; goals: string; deadline: string; colors: string; style: string; extra: string }
 
 export default function Checkout() {
@@ -39,8 +49,19 @@ export default function Checkout() {
   const [acctPass, setAcctPass] = useState("");
   const [acctError, setAcctError] = useState<string | null>(null);
   const [acctDone, setAcctDone] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [magicSent, setMagicSent] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const { user, signUp } = useAuth();
+  const { user, signUp, signInGoogle, sendMagicLink } = useAuth();
+
+  // Enhancement 3: quick-checkout — set by "Buy Now" on template detail pages
+  useEffect(() => {
+    if (sessionStorage.getItem("sk_quick_checkout") === "1" && items.length > 0) {
+      sessionStorage.removeItem("sk_quick_checkout");
+      setStep(3); // skip straight to Payment
+    }
+  }, [items.length]);
+
 
   useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure, pay your deposit and start your project.", path: "/checkout" });
 
@@ -117,13 +138,20 @@ export default function Checkout() {
       // order persistence must not block a paid confirmation
       setOrderId(`SK-${String(Date.now()).slice(-6)}`);
     }
+
+    // Enhancement 4: Send magic access link so guest can log in from email
+    if (firebaseReady && !user && details.email) {
+      const err = await sendMagicLink(details.email);
+      if (!err) setMagicSent(true);
+    }
+
     setPaying(false);
     track("purchase", { value: dueToday, transaction_id: res.transactionId });
     setStep(4);
     clear();
   };
 
-  /** Post-purchase: create the client account and claim this order. */
+  /** Post-purchase: create the client account with email + password and claim this order. */
   const createAccount = async () => {
     setAcctError(null);
     const err = await signUp(details.email, acctPass);
@@ -131,6 +159,17 @@ export default function Checkout() {
     setAcctDone(true);
     // claimOrders runs on next portal visit too; try immediately
     if (fbAuth?.currentUser) await claimOrders(fbAuth.currentUser);
+  };
+
+  /** Post-purchase: 1-tap Google sign-in and claim orders. Enhancement 2. */
+  const signInWithGoogle = async () => {
+    setGoogleBusy(true);
+    setAcctError(null);
+    const err = await signInGoogle();
+    if (err) { setAcctError(err); setGoogleBusy(false); return; }
+    setAcctDone(true);
+    if (fbAuth?.currentUser) await claimOrders(fbAuth.currentUser);
+    setGoogleBusy(false);
   };
 
   const inputCls = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
@@ -344,13 +383,37 @@ export default function Checkout() {
             </div>
             <p className="font-meta text-[10px] text-[var(--muted)] mt-8">Questions? {CONTACT.phone} · {CONTACT.email}</p>
 
+            {/* Enhancement 4: Magic link notice */}
+            {magicSent && (
+              <div className="mt-6 max-w-sm mx-auto border border-[var(--dept)] p-4 text-left" style={{ background: "var(--dept-soft)" }}>
+                <p className="font-meta text-[9px] dept-accent mb-1">✉ MAGIC ACCESS LINK SENT</p>
+                <p className="text-sm">We emailed a 1-click sign-in link to <strong>{details.email}</strong> — click it to access your designs & order history instantly, no password needed.</p>
+              </div>
+            )}
+
             {/* client account creation / portal access */}
             {firebaseReady && !user && !acctDone && (
               <div className="mt-8 max-w-sm mx-auto border border-[var(--line)] p-6 text-left">
                 <span className="idx">/client-portal</span>
                 <p className="font-display text-base font-bold uppercase mt-2">Track this project</p>
-                <p className="text-[13px] text-[var(--muted)] mt-1">Set a password to create your client account — your order, files and messages live there.</p>
-                <label className="font-meta text-[10px] text-[var(--muted)] block mt-4 mb-1.5" htmlFor="acct-email">Email</label>
+                <p className="text-[13px] text-[var(--muted)] mt-1">Create your account to track orders, access files, and open templates in the editor.</p>
+
+                {/* Enhancement 2: Google 1-tap sign-in */}
+                <button
+                  disabled={googleBusy}
+                  onClick={signInWithGoogle}
+                  className="mt-4 w-full flex items-center justify-center gap-3 border border-[var(--line)] bg-white text-zinc-800 px-4 py-3 text-sm font-medium hover:border-[var(--dept)] transition-colors disabled:opacity-60"
+                >
+                  <GoogleIcon /> {googleBusy ? "Signing in…" : "Continue with Google"}
+                </button>
+
+                <div className="flex items-center gap-3 my-4">
+                  <div className="flex-1 h-px bg-[var(--line)]" />
+                  <span className="font-meta text-[9px] text-[var(--muted)]">OR SET A PASSWORD</span>
+                  <div className="flex-1 h-px bg-[var(--line)]" />
+                </div>
+
+                <label className="font-meta text-[10px] text-[var(--muted)] block mb-1.5" htmlFor="acct-email">Email</label>
                 <input id="acct-email" className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm" value={details.email} readOnly />
                 <label className="font-meta text-[10px] text-[var(--muted)] block mt-3 mb-1.5" htmlFor="acct-pass">Choose a password</label>
                 <input id="acct-pass" type="password" className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)]" value={acctPass} onChange={(e) => setAcctPass(e.target.value)} />
