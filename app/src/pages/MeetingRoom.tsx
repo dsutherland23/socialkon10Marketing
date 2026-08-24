@@ -1956,19 +1956,30 @@ export default function MeetingRoom() {
 
         {/* Slide-in Drawers (Chat, Participants, AI Intelligence, Breakouts, Live Proofing) */}
         {activeDrawer !== "none" && (
-          <div className="fixed inset-0 z-50 md:static md:w-80 sm:md:w-96 md:border-l md:border-neutral-800 bg-neutral-950 md:bg-neutral-900 flex flex-col shrink-0 animate-in slide-in-from-right duration-200">
-            {/* Drawer Header */}
-            <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
-              <h3 className="font-display text-xs font-bold uppercase tracking-wider text-white">
-                {activeDrawer === "chat" && "💬 In-Meeting Chat"}
-                {activeDrawer === "participants" && `👥 Participants (${activeParticipants.length})`}
-                {activeDrawer === "proofing" && "🎨 Live Deliverables Proofing"}
-                {activeDrawer === "intelligence" && "✨ AI Meeting Intelligence"}
-                {activeDrawer === "breakouts" && "🔀 Breakout Rooms"}
-              </h3>
+          <div className="fixed inset-0 z-50 md:static md:w-80 lg:w-96 md:h-auto md:max-h-full h-[100dvh] max-h-[100dvh] bg-neutral-950 md:bg-neutral-900 border-t md:border-t-0 md:border-l border-neutral-800 flex flex-col shrink-0 animate-in slide-in-from-bottom-5 md:slide-in-from-right duration-200">
+            {/* Drawer Header (Mobile-Optimized with Back Button & Close) */}
+            <div className="px-4 py-3 sm:py-3.5 border-b border-neutral-800 flex items-center justify-between shrink-0 bg-neutral-900/90 backdrop-blur-md">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveDrawer("none")}
+                  className="md:hidden flex items-center gap-1 text-xs text-[var(--dept)] font-bold px-2 py-1 -ml-1 rounded-lg hover:bg-neutral-800"
+                >
+                  <span>←</span>
+                  <span className="font-meta text-[10px] uppercase">Back</span>
+                </button>
+                <h3 className="font-display text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                  {activeDrawer === "chat" && "💬 Live Chat"}
+                  {activeDrawer === "participants" && `👥 People (${activeParticipants.length})`}
+                  {activeDrawer === "proofing" && "🎨 Deliverables Proofing"}
+                  {activeDrawer === "intelligence" && "✨ AI Intelligence"}
+                  {activeDrawer === "breakouts" && "🔀 Breakout Rooms"}
+                </h3>
+              </div>
               <button
                 onClick={() => setActiveDrawer("none")}
-                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-sm font-bold"
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-sm font-bold transition-colors"
+                title="Close Drawer"
               >
                 ✕
               </button>
@@ -1976,38 +1987,108 @@ export default function MeetingRoom() {
 
             {/* DRAWER: CHAT */}
             {activeDrawer === "chat" && (
-              <div className="flex-1 flex flex-col p-4 overflow-hidden">
-                <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+              <div className="flex-1 flex flex-col h-full overflow-hidden bg-neutral-950 md:bg-neutral-900/50">
+                {/* Chat Message Stream */}
+                <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3 text-xs">
                   {chatMessages.length === 0 ? (
-                    <p className="text-neutral-500 text-center py-8">No messages yet. Say hello!</p>
+                    <div className="text-center py-12 px-4 space-y-2">
+                      <span className="text-3xl">💬</span>
+                      <p className="font-display text-xs font-bold uppercase text-neutral-300">
+                        In-Meeting Public Chat
+                      </p>
+                      <p className="font-meta text-[10px] text-neutral-500 max-w-xs mx-auto">
+                        Messages sent here are visible to all admitted attendees in this session.
+                      </p>
+                    </div>
                   ) : (
-                    chatMessages.map((msg) => (
-                      <div key={msg.id} className="p-2.5 rounded-lg bg-neutral-800/80 border border-neutral-700/50">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="font-display font-bold text-[11px] text-cyan-400">
-                            {msg.senderName} {msg.senderId === myParticipantId ? "(You)" : ""}
-                          </span>
-                          <span className="font-meta text-[8.5px] text-neutral-500">
-                            {new Date(msg.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                          </span>
+                    chatMessages.map((msg) => {
+                      const isMe = msg.senderId === myParticipantId;
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex flex-col ${isMe ? "items-end" : "items-start"} max-w-[92%] ${isMe ? "ml-auto" : "mr-auto"}`}
+                        >
+                          <div className="flex items-center gap-1.5 mb-1 px-1">
+                            <span
+                              className={`font-display text-[10.5px] font-bold ${
+                                isMe
+                                  ? "text-[var(--dept)]"
+                                  : msg.senderRole === "host"
+                                  ? "text-amber-400"
+                                  : "text-cyan-400"
+                              }`}
+                            >
+                              {msg.senderName} {isMe ? "(You)" : ""}
+                            </span>
+                            {msg.senderRole === "host" && (
+                              <span className="bg-amber-500/20 text-amber-300 text-[8px] font-bold px-1 rounded">
+                                HOST
+                              </span>
+                            )}
+                            <span className="font-meta text-[8px] text-neutral-500">
+                              {new Date(msg.createdAt).toLocaleTimeString([], {
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+
+                          <div
+                            className={`p-2.5 sm:p-3 rounded-2xl text-xs break-words shadow-sm leading-relaxed ${
+                              isMe
+                                ? "bg-[var(--dept)]/15 border border-[var(--dept)]/35 text-white rounded-tr-none"
+                                : "bg-neutral-800/90 border border-neutral-700/60 text-neutral-200 rounded-tl-none"
+                            }`}
+                          >
+                            <p className="whitespace-pre-wrap">{msg.message}</p>
+                          </div>
                         </div>
-                        <p className="text-neutral-200 text-xs break-words">{msg.message}</p>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                   <div ref={chatEndRef} />
                 </div>
 
-                <form onSubmit={handleSendChat} className="mt-3 pt-3 border-t border-neutral-800 flex gap-2">
+                {/* Quick Emoji Reaction Tap Chips on Mobile */}
+                <div className="px-3 py-1.5 bg-neutral-900 border-t border-neutral-800/80 flex items-center justify-between gap-1 overflow-x-auto no-scrollbar shrink-0">
+                  <span className="font-meta text-[8px] text-neutral-500 uppercase shrink-0 mr-1">Quick:</span>
+                  {["👍", "❤️", "👏", "🎉", "🔥", "💯", "❓"].map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => {
+                        setChatDraft((prev) => (prev ? `${prev} ${emoji}` : emoji));
+                      }}
+                      className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs transition-transform"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Mobile Safe-Area Chat Input Form */}
+                <form
+                  onSubmit={handleSendChat}
+                  className="p-2.5 sm:p-3 bg-neutral-900 border-t border-neutral-800 flex gap-2 items-center shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]"
+                >
                   <input
                     type="text"
                     value={chatDraft}
                     onChange={(e) => setChatDraft(e.target.value)}
-                    placeholder="Type a message to everyone…"
-                    className="flex-1 bg-neutral-800 border border-neutral-700 px-3 py-2 rounded text-xs outline-none focus:border-cyan-400 text-white placeholder-neutral-500"
+                    placeholder="Type message to everyone…"
+                    className="flex-1 bg-neutral-800 border border-neutral-700 focus:border-[var(--dept)] px-3 py-2.5 rounded-xl text-[16px] md:text-xs outline-none text-white placeholder-neutral-500 shadow-inner"
+                    enterKeyHint="send"
+                    autoComplete="off"
+                    autoCorrect="on"
+                    autoCapitalize="sentences"
                   />
-                  <button type="submit" className="btn btn-dept !py-2 !px-3 font-meta text-[10px]">
-                    Send
+                  <button
+                    type="submit"
+                    disabled={!chatDraft.trim()}
+                    className="btn btn-dept !py-2.5 !px-4 min-h-[42px] font-display text-[11px] font-bold uppercase disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center gap-1.5 shadow-md"
+                  >
+                    <span>Send</span>
+                    <span className="text-xs">➤</span>
                   </button>
                 </form>
               </div>
