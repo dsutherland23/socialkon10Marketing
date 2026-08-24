@@ -228,6 +228,7 @@ export default function MeetingRoom() {
   const [isProofingMaximized, setIsProofingMaximized] = useState(false);
   const [proofZoom, setProofZoom] = useState(1);
   const [proofFeedbackDraft, setProofFeedbackDraft] = useState("");
+  const [dismissedProofBannerKey, setDismissedProofBannerKey] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Artwork Upload & Management State
@@ -2374,9 +2375,14 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* Floating Alert When Live Proofing is Active & Drawer is Closed */}
-      {meeting.liveProofing?.active && activeDrawer !== "proofing" && !isProofingMaximized && (
-        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 border-2 border-[var(--dept)] p-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-4 max-w-md w-[92%] animate-in slide-in-from-top-3">
+      {/* Floating Alert When Live Proofing is Active & Drawer is Closed (Attendees Only, Dismissable) */}
+      {meeting.liveProofing?.active &&
+        !isHost &&
+        meeting.liveProofing.presenterId !== myParticipantId &&
+        activeDrawer !== "proofing" &&
+        !isProofingMaximized &&
+        dismissedProofBannerKey !== `${meeting.liveProofing.mockupIndex}` && (
+        <div className="absolute top-20 sm:top-24 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 border-2 border-[var(--dept)] p-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 max-w-md w-[92%] animate-in slide-in-from-top-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-xl bg-[var(--dept)]/20 border border-[var(--dept)]/40 text-[var(--dept)] flex items-center justify-center text-base shrink-0 animate-pulse">
               🎨
@@ -2390,13 +2396,26 @@ export default function MeetingRoom() {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setActiveDrawer("proofing")}
-            className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shrink-0 flex items-center gap-1 shadow-md"
-          >
-            👁️ Open Proof Canvas
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveDrawer("proofing");
+                setDismissedProofBannerKey(`${meeting.liveProofing?.mockupIndex}`);
+              }}
+              className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shrink-0 flex items-center gap-1 shadow-md"
+            >
+              👁️ Open Proof Canvas
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissedProofBannerKey(`${meeting.liveProofing?.mockupIndex}`)}
+              className="w-7 h-7 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white flex items-center justify-center text-xs font-bold"
+              title="Dismiss notification"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -2410,6 +2429,21 @@ export default function MeetingRoom() {
           <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 hidden sm:inline">
             {activeParticipants.length} Connected
           </span>
+          {meeting.liveProofing?.active && (
+            <button
+              type="button"
+              onClick={() => setActiveDrawer("proofing")}
+              className={`font-meta text-[9px] px-2 py-0.5 rounded border flex items-center gap-1 transition-colors ${
+                activeDrawer === "proofing" || isProofingMaximized
+                  ? "bg-[var(--dept)] text-black border-[var(--dept)] font-bold"
+                  : "bg-neutral-800 text-cyan-300 border-cyan-500/40 hover:bg-cyan-950/60"
+              }`}
+              title="Click to open Deliverable Proofing Showcase"
+            >
+              <span>🎨</span>
+              <span className="hidden md:inline">Proof #{meeting.liveProofing.mockupIndex + 1} Active</span>
+            </button>
+          )}
           {pinnedParticipantId && (
             <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
               <span>⭐</span> Spotlight View
