@@ -44,7 +44,8 @@ service cloud.firestore {
             || (request.resource.data.from == 'client'
                 && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid)
           );
-        allow update, delete: if isAdmin();
+        allow update, delete: if isAdmin()
+          || (signedIn() && resource.data.from == 'client' && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid);
       }
     }
 

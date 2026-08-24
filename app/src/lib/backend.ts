@@ -832,6 +832,23 @@ export async function postMessage(
   }
 }
 
+/** Delete a message and its attachments from the project thread. */
+export async function deleteMessage(orderId: string, messageId: string): Promise<void> {
+  // 1. Delete from local IndexedDB cache
+  const localList = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
+  const updated = localList.filter((m) => !(m.orderId === orderId && m.id === messageId));
+  await idbSet("sk-demo-messages", updated);
+
+  // 2. Delete from Firestore
+  if (firebaseReady && db && !messageId.startsWith("MSG-")) {
+    try {
+      await deleteDoc(doc(db, "orders", orderId, "messages", messageId));
+    } catch (err) {
+      console.warn("Firestore deleteDoc error:", err);
+    }
+  }
+}
+
 /* ---------------- quote → payable order (PRD §70) ---------------- */
 
 /** Convert a lead into a payable proposal the client can accept and pay in the portal. */

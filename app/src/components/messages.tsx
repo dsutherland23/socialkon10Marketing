@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   listMessages,
   postMessage,
+  deleteMessage,
   uploadChatAttachment,
   type MessageAttachment,
   type MessageRecord,
@@ -151,6 +152,14 @@ export function MessageThread({
     setBusy(false);
   };
 
+  const handleDelete = async (msgId: string) => {
+    if (!window.confirm("Delete this message and its attachments?")) return;
+    setMessages((prev) => prev.filter((m) => m.id !== msgId));
+    toast.success("Message removed");
+    await deleteMessage(orderId, msgId);
+    reload();
+  };
+
   return (
     <div
       ref={dropZoneRef}
@@ -191,15 +200,29 @@ export function MessageThread({
 
         {messages.map((m) => {
           const isMe = m.from === from;
+          const canDelete = isMe || from === "studio";
           return (
             <div
               key={m.id}
-              className={`max-w-[88%] flex flex-col gap-1.5 ${isMe ? "self-end items-end" : "self-start items-start"}`}
+              className={`group max-w-[88%] flex flex-col gap-1.5 ${isMe ? "self-end items-end" : "self-start items-start"}`}
             >
-              {/* Sender label */}
-              <span className="font-meta text-[9px] text-[var(--muted)] px-1">
-                {m.from === "studio" ? "🎨 SOCIAL KON10 STUDIO" : `👤 ${m.author || "Client"}`} · {m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-              </span>
+              {/* Sender label and delete action */}
+              <div className={`flex items-center gap-2 px-1 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
+                <span className="font-meta text-[9px] text-[var(--muted)]">
+                  {m.from === "studio" ? "🎨 SOCIAL KON10 STUDIO" : `👤 ${m.author || "Client"}`} · {m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                </span>
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(m.id)}
+                    className="opacity-0 group-hover:opacity-100 hover:text-red-500 font-meta text-[9px] text-[var(--muted)] transition-opacity px-1"
+                    title="Delete this message and attached files"
+                    aria-label="Delete message"
+                  >
+                    🗑 Delete
+                  </button>
+                )}
+              </div>
 
               {/* Message Bubble */}
               <div
