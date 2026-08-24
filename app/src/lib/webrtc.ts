@@ -53,7 +53,9 @@ export async function getLocalUserMedia(options?: {
     throw new Error("Camera and microphone are not supported in this browser.");
   }
 
-  // 1. First Attempt: Target specific devices with ideal constraints
+  // 1. First Attempt: Target specific devices with ideal constraints (or mobile facingMode)
+  const isMobile = typeof window !== "undefined" && (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768);
+
   const primaryConstraints: MediaStreamConstraints = {
     audio: wantAudio
       ? options?.audioDeviceId
@@ -63,6 +65,8 @@ export async function getLocalUserMedia(options?: {
     video: wantVideo
       ? options?.videoDeviceId
         ? { deviceId: { ideal: options.videoDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+        : isMobile
+        ? { facingMode: "user" }
         : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
       : false,
   };
@@ -72,35 +76,47 @@ export async function getLocalUserMedia(options?: {
   } catch (err1) {
     console.warn("Primary media request failed, attempting fallback:", err1);
 
-    // 2. Second Attempt: Generic audio + video constraints
+    // 2. Second Attempt: Mobile facingMode fallback
+    if (wantAudio && wantVideo) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: { facingMode: "user" },
+        });
+      } catch (err2) {
+        console.warn("Mobile facingMode request failed:", err2);
+      }
+    }
+
+    // 3. Third Attempt: Generic audio + video constraints
     if (wantAudio && wantVideo) {
       try {
         return await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: true,
         });
-      } catch (err2) {
-        console.warn("Generic audio+video request failed:", err2);
+      } catch (err3) {
+        console.warn("Generic audio+video request failed:", err3);
       }
     }
 
-    // 3. Third Attempt: Audio-only fallback if camera is blocked/busy
+    // 4. Fourth Attempt: Audio-only fallback if camera is blocked/busy
     if (wantAudio) {
       try {
         const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         return audioOnlyStream;
-      } catch (err3) {
-        console.warn("Audio-only fallback failed:", err3);
+      } catch (err4) {
+        console.warn("Audio-only fallback failed:", err4);
       }
     }
 
-    // 4. Fourth Attempt: Video-only fallback if mic is blocked
+    // 5. Fifth Attempt: Video-only fallback if mic is blocked
     if (wantVideo) {
       try {
         const videoOnlyStream = await navigator.mediaDevices.getUserMedia({ video: true });
         return videoOnlyStream;
-      } catch (err4) {
-        console.warn("Video-only fallback failed:", err4);
+      } catch (err5) {
+        console.warn("Video-only fallback failed:", err5);
       }
     }
 

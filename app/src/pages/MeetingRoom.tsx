@@ -143,6 +143,7 @@ export default function MeetingRoom() {
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
+  const [isRequestingMedia, setIsRequestingMedia] = useState(false);
 
   // Breakout Rooms
   const [newRoomName, setNewRoomName] = useState("");
@@ -179,6 +180,7 @@ export default function MeetingRoom() {
 
   // 3. Acquire Local User Media (Persistent across Lobby & Meeting)
   const requestMediaPermissions = async () => {
+    setIsRequestingMedia(true);
     try {
       const s = await getLocalUserMedia({
         audioDeviceId: selectedAudioInput || undefined,
@@ -190,11 +192,22 @@ export default function MeetingRoom() {
       s.getVideoTracks().forEach((t) => (t.enabled = !isVideoOff));
       setLocalStream(s);
       setHardwareError(null);
+      setShowPermissionGuide(false);
       meshRef.current?.setLocalStream(s);
       toast.success("Camera & microphone connected!");
     } catch (err: any) {
       console.warn("Hardware media notice:", err);
-      setHardwareError("Camera/Microphone access not granted yet. Tap below to enable.");
+      const errMsg = err?.message || String(err);
+      const isBlocked = errMsg.includes("denied") || errMsg.includes("not allowed") || errMsg.includes("NotAllowedError") || errMsg.includes("Permission");
+      setHardwareError(
+        isBlocked
+          ? "Permission blocked in browser settings. Follow the mobile guide below to enable camera access."
+          : "Camera access notice: Tap 'Guide' to allow permissions in your address bar."
+      );
+      setShowPermissionGuide(true);
+      toast.error("Camera access needed. Follow the on-screen steps.");
+    } finally {
+      setIsRequestingMedia(false);
     }
   };
 
@@ -612,49 +625,58 @@ export default function MeetingRoom() {
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     return (
-      <div className="min-h-[90vh] py-12 px-4 max-w-5xl mx-auto flex flex-col justify-center">
+      <div className="min-h-[100dvh] pt-4 sm:pt-8 pb-16 px-3 sm:px-6 max-w-5xl mx-auto flex flex-col justify-start">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-[var(--dept-soft)] border border-[var(--dept)]/30 rounded-full mb-3">
+        <div className="text-center mb-5 sm:mb-8">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-[var(--dept-soft)] border border-[var(--dept)]/30 rounded-full mb-2 sm:mb-3">
             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-meta text-[10px] uppercase font-bold text-[var(--dept)] tracking-wider">
               {meeting.type === "instant_voice_call" ? "Instant Voice Session" : "Studio Video Conference"}
             </span>
           </div>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold uppercase">{meeting.title}</h1>
-          <p className="font-meta text-xs text-[var(--muted)] mt-1">
+          <h1 className="font-display text-xl sm:text-3xl font-bold uppercase tracking-tight">{meeting.title}</h1>
+          <p className="font-meta text-[11px] sm:text-xs text-[var(--muted)] mt-1">
             Host: <strong className="text-[var(--ink)]">{meeting.hostName}</strong> · {formattedDate} at {formattedTime} ({userTimezone})
           </p>
         </div>
 
         {/* Prominent Mobile Camera & Mic Permission Callout */}
         {!localStream && (
-          <div className="mb-6 p-4 border-2 border-[var(--dept)] bg-[var(--dept-soft)] rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in duration-200">
+          <div className="mb-5 p-3.5 sm:p-4 border-2 border-[var(--dept)] bg-[var(--dept-soft)] rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in duration-200">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[var(--dept)] text-[var(--on-dept)] flex items-center justify-center text-xl shrink-0 font-bold">
+              <div className="w-10 h-10 rounded-xl bg-[var(--dept)] text-[var(--on-dept)] flex items-center justify-center text-xl shrink-0 font-bold shadow-sm">
                 📹
               </div>
-              <div>
-                <p className="font-display text-xs font-bold uppercase text-[var(--ink)]">
-                  Camera &amp; Microphone Access Required
+              <div className="min-w-0">
+                <p className="font-display text-xs font-bold uppercase text-[var(--ink)] truncate">
+                  Camera &amp; Mic Access Required
                 </p>
-                <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
-                  {hardwareError || 'Mobile browsers (Safari/Chrome) require you to tap "Allow" to enable your camera preview.'}
+                <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5 line-clamp-2">
+                  {hardwareError || 'Mobile browsers require you to tap "Allow" to activate your camera and microphone.'}
                 </p>
               </div>
             </div>
-            <div className="flex gap-2 shrink-0">
+            <div className="flex gap-2 shrink-0 w-full sm:w-auto">
               <button
                 type="button"
+                disabled={isRequestingMedia}
                 onClick={requestMediaPermissions}
-                className="btn btn-dept !py-2 !px-4 font-display text-[10px] font-bold uppercase shadow-sm flex items-center gap-1.5"
+                className="btn btn-dept flex-1 sm:flex-none !py-2.5 !px-4 font-display text-[10px] font-bold uppercase shadow-sm flex items-center justify-center gap-1.5"
               >
-                <span>🎙️</span> Tap to Allow
+                {isRequestingMedia ? (
+                  <>
+                    <span className="animate-spin">⏳</span> Requesting...
+                  </>
+                ) : (
+                  <>
+                    <span>🎙️</span> Tap to Allow
+                  </>
+                )}
               </button>
               <button
                 type="button"
                 onClick={() => setShowPermissionGuide(true)}
-                className="font-meta text-[10px] px-3 py-2 rounded-lg border border-[var(--line-strong)] bg-[var(--bg)] text-[var(--ink)] hover:border-[var(--dept)]"
+                className="font-meta text-[10px] px-3 py-2 rounded-lg border border-[var(--line-strong)] bg-[var(--bg)] text-[var(--ink)] hover:border-[var(--dept)] shrink-0"
               >
                 📱 Guide
               </button>
@@ -662,39 +684,48 @@ export default function MeetingRoom() {
           </div>
         )}
 
-        <div className="grid lg:grid-cols-12 gap-8 items-start">
+        <div className="grid lg:grid-cols-12 gap-6 sm:gap-8 items-start">
           {/* LEFT: Video Preview & Volume Level */}
-          <div className="lg:col-span-7 border border-[var(--line)] rounded-2xl bg-[var(--panel)] overflow-hidden shadow-lg p-4 sm:p-6">
-            <div className="relative aspect-video min-h-[220px] bg-neutral-950 rounded-xl overflow-hidden flex items-center justify-center border border-[var(--line)]">
+          <div className="lg:col-span-7 border border-[var(--line)] rounded-2xl bg-[var(--panel)] overflow-hidden shadow-lg p-3.5 sm:p-6">
+            <div className="relative aspect-video min-h-[200px] sm:min-h-[240px] bg-neutral-950 rounded-xl overflow-hidden flex items-center justify-center border border-[var(--line)]">
               {!isVideoOff && localStream ? (
                 <VideoTile stream={localStream} muted={true} isMirrored={true} />
               ) : (
-                <div className="text-center p-6 flex flex-col items-center justify-center w-full h-full">
+                <div className="text-center p-4 sm:p-6 flex flex-col items-center justify-center w-full h-full">
                   {!localStream ? (
-                    <div className="space-y-3 w-full max-w-sm flex flex-col items-center">
-                      <div className="w-16 h-16 rounded-2xl bg-[var(--dept-soft)] border-2 border-[var(--dept)] flex items-center justify-center text-3xl dept-accent shadow-md">
+                    <div className="space-y-2.5 sm:space-y-3 w-full max-w-sm flex flex-col items-center">
+                      <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[var(--dept-soft)] border-2 border-[var(--dept)] flex items-center justify-center text-2xl sm:text-3xl dept-accent shadow-md">
                         🎙️
                       </div>
                       <div>
-                        <p className="font-display text-sm font-bold uppercase text-white">
+                        <p className="font-display text-xs sm:text-sm font-bold uppercase text-white">
                           Camera &amp; Microphone
                         </p>
-                        <p className="text-xs text-neutral-300 mt-1">
+                        <p className="text-[11px] text-neutral-300 mt-0.5">
                           Tap below to grant access or join in listen mode.
                         </p>
                       </div>
                       <div className="flex flex-col gap-2 w-full pt-1">
                         <button
                           type="button"
+                          disabled={isRequestingMedia}
                           onClick={requestMediaPermissions}
-                          className="btn btn-dept w-full !py-3 font-display text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-2"
+                          className="btn btn-dept w-full !py-2.5 sm:!py-3 font-display text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-2"
                         >
-                          <span>🎙️</span> Tap to Enable Camera &amp; Mic
+                          {isRequestingMedia ? (
+                            <>
+                              <span className="animate-spin">⏳</span> Requesting Permissions...
+                            </>
+                          ) : (
+                            <>
+                              <span>🎙️</span> Tap to Enable Camera &amp; Mic
+                            </>
+                          )}
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowPermissionGuide(true)}
-                          className="font-meta text-[10px] py-1.5 px-3 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 hover:text-white"
+                          className="font-meta text-[9.5px] sm:text-[10px] py-1.5 px-3 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 hover:text-white"
                         >
                           📱 How to Allow on iPhone / Android
                         </button>
@@ -702,7 +733,7 @@ export default function MeetingRoom() {
                     </div>
                   ) : (
                     <>
-                      <div className="w-20 h-20 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-2xl font-bold mx-auto mb-2 dept-accent">
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-xl sm:text-2xl font-bold mx-auto mb-2 dept-accent">
                         {displayName.slice(0, 2).toUpperCase()}
                       </div>
                       <p className="font-meta text-xs text-neutral-400">Camera is turned off</p>
@@ -713,11 +744,11 @@ export default function MeetingRoom() {
 
               {/* In-Preview Controls (Only shown when localStream is active) */}
               {localStream && (
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-3 bg-neutral-900/80 backdrop-blur-md px-4 py-2 rounded-full border border-neutral-700 shadow-md">
+                <div className="absolute bottom-3 sm:bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-2.5 sm:gap-3 bg-neutral-900/85 backdrop-blur-md px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-full border border-neutral-700 shadow-md">
                   <button
                     type="button"
                     onClick={handleToggleMic}
-                    className={`p-2.5 rounded-full text-sm font-bold transition-colors ${
+                    className={`p-2 sm:p-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors ${
                       isMicMuted ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
                     }`}
                     title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
@@ -727,7 +758,7 @@ export default function MeetingRoom() {
                   <button
                     type="button"
                     onClick={handleToggleVideo}
-                    className={`p-2.5 rounded-full text-sm font-bold transition-colors ${
+                    className={`p-2 sm:p-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors ${
                       isVideoOff ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
                     }`}
                     title={isVideoOff ? "Turn Video On" : "Turn Video Off"}
@@ -889,12 +920,31 @@ export default function MeetingRoom() {
                 </div>
               </div>
 
-              <button
-                onClick={() => setShowPermissionGuide(false)}
-                className="btn btn-dept w-full !py-2.5 font-display text-[10px] font-bold uppercase"
-              >
-                Got It, Return to Lobby
-              </button>
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isRequestingMedia}
+                  onClick={requestMediaPermissions}
+                  className="btn btn-dept flex-1 !py-2.5 font-display text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  {isRequestingMedia ? (
+                    <>
+                      <span className="animate-spin">⏳</span> Requesting...
+                    </>
+                  ) : (
+                    <>
+                      <span>🎙️</span> Try Granting Access Now
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPermissionGuide(false)}
+                  className="px-4 py-2.5 rounded-lg border border-[var(--line)] text-xs text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -973,7 +1023,7 @@ export default function MeetingRoom() {
   const waitingParticipants = meeting.participants.filter((p) => p.status === "waiting");
 
   return (
-    <div className="fixed inset-0 z-50 bg-neutral-950 text-white flex flex-col select-none overflow-hidden">
+    <div className="fixed inset-0 z-50 h-[100dvh] max-h-[100dvh] w-screen bg-neutral-950 text-white flex flex-col select-none overflow-hidden">
       {/* Floating Animated Emoji Reactions */}
       <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden">
         {floatingReactions.map((r) => (
@@ -988,7 +1038,7 @@ export default function MeetingRoom() {
       </div>
 
       {/* Top Header Bar */}
-      <div className="h-14 px-6 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between shrink-0">
+      <div className="h-12 sm:h-14 px-3 sm:px-6 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
           <h2 className="font-display text-sm font-bold uppercase tracking-wider truncate max-w-xs sm:max-w-md">
