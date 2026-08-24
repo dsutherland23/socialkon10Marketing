@@ -2654,43 +2654,78 @@ export default function MeetingRoom() {
               </button>
             </div>
 
-            <div className="space-y-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() => handleStartStudioCoDesign("quick-collab")}
-                className="w-full p-3.5 rounded-2xl border-2 border-purple-500/40 bg-purple-950/20 hover:bg-purple-950/40 text-left flex items-center gap-3.5 transition-all group shadow-md"
-              >
-                <span className="text-2xl">✨</span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between">
-                    <p className="font-display text-xs font-bold uppercase text-purple-200 group-hover:text-purple-300">
-                      Blank Live Collaboration Canvas
-                    </p>
-                    <span className="font-meta text-[8px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full font-bold uppercase">
-                      Fast Start
+            <div className="space-y-2.5 pt-1 max-h-[60vh] overflow-y-auto">
+              <div className="space-y-1">
+                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)]">
+                  Session Deliverables &amp; Client Feedback ({proofingMockups.length})
+                </span>
+                {proofingMockups.map((m, idx) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setProofingIndex(idx);
+                      handleStartStudioCoDesign(m.id);
+                    }}
+                    className={`w-full p-3 rounded-2xl border text-left flex items-center gap-3 transition-all group ${
+                      idx === proofingIndex
+                        ? "border-[var(--dept)] bg-[var(--dept)]/10 shadow-md"
+                        : "border-[var(--line)] hover:border-neutral-500 bg-[var(--bg)]"
+                    }`}
+                  >
+                    {m.image ? (
+                      <img
+                        src={m.image}
+                        alt={m.title}
+                        className="w-12 h-12 rounded-xl object-cover border border-neutral-700 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-neutral-800 flex items-center justify-center text-xl shrink-0">
+                        🖼️
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <p className="font-display text-xs font-bold uppercase text-[var(--ink)] group-hover:text-[var(--dept)] truncate">
+                          {m.title}
+                        </p>
+                        {idx === proofingIndex && (
+                          <span className="font-meta text-[7.5px] px-1.5 py-0.5 rounded bg-[var(--dept)] text-black font-bold uppercase shrink-0">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5 truncate">
+                        {m.category} {m.uploadedBy ? `· by ${m.uploadedBy}` : ""}
+                      </p>
+                    </div>
+                    <span className="text-xs font-bold text-[var(--dept)] group-hover:translate-x-1 transition-transform">
+                      ✏️ Launch →
                     </span>
-                  </div>
-                  <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5">
-                    Start with a fresh 1080x1080 social media canvas and build vector graphics live with the client.
-                  </p>
-                </div>
-              </button>
+                  </button>
+                ))}
+              </div>
 
-              <button
-                type="button"
-                onClick={() => handleStartStudioCoDesign(activeMockup.id)}
-                className="w-full p-3.5 rounded-2xl border border-[var(--line)] hover:border-cyan-500 bg-[var(--bg)] text-left flex items-center gap-3.5 transition-all group"
-              >
-                <span className="text-2xl">🖼️</span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-display text-xs font-bold uppercase group-hover:text-cyan-400 truncate">
-                    Edit Current Deliverable: {activeMockup.title}
-                  </p>
-                  <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5 truncate">
-                    Category: {activeMockup.category} · Open in Fabric.js studio engine
-                  </p>
-                </div>
-              </button>
+              <div className="pt-2 border-t border-[var(--line)]">
+                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                  Or Start Blank Design Canvas:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleStartStudioCoDesign("quick-collab")}
+                  className="w-full p-3 rounded-2xl border border-dashed border-purple-500/50 hover:border-purple-400 bg-purple-950/20 hover:bg-purple-950/40 text-left flex items-center gap-3 transition-all group"
+                >
+                  <span className="text-2xl">✨</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-display text-xs font-bold uppercase text-purple-200 group-hover:text-purple-300">
+                      Blank 1080×1080 Collaborative Canvas
+                    </p>
+                    <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
+                      Create a fresh vector design from scratch and broadcast live to client.
+                    </p>
+                  </div>
+                </button>
+              </div>
             </div>
 
             <div className="pt-2 flex items-center justify-between border-t border-[var(--line)]">
@@ -2840,101 +2875,153 @@ export default function MeetingRoom() {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Stage & Video Tiles */}
         <div className="flex-1 p-2 sm:p-4 flex flex-col gap-4 overflow-y-auto">
-          {/* Screen Share & Live Studio Broadcast Stage (if active) */}
-          {isScreenSharing && (
-            <div className="relative w-full aspect-video max-h-[58vh] bg-black rounded-3xl overflow-hidden border-2 border-cyan-500/50 shadow-2xl flex items-center justify-center group">
-              <video ref={screenVideoRef} autoPlay playsInline className="w-full h-full object-contain" />
+          {/* Universal Screen Share & Live Studio Broadcast Stage (Local or Remote) */}
+          {(() => {
+            const remoteScreenSharer = meeting?.participants.find(
+              (p) => (p.status === "joined" || p.status === "admitted") && p.isScreenSharing && p.id !== myParticipantId
+            );
+            const activeScreenPresenter = isScreenSharing
+              ? { id: myParticipantId, displayName: `${displayName} (You)`, isLocal: true }
+              : remoteScreenSharer
+              ? { id: remoteScreenSharer.id, displayName: remoteScreenSharer.displayName, isLocal: false }
+              : null;
 
-              {/* Presenter / Broadcast Status Pill */}
-              <div className="absolute top-3 left-3 bg-neutral-950/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-cyan-500/40 font-meta text-[10px] flex items-center gap-2 shadow-lg text-white">
-                <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 animate-pulse" />
-                <span className="font-bold">
-                  {isStudioBroadcasting ? "🎨 Live Studio Co-Design Broadcast" : `Screen Presentation by ${displayName}`}
-                </span>
-                <span className="font-mono text-[8px] bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30">
-                  1080p 60fps
-                </span>
-              </div>
+            if (!activeScreenPresenter) return null;
 
-              {/* Presenter Quick Actions: Snap to Proofing, Jump to Editor, Stop */}
-              <div className="absolute top-3 right-3 flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={handleSnapScreenToProof}
-                  className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-display text-[10px] font-bold uppercase flex items-center gap-1.5 shadow-xl transition-transform hover:scale-105"
-                  title="Capture live design frame and send to Proofing Canvas"
-                >
-                  <span>📸</span>
-                  <span className="hidden sm:inline">Snap to Proof</span>
-                </button>
+            const rStream = !activeScreenPresenter.isLocal
+              ? remoteStreams.get(activeScreenPresenter.id)
+              : null;
 
-                <button
-                  type="button"
-                  onClick={() => window.open('/editor/quick-collab', '_blank')}
-                  className="px-2.5 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white font-meta text-[10px] font-bold flex items-center gap-1 shadow-md"
-                  title="Open KON10 Studio Editor in new window"
-                >
-                  <span>✏️</span>
-                  <span className="hidden md:inline">Studio</span>
-                </button>
+            return (
+              <div className="relative w-full aspect-video max-h-[60vh] bg-black rounded-3xl overflow-hidden border-2 border-cyan-500/60 shadow-2xl flex items-center justify-center group">
+                {activeScreenPresenter.isLocal ? (
+                  <video ref={screenVideoRef} autoPlay playsInline className="w-full h-full object-contain" />
+                ) : rStream ? (
+                  <VideoTile stream={rStream} muted={false} className="w-full h-full object-contain" />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-3 text-neutral-400 p-8 text-center">
+                    <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 flex items-center justify-center text-2xl animate-pulse">
+                      🎨
+                    </div>
+                    <div>
+                      <p className="font-display text-sm font-bold uppercase text-white">
+                        Live Studio Broadcast by {activeScreenPresenter.displayName}
+                      </p>
+                      <p className="font-meta text-[10px] text-neutral-400 mt-1">
+                        Connecting high-definition 1080p WebRTC mesh video stream...
+                      </p>
+                    </div>
+                  </div>
+                )}
 
-                <button
-                  type="button"
-                  onClick={handleToggleFullscreen}
-                  className="p-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white text-xs font-bold shadow-md"
-                  title="Fullscreen presentation"
-                >
-                  ⛶
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleStartScreenShare(false)}
-                  className="px-2.5 py-1.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-meta text-[10px] font-bold shadow-md"
-                  title="Stop broadcasting"
-                >
-                  Stop
-                </button>
-              </div>
-
-              {/* Client Live Co-Pilot Feedback HUD (Bottom Floating Reactions & Quick Talk) */}
-              <div className="absolute bottom-3 inset-x-3 flex items-center justify-between pointer-events-none">
-                <div className="flex items-center gap-1 bg-neutral-950/80 backdrop-blur-md p-1.5 rounded-2xl border border-neutral-800 pointer-events-auto shadow-xl">
-                  <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 px-2 hidden sm:inline">
-                    Live Feedback:
+                {/* Presenter / Broadcast Status Pill */}
+                <div className="absolute top-3 left-3 bg-neutral-950/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-cyan-500/40 font-meta text-[10px] flex items-center gap-2 shadow-lg text-white">
+                  <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 animate-pulse" />
+                  <span className="font-bold">
+                    {isStudioBroadcasting
+                      ? "🎨 Live Studio Co-Design Broadcast"
+                      : `🔴 Screen Presentation by ${activeScreenPresenter.displayName}`}
                   </span>
-                  {[
-                    { id: "heart", icon: "❤️", label: "Love it" },
-                    { id: "celebrate", icon: "🔥", label: "Fire" },
-                    { id: "thumbs_up", icon: "👌", label: "Approved" },
-                    { id: "laugh", icon: "🎨", label: "Color" },
-                    { id: "clap", icon: "📏", label: "Layout" },
-                  ].map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => handleSendReaction(r.id as any)}
-                      className="px-2 py-1 rounded-xl hover:bg-neutral-800 text-xs sm:text-sm transition-transform hover:scale-125"
-                      title={r.label}
-                    >
-                      {r.icon}
-                    </button>
-                  ))}
+                  <span className="font-mono text-[8px] bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                    1080p 60fps
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-2 pointer-events-auto">
-                  <button
-                    type="button"
-                    onClick={() => setActiveDrawer("chat")}
-                    className="px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white font-meta text-[10px] font-bold shadow-lg flex items-center gap-1.5"
-                  >
-                    <span>💬</span>
-                    <span>Chat Live</span>
-                  </button>
+                {/* Actions Header */}
+                <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                  {activeScreenPresenter.isLocal ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSnapScreenToProof}
+                        className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-display text-[10px] font-bold uppercase flex items-center gap-1.5 shadow-xl transition-transform hover:scale-105"
+                        title="Capture live design frame and send to Proofing Canvas"
+                      >
+                        <span>📸</span>
+                        <span className="hidden sm:inline">Snap to Proof</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => window.open('/editor/quick-collab', '_blank')}
+                        className="px-2.5 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-850 border border-neutral-700 text-white font-meta text-[10px] font-bold flex items-center gap-1 shadow-md"
+                        title="Open KON10 Studio Editor in new window"
+                      >
+                        <span>✏️</span>
+                        <span className="hidden md:inline">Studio</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleToggleFullscreen}
+                        className="p-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white text-xs font-bold shadow-md"
+                        title="Fullscreen presentation"
+                      >
+                        ⛶
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleStartScreenShare(false)}
+                        className="px-2.5 py-1.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-meta text-[10px] font-bold shadow-md"
+                        title="Stop broadcasting"
+                      >
+                        Stop
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleToggleFullscreen}
+                        className="px-2.5 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white font-meta text-[10px] font-bold shadow-md flex items-center gap-1"
+                        title="Fullscreen presentation"
+                      >
+                        <span>⛶</span> Fullscreen
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Client Live Co-Pilot Feedback HUD (Bottom Floating Reactions & Quick Talk) */}
+                <div className="absolute bottom-3 inset-x-3 flex items-center justify-between pointer-events-none">
+                  <div className="flex items-center gap-1 bg-neutral-950/80 backdrop-blur-md p-1.5 rounded-2xl border border-neutral-800 pointer-events-auto shadow-xl">
+                    <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 px-2 hidden sm:inline">
+                      Live Feedback:
+                    </span>
+                    {[
+                      { id: "heart", icon: "❤️", label: "Love it" },
+                      { id: "celebrate", icon: "🔥", label: "Fire" },
+                      { id: "thumbs_up", icon: "👌", label: "Approved" },
+                      { id: "laugh", icon: "🎨", label: "Color" },
+                      { id: "clap", icon: "📏", label: "Layout" },
+                    ].map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => handleSendReaction(r.id as any)}
+                        className="px-2 py-1 rounded-xl hover:bg-neutral-800 text-xs sm:text-sm transition-transform hover:scale-125"
+                        title={r.label}
+                      >
+                        {r.icon}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 pointer-events-auto">
+                    <button
+                      type="button"
+                      onClick={() => setActiveDrawer("chat")}
+                      className="px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white font-meta text-[10px] font-bold shadow-lg flex items-center gap-1.5"
+                    >
+                      <span>💬</span>
+                      <span>Chat Live</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* SPOTLIGHT MODE: If someone is pinned, render Spotlight Stage + Filmstrip */}
           {pinnedParticipantId ? (
