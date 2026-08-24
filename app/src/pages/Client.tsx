@@ -1235,6 +1235,40 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
         </button>
       </div>
 
+      {/* Quick Join by Code */}
+      <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">🔑</span>
+          <div>
+            <h4 className="font-display text-xs font-bold uppercase">Have a Meeting Code or Link?</h4>
+            <p className="font-meta text-[10px] text-[var(--muted)]">
+              Enter any meeting code (e.g. <code className="text-[var(--ink)]">sk-849-204</code>) or direct link to join as a participant.
+            </p>
+          </div>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const input = (e.currentTarget.elements.namedItem("joinCode") as HTMLInputElement).value.trim();
+            const clean = input.replace(/^https?:\/\/[^\/]+\/meet\//, "");
+            if (clean) window.open(`/meet/${clean}`, "_blank");
+          }}
+          className="flex w-full sm:w-auto gap-2"
+        >
+          <input
+            name="joinCode"
+            type="text"
+            required
+            placeholder="e.g. sk-849-204"
+            className="flex-1 sm:w-44 bg-[var(--bg)] border border-[var(--line)] px-3 py-1.5 text-xs rounded-lg outline-none font-mono focus:border-[var(--dept)]"
+          />
+          <button type="submit" className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shrink-0">
+            Join →
+          </button>
+        </form>
+      </div>
+
       {/* Upcoming & Active Meetings */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">

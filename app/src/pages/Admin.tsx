@@ -1799,6 +1799,7 @@ function AdminCommunications() {
   const { user } = useAuth();
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [calls, setCalls] = useState<CallHistoryRecord[]>([]);
+  const [clientDirectory, setClientDirectory] = useState<{ email: string; name: string; info: string }[]>([]);
   const [activeSubTab, setActiveSubTab] = useState<"meetings" | "calendar" | "calls" | "intelligence">("meetings");
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
   const [search, setSearch] = useState("");
@@ -1831,9 +1832,36 @@ function AdminCommunications() {
   const [startingCall, setStartingCall] = useState(false);
 
   const reloadData = async () => {
-    const [m, c] = await Promise.all([listAllMeetings(), listCallHistory()]);
+    const [m, c, ords, lds] = await Promise.all([
+      listAllMeetings(),
+      listCallHistory(),
+      listAllOrders(),
+      listLeads(),
+    ]);
     setMeetings(m);
     setCalls(c);
+
+    // Build directory of clients from orders & leads
+    const clientMap = new Map<string, { email: string; name: string; info: string }>();
+    ords.forEach((o) => {
+      if (o.email) {
+        clientMap.set(o.email.toLowerCase(), {
+          email: o.email.toLowerCase(),
+          name: o.name || o.email.split("@")[0],
+          info: o.company ? `${o.company} · #${o.id.slice(0, 6)}` : `Order #${o.id.slice(0, 6)}`,
+        });
+      }
+    });
+    lds.forEach((l) => {
+      if (l.email && !clientMap.has(l.email.toLowerCase())) {
+        clientMap.set(l.email.toLowerCase(), {
+          email: l.email.toLowerCase(),
+          name: l.name || l.email.split("@")[0],
+          info: `Lead · ${l.service || "General"}`,
+        });
+      }
+    });
+    setClientDirectory(Array.from(clientMap.values()));
   };
 
   useEffect(() => {
@@ -2424,17 +2452,72 @@ function AdminCommunications() {
                 />
               </div>
 
+              {/* Quick Client / Lead Selector */}
+              {clientDirectory.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold">
+                      Quick-Select Client from Orders &amp; Leads
+                    </label>
+                    <span className="font-meta text-[8.5px] text-[var(--muted)]">Click client to add to meeting</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-[var(--bg)] border border-[var(--line)] rounded-lg">
+                    {clientDirectory.map((c) => {
+                      const isSelected = formParticipants.toLowerCase().includes(c.email.toLowerCase());
+                      return (
+                        <button
+                          key={c.email}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              // Remove email
+                              const updated = formParticipants
+                                .split(",")
+                                .map((s) => s.trim())
+                                .filter((s) => s.toLowerCase() !== c.email.toLowerCase())
+                                .join(", ");
+                              setFormParticipants(updated);
+                            } else {
+                              // Append email
+                              const updated = formParticipants.trim()
+                                ? `${formParticipants.trim()}, ${c.email}`
+                                : c.email;
+                              setFormParticipants(updated);
+                              if (!formTitle.trim()) {
+                                setFormTitle(`${c.name} — Studio Design & Strategy Review`);
+                              }
+                            }
+                          }}
+                          className={`font-meta text-[9px] px-2.5 py-1 rounded-md border flex items-center gap-1.5 transition-all ${
+                            isSelected
+                              ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)] font-bold shadow-sm"
+                              : "bg-[var(--panel)] text-[var(--ink)] border-[var(--line)] hover:border-[var(--dept)]"
+                          }`}
+                        >
+                          <span>{isSelected ? "✓" : "+"}</span>
+                          <span className="font-medium">{c.name}</span>
+                          <span className="opacity-70 text-[8px]">({c.info})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">
-                  Invite Participants (Comma-separated emails or names)
+                  Invite Participants (Emails / Names)
                 </label>
                 <input
                   type="text"
                   value={formParticipants}
                   onChange={(e) => setFormParticipants(e.target.value)}
-                  placeholder="client@brand.com, artdirector@studio.com"
+                  placeholder="e.g. client@brand.com, artdirector@studio.com"
                   className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
                 />
+                <p className="font-meta text-[8.5px] text-[var(--muted)] mt-1">
+                  ℹ️ Meeting will automatically appear on the client's dashboard under "Meetings &amp; Calls".
+                </p>
               </div>
 
               <div className="grid sm:grid-cols-3 gap-3">
