@@ -60,7 +60,11 @@ const errMsg = (e: unknown): string => {
   if (code.includes("popup-closed")) return "Sign-in popup was closed.";
   if (code.includes("too-many-requests")) return "Too many attempts — please wait a moment and try again.";
   if (code.includes("network-request-failed")) return "Network error — check your connection and try again.";
-  return "Something went wrong — please try again.";
+  if (code.includes("operation-not-allowed")) return "This sign-in method is not enabled. Please sign in with email/password or Google.";
+  if (code.includes("unauthorized-domain")) return "This domain is not authorized for passwordless sign-in in Firebase.";
+  if (code.includes("expired-action-code")) return "This access link has expired. Please request a new one.";
+  if (code.includes("invalid-action-code")) return "This access link is invalid or has already been used.";
+  return (e as Error)?.message || "Something went wrong — please try again.";
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {

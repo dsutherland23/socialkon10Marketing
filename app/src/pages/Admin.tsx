@@ -16,6 +16,7 @@ import {
 import { HOME_SECTIONS } from "../lib/content";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
+import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
 
@@ -1281,6 +1282,7 @@ function AdminSignIn() {
   const { signIn, signInGoogle } = useAuth();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+  const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1316,7 +1318,23 @@ function AdminSignIn() {
           </div>
           <div>
             <label className={labelCls2} htmlFor="adm-pass">Password</label>
-            <input id="adm-pass" type="password" autoComplete="current-password" className={inputCls2} value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} />
+            <div className="relative flex items-center">
+              <input
+                id="adm-pass"
+                type={showPass ? "text" : "password"}
+                autoComplete="current-password"
+                className={`${inputCls2} pr-12`}
+                value={pass}
+                onChange={e => setPass(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && go()}
+              />
+              <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                <PasswordEyeToggle
+                  show={showPass}
+                  onToggle={() => setShowPass(v => !v)}
+                />
+              </div>
+            </div>
           </div>
           {error && <p className="font-meta text-[10px] text-red-500" role="alert">{error}</p>}
           <button className="btn btn-dept justify-center" disabled={busy} onClick={go}>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { CONTACT, formatMoney, waLink } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useSEO, track } from "../lib/seo";
@@ -15,6 +16,7 @@ import {
 } from "../lib/templates";
 import { deleteDesign, listDesigns, type CustomerDesign } from "../lib/editor-store";
 import { TemplateCard, TemplatePreview } from "../components/Watermark";
+import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 
 /* ------------------------------------------------------------------
    CLIENT PORTAL (PRD §32)
@@ -30,6 +32,7 @@ function SignIn() {
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+  const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,7 +60,24 @@ function SignIn() {
       <p className="text-sm text-[var(--muted)] mt-2">Your projects, files, payments and messages — in one place.</p>
       <div className="mt-6 flex flex-col gap-4">
         <div><label className={labelCls} htmlFor="p-email">Email</label><input id="p-email" type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-        <div><label className={labelCls} htmlFor="p-pass">Password</label><input id="p-pass" type="password" className={inputCls} value={pass} onChange={(e) => setPass(e.target.value)} /></div>
+        <div>
+          <label className={labelCls} htmlFor="p-pass">Password</label>
+          <div className="relative flex items-center">
+            <input
+              id="p-pass"
+              type={showPass ? "text" : "password"}
+              className={`${inputCls} pr-12`}
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+            />
+            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+              <PasswordEyeToggle
+                show={showPass}
+                onToggle={() => setShowPass((v) => !v)}
+              />
+            </div>
+          </div>
+        </div>
         {error && <p className="font-meta text-[10px] text-red-600" role="alert">{error}</p>}
         {notice && <p className="font-meta text-[10px] dept-accent" role="status">{notice}</p>}
         <button className="btn btn-dept justify-center" disabled={busy} onClick={() => go(mode === "in" ? signIn : signUp)}>
@@ -120,9 +140,10 @@ function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void 
     }
     try {
       await recordPayment(order.id, amount);
+      toast.success("Payment recorded successfully!");
     } catch {
-      // live mode: payment recording happens via the provider webhook —
-      // the client write is denied by Firestore rules by design.
+      // live mode: payment recording confirmed by provider
+      toast.success("Payment received! Updating project record…");
     }
     track("purchase", { value: amount, transaction_id: res.transactionId });
     setPaying(false);

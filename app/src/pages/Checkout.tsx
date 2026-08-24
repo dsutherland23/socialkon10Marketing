@@ -9,6 +9,7 @@ import { Reveal } from "../lib/motion";
 import { useAuth } from "../lib/auth";
 import { attachFiles, cartToOrderItems, claimOrders, createOrder } from "../lib/backend";
 import { auth as fbAuth, firebaseReady } from "../lib/firebase";
+import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 
 /* ------------------------------------------------------------------
    CHECKOUT (PRD §29–31)
@@ -47,6 +48,7 @@ export default function Checkout() {
   const [payError, setPayError] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [acctPass, setAcctPass] = useState("");
+  const [showAcctPass, setShowAcctPass] = useState(false);
   const [acctError, setAcctError] = useState<string | null>(null);
   const [acctDone, setAcctDone] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
@@ -422,7 +424,21 @@ export default function Checkout() {
                 <label className="font-meta text-[10px] text-[var(--muted)] block mb-1.5" htmlFor="acct-email">Email</label>
                 <input id="acct-email" className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm" value={details.email} readOnly />
                 <label className="font-meta text-[10px] text-[var(--muted)] block mt-3 mb-1.5" htmlFor="acct-pass">Choose a password</label>
-                <input id="acct-pass" type="password" className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)]" value={acctPass} onChange={(e) => setAcctPass(e.target.value)} />
+                <div className="relative flex items-center">
+                  <input
+                    id="acct-pass"
+                    type={showAcctPass ? "text" : "password"}
+                    className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] pr-12"
+                    value={acctPass}
+                    onChange={(e) => setAcctPass(e.target.value)}
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <PasswordEyeToggle
+                      show={showAcctPass}
+                      onToggle={() => setShowAcctPass((v) => !v)}
+                    />
+                  </div>
+                </div>
                 {acctError && <p className="font-meta text-[10px] text-red-600 mt-2" role="alert">{acctError}</p>}
                 <button className="btn btn-dept w-full justify-center mt-4" onClick={createAccount}>Create account <span className="btn-arrow" aria-hidden>→</span></button>
               </div>

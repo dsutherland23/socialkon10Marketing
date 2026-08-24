@@ -54,12 +54,22 @@ function CurrencySelect() {
 }
 
 function StoreMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div
       className="absolute left-0 right-0 top-full border-b border-[var(--line)] shadow-2xl z-50 animate-in fade-in slide-in-from-top-1 duration-150"
       style={{ background: "var(--bg)" }}
       role="menu"
+      aria-label="Store menu"
     >
       <div className="wrap py-7">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-5 border-b border-[var(--line)] gap-2">
@@ -191,12 +201,22 @@ function StoreMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 function ServicesMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div
       className="absolute left-0 right-0 top-full border-b border-[var(--line)] shadow-2xl z-50 animate-in fade-in slide-in-from-top-1 duration-150"
       style={{ background: "var(--bg)" }}
       role="menu"
+      aria-label="Services menu"
     >
       <div className="wrap grid md:grid-cols-3 gap-0">
         {DEPARTMENTS.map((d) => (

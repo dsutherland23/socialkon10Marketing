@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useSEO } from "../lib/seo";
 import { firebaseReady } from "../lib/firebase";
+import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 
 /* ------------------------------------------------------------------
    AUTH PAGE — 2026 Design
@@ -204,7 +205,7 @@ export default function AuthPage() {
             {mode !== "reset" && (
               <div>
                 <label className={labelCls} htmlFor="auth-pass">Password</label>
-                <div className="relative">
+                <div className="relative flex items-center">
                   <input
                     id="auth-pass"
                     type={passShow ? "text" : "password"}
@@ -214,10 +215,12 @@ export default function AuthPage() {
                     onChange={e => setPass(e.target.value)}
                     className={inputCls + " pr-12"}
                   />
-                  <button type="button" tabIndex={-1} onClick={() => setPassShow(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-[11px] transition-colors">
-                    {passShow ? "Hide" : "Show"}
-                  </button>
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <PasswordEyeToggle
+                      show={passShow}
+                      onToggle={() => setPassShow(v => !v)}
+                    />
+                  </div>
                 </div>
               </div>
             )}
