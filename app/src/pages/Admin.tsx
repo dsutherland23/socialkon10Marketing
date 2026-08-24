@@ -6,7 +6,7 @@ import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
 import { useAuth } from "../lib/auth";
 import {
-  ORDER_STATUSES, listAllOrders, listLeads, setLeadStatus, setOrderStatus, deleteOrder,
+  ORDER_STATUSES, listAllOrders, listLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
   getSettings, saveSettings, convertLeadToOrder, recordPayment,
@@ -91,10 +91,35 @@ function RecordPayment({ order, onDone }: { order: OrderRecord; onDone: () => vo
   );
 }
 
-function AdminDeliverableItem({ file }: { file: { name: string; size: number; path?: string } }) {
+function AdminDeliverableItem({
+  file,
+  orderId,
+  onDelete,
+}: {
+  file: { name: string; size: number; path?: string };
+  orderId: string;
+  onDelete?: () => void;
+}) {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const ext = file.name.split(".").pop()?.toUpperCase() || "FILE";
+  const [showLightbox, setShowLightbox] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  const isImage = ["png", "jpg", "jpeg", "webp", "svg", "gif", "avif"].includes(ext);
+
+  // Preload and resolve download / preview URL
+  useEffect(() => {
+    let active = true;
+    if (file.path) {
+      getFileUrl(file.path).then((url) => {
+        if (active && url && url !== "#") setDownloadUrl(url);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [file.path]);
 
   const handleDownload = async () => {
     if (downloadUrl) {
@@ -116,25 +141,133 @@ function AdminDeliverableItem({ file }: { file: { name: string; size: number; pa
     setLoading(false);
   };
 
+  const handleDelete = async () => {
+    if (!window.confirm(`Are you sure you want to remove "${file.name}" from this order?`)) return;
+    setIsDeleting(true);
+    try {
+      await deleteOrderFile(orderId, file.path || file.name);
+      toast.success(`Removed "${file.name}" from vault.`);
+      onDelete?.();
+    } catch {
+      toast.error("Failed to delete file.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
-    <div className="flex items-center justify-between p-3.5 border border-[var(--line)] bg-[var(--bg)] rounded-lg hover:border-[var(--dept)] transition-colors">
-      <div className="flex items-center gap-3 truncate">
-        <span className="text-xl">📁</span>
-        <div className="truncate">
-          <p className="font-display text-xs font-bold uppercase truncate">{file.name}</p>
-          <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
-            {ext} · {file.size ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Ready to download"}
-          </p>
+    <>
+      <div className="group relative flex flex-col border border-[var(--line)] bg-[var(--bg)] rounded-xl overflow-hidden hover:border-[var(--dept)] transition-all shadow-sm">
+        {/* Preview Thumbnail for Images */}
+        {isImage ? (
+          <div
+            onClick={() => downloadUrl && setShowLightbox(true)}
+            className="relative aspect-video w-full bg-neutral-900 overflow-hidden cursor-pointer flex items-center justify-center border-b border-[var(--line)]"
+          >
+            {downloadUrl ? (
+              <img
+                src={downloadUrl}
+                alt={file.name}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                loading="lazy"
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center text-neutral-400 gap-1">
+                <span className="text-2xl animate-pulse">🖼️</span>
+                <span className="font-meta text-[9px]">Loading preview…</span>
+              </div>
+            )}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+              <span className="bg-black/80 text-white font-meta text-[10px] px-2.5 py-1 rounded-full flex items-center gap-1 shadow-md">
+                🔍 Preview High-Res
+              </span>
+            </div>
+            <span className="absolute top-2 right-2 bg-black/70 text-white font-meta text-[8px] font-bold uppercase px-1.5 py-0.5 rounded shadow">
+              {ext}
+            </span>
+          </div>
+        ) : (
+          <div className="p-4 bg-[var(--dept-soft)]/40 border-b border-[var(--line)] flex items-center gap-3">
+            <span className="text-2xl">📁</span>
+            <div>
+              <span className="font-meta text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-[var(--dept)] text-[var(--on-dept)] rounded">
+                {ext.toUpperCase() || "FILE"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Content & Actions */}
+        <div className="p-3 flex-1 flex flex-col justify-between gap-2.5">
+          <div className="min-w-0">
+            <p className="font-display text-xs font-bold uppercase truncate" title={file.name}>
+              {file.name}
+            </p>
+            <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
+              {file.size ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Ready"}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1 border-t border-[var(--line)]">
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={loading}
+              className="flex-1 font-meta text-[9.5px] font-bold py-1.5 px-2.5 rounded border border-[var(--dept)] dept-accent hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors flex items-center justify-center gap-1"
+            >
+              {loading ? "Preparing…" : "⬇ Download"}
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="font-meta text-[9px] p-1.5 rounded border border-[var(--line-strong)] text-[var(--muted)] hover:text-red-500 hover:border-red-500/40 transition-colors"
+              title="Delete File from Vault"
+            >
+              🗑️
+            </button>
+          </div>
         </div>
       </div>
-      <button
-        onClick={handleDownload}
-        disabled={loading}
-        className="font-meta text-[9px] px-3 py-1.5 rounded border border-[var(--dept)] dept-accent hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors shrink-0"
-      >
-        {loading ? "Loading…" : "⬇ Download"}
-      </button>
-    </div>
+
+      {/* High-Resolution Lightbox Modal */}
+      {showLightbox && downloadUrl && (
+        <div
+          className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setShowLightbox(false)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-3 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between">
+              <span className="font-display text-xs font-bold uppercase text-white truncate max-w-md">
+                {file.name}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  className="font-meta text-[10px] px-3 py-1 bg-[var(--dept)] text-[var(--on-dept)] font-bold rounded"
+                >
+                  ⬇ Download High-Res
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowLightbox(false)}
+                  className="text-neutral-400 hover:text-white px-2 py-1 text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="p-2 flex-1 flex items-center justify-center overflow-auto max-h-[75vh] bg-neutral-950">
+              <img src={downloadUrl} alt={file.name} className="max-w-full max-h-[70vh] object-contain rounded" />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -198,9 +331,16 @@ function Orders() {
     setUploadingVault(true);
     setUploadProgress({ current: 1, total: files.length, filename: files[0].name });
     try {
-      await attachFiles(current.id, files, (curr, tot, name) => {
+      const uploaded = await attachFiles(current.id, files, (curr, tot, name) => {
         setUploadProgress({ current: curr, total: tot, filename: name });
       });
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === current.id
+            ? { ...o, files: [...(o.files || []), ...uploaded] }
+            : o
+        )
+      );
       await postMessage(current.id, "studio", `📂 Studio added ${files.length} new deliverable file(s) to the project vault.`, "Social Kon10 Studio");
       toast.success(`${files.length} deliverable(s) attached to order.`);
       reload();
@@ -684,9 +824,9 @@ function Orders() {
                         </p>
                       </div>
                     ) : (
-                      <div className="grid sm:grid-cols-2 gap-3">
+                      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                         {current.files.map((file, i) => (
-                          <AdminDeliverableItem key={i} file={file} />
+                          <AdminDeliverableItem key={`${file.name}-${i}`} file={file} orderId={current.id} onDelete={reload} />
                         ))}
                       </div>
                     )}

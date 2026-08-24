@@ -205,13 +205,21 @@ export async function claimOrders(user: User): Promise<void> {
 export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
   if (!firebaseReady || !db || !user) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
-    return orders;
+    return orders.map((o) => ({ ...o, files: Array.isArray(o.files) ? o.files : [] }));
   }
   try {
     const q = query(collection(db, "orders"), where("uid", "==", user.uid));
     const snap = await getDocs(q);
     return snap.docs
-      .map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as OrderRecord)
+      .map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          files: Array.isArray(data.files) ? data.files : [],
+          createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? (typeof data.createdAt === "string" ? data.createdAt : "")
+        } as OrderRecord;
+      })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } catch {
     return [];
@@ -220,16 +228,24 @@ export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
 
 export async function listAllOrders(): Promise<OrderRecord[]> {
   if (!firebaseReady || !db) {
-    return (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    return orders.map((o) => ({ ...o, files: Array.isArray(o.files) ? o.files : [] }));
   }
   try {
     const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc")));
-    return snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as OrderRecord);
+    return snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        ...data,
+        files: Array.isArray(data.files) ? data.files : [],
+        createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? (typeof data.createdAt === "string" ? data.createdAt : "")
+      } as OrderRecord;
+    });
   } catch {
     return [];
   }
 }
-
 
 /** Delete an order (admin housekeeping). */
 export async function deleteOrder(id: string): Promise<void> {
@@ -248,6 +264,32 @@ export async function setOrderStatus(id: string, status: OrderStatus): Promise<v
     return;
   }
   await updateDoc(doc(db, "orders", id), { status });
+}
+
+/** Delete a specific file from an order's deliverables vault. */
+export async function deleteOrderFile(orderId: string, filePathOrName: string): Promise<void> {
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDoc(doc(db, "orders", orderId));
+      if (snap.exists()) {
+        const existing = (snap.data().files || []) as { name: string; size: number; path?: string }[];
+        const updated = existing.filter((f) => f.path !== filePathOrName && f.name !== filePathOrName);
+        await updateDoc(doc(db, "orders", orderId), { files: updated });
+      }
+    } catch (err) {
+      console.warn("Error deleting order file in Firestore:", err);
+    }
+  } else {
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet(
+      "sk-demo-orders",
+      orders.map((o) =>
+        o.id === orderId
+          ? { ...o, files: (o.files || []).filter((f) => f.path !== filePathOrName && f.name !== filePathOrName) }
+          : o
+      )
+    );
+  }
 }
 
 /** Upload project files to Storage and attach their paths to the order (with resilient local fallback). */
@@ -584,7 +626,15 @@ export async function getFileUrl(path: string): Promise<string> {
   // Check local IndexedDB binary cache
   const local = await getLocalBinary(path);
   if (local) {
-    const blob = new Blob([local]);
+    const ext = path.split(".").pop()?.toLowerCase() || "";
+    let mime = "application/octet-stream";
+    if (["png"].includes(ext)) mime = "image/png";
+    else if (["jpg", "jpeg"].includes(ext)) mime = "image/jpeg";
+    else if (["webp"].includes(ext)) mime = "image/webp";
+    else if (["svg"].includes(ext)) mime = "image/svg+xml";
+    else if (["gif"].includes(ext)) mime = "image/gif";
+    else if (["pdf"].includes(ext)) mime = "application/pdf";
+    const blob = new Blob([local], { type: mime });
     return URL.createObjectURL(blob);
   }
   
