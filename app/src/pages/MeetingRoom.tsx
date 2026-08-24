@@ -31,6 +31,10 @@ import {
   updateMeetingLaserPointer,
   subscribeToMeetingLaser,
   submitMeetingProofFeedback,
+  addMeetingProofingArtwork,
+  removeMeetingProofingArtwork,
+  DEFAULT_PROOFING_MOCKUPS,
+  type ProofingMockupItem,
 } from "../lib/meetings";
 import {
   getMediaDevices,
@@ -167,26 +171,24 @@ export default function MeetingRoom() {
   const [proofFeedbackDraft, setProofFeedbackDraft] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const proofingMockups = [
-    {
-      title: "Social Media Brand Campaign 2026",
-      category: "Social Campaign",
-      image: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop",
-      notes: "High-contrast dark mode aesthetics with neon department accents and conversion CTA.",
-    },
-    {
-      title: "Studio Logo & Typography Lockup",
-      category: "Identity & Branding",
-      image: "https://images.unsplash.com/photo-1600132806370-bf17e65e942f?q=80&w=1200&auto=format&fit=crop",
-      notes: "Vector-ready SVG export with primary and secondary typography color palette.",
-    },
-    {
-      title: "Product Launch Promotional Banner",
-      category: "E-Commerce / Ads",
-      image: "https://images.unsplash.com/photo-1557804506-669a67965ba0?q=80&w=1200&auto=format&fit=crop",
-      notes: "Optimized for Instagram 9:16 reels, TikTok ads, YouTube bumpers, and Google display.",
-    },
-  ];
+  // Artwork Upload & Management State
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadCategory, setUploadCategory] = useState("Social Campaign");
+  const [uploadNotes, setUploadNotes] = useState("");
+  const [uploadImageUrl, setUploadImageUrl] = useState("");
+  const [uploadImagePreview, setUploadImagePreview] = useState<string | null>(null);
+  const [isUploadingArtwork, setIsUploadingArtwork] = useState(false);
+  const artworkFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Dynamic Proofing Mockups from meeting document
+  const proofingMockups: ProofingMockupItem[] =
+    meeting?.liveProofing?.mockups && meeting.liveProofing.mockups.length > 0
+      ? meeting.liveProofing.mockups
+      : DEFAULT_PROOFING_MOCKUPS;
+
+  const activeMockup: ProofingMockupItem =
+    proofingMockups[Math.min(proofingIndex, proofingMockups.length - 1)] || proofingMockups[0];
 
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
@@ -744,11 +746,79 @@ export default function MeetingRoom() {
 
   const handleLaserClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
     const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
     const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
     setLaserPointer({ x, y, active: true, senderName: displayName });
     if (meeting) {
       await updateMeetingLaserPointer(meeting.id, x, y, displayName);
+    }
+  };
+
+  const handleArtworkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("Artwork file size must be under 8MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      setUploadImagePreview(result);
+      if (!uploadTitle) {
+        setUploadTitle(file.name.replace(/\.[^/.]+$/, ""));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAddArtworkSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!meeting) return;
+    const finalImage = uploadImagePreview || uploadImageUrl.trim();
+    if (!finalImage) {
+      toast.error("Please upload an image file or enter an image URL.");
+      return;
+    }
+    if (!uploadTitle.trim()) {
+      toast.error("Please enter a title for this deliverable.");
+      return;
+    }
+
+    setIsUploadingArtwork(true);
+    try {
+      await addMeetingProofingArtwork(meeting.id, {
+        title: uploadTitle.trim(),
+        category: uploadCategory,
+        image: finalImage,
+        notes: uploadNotes.trim() || "Live review draft",
+        uploadedBy: displayName,
+      });
+
+      toast.success("Artwork added to Live Proofing Canvas!");
+      setShowUploadModal(false);
+      setUploadTitle("");
+      setUploadNotes("");
+      setUploadImageUrl("");
+      setUploadImagePreview(null);
+    } catch (err: any) {
+      console.error("Add artwork error:", err);
+      toast.error("Failed to add artwork. Please try again.");
+    } finally {
+      setIsUploadingArtwork(false);
+    }
+  };
+
+  const handleRemoveArtwork = async (artworkId: string) => {
+    if (!meeting) return;
+    try {
+      await removeMeetingProofingArtwork(meeting.id, artworkId);
+      toast.info("Artwork removed from proofing canvas.");
+    } catch (err: any) {
+      console.error("Remove artwork error:", err);
+      toast.error("Failed to remove artwork.");
     }
   };
 
@@ -2165,7 +2235,18 @@ export default function MeetingRoom() {
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
+                      {isHost && (
+                        <button
+                          type="button"
+                          onClick={() => setShowUploadModal(true)}
+                          className="font-meta text-[9px] px-2.5 py-1 bg-[var(--dept)] text-black rounded font-bold hover:brightness-110 flex items-center gap-1 shadow-sm"
+                          title="Upload new deliverable or concept image"
+                        >
+                          <span>📁</span> + Upload Artwork
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => setIsProofingMaximized(true)}
@@ -2182,71 +2263,117 @@ export default function MeetingRoom() {
                           className={`font-meta text-[9px] px-2 py-1 rounded font-bold transition-all ${
                             meeting.liveProofing?.active
                               ? "bg-red-500/20 text-red-300 border border-red-500/40"
-                              : "bg-[var(--dept)] text-black"
+                              : "bg-neutral-700 text-neutral-300 hover:text-white"
                           }`}
                         >
-                          {meeting.liveProofing?.active ? "Stop Broadcast" : "Broadcast"}
+                          {meeting.liveProofing?.active ? "Stop" : "Broadcast"}
                         </button>
                       )}
                     </div>
                   </div>
 
-                  {/* Carousel Selector */}
-                  <div className="flex items-center justify-between pt-1 border-t border-neutral-700/60">
-                    <span className="font-meta text-[8.5px] text-neutral-400">
-                      Deliverable #{proofingIndex + 1} of {proofingMockups.length}
-                    </span>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleSelectProof(proofingIndex - 1)}
-                        disabled={proofingIndex === 0}
-                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
-                      >
-                        ←
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSelectProof(proofingIndex + 1)}
-                        disabled={proofingIndex === proofingMockups.length - 1}
-                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
-                      >
-                        →
-                      </button>
+                  {/* Thumbnail Strip for All Deliverables */}
+                  <div className="pt-2 border-t border-neutral-700/60">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400">
+                        Deliverable #{proofingIndex + 1} of {proofingMockups.length}
+                      </span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectProof(proofingIndex - 1)}
+                          disabled={proofingIndex === 0}
+                          className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
+                        >
+                          ←
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectProof(proofingIndex + 1)}
+                          disabled={proofingIndex === proofingMockups.length - 1}
+                          className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
+                        >
+                          →
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Horizontal Scrollable Thumbnail Row */}
+                    <div className="flex gap-2 overflow-x-auto py-1 no-scrollbar">
+                      {proofingMockups.map((m, idx) => (
+                        <div
+                          key={m.id}
+                          onClick={() => handleSelectProof(idx)}
+                          className={`relative w-16 h-11 shrink-0 rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
+                            idx === proofingIndex
+                              ? "border-[var(--dept)] ring-2 ring-[var(--dept)]/30 scale-105 shadow-md"
+                              : "border-neutral-700 opacity-60 hover:opacity-100"
+                          }`}
+                        >
+                          <img src={m.image} alt={m.title} className="w-full h-full object-cover" />
+                          <span className="absolute bottom-0 inset-x-0 bg-black/80 text-white font-mono text-[7px] text-center truncate px-0.5">
+                            #{idx + 1}
+                          </span>
+                        </div>
+                      ))}
+                      {isHost && (
+                        <button
+                          type="button"
+                          onClick={() => setShowUploadModal(true)}
+                          className="w-16 h-11 shrink-0 rounded-lg border-2 border-dashed border-neutral-700 hover:border-[var(--dept)] bg-neutral-900/50 flex flex-col items-center justify-center text-neutral-400 hover:text-[var(--dept)] text-[9px] font-bold"
+                          title="Upload new deliverable"
+                        >
+                          <span className="text-sm">+</span>
+                          <span>Upload</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <div>
-                    <h4 className="font-display text-xs font-bold uppercase text-white truncate">
-                      {proofingMockups[proofingIndex].title}
-                    </h4>
-                    <p className="font-meta text-[9px] text-neutral-400">
-                      Category: {proofingMockups[proofingIndex].category}
-                    </p>
+                  <div className="flex items-start justify-between gap-2 pt-1 border-t border-neutral-700/60">
+                    <div className="min-w-0">
+                      <h4 className="font-display text-xs font-bold uppercase text-white truncate">
+                        {activeMockup.title}
+                      </h4>
+                      <p className="font-meta text-[9px] text-neutral-400">
+                        Category: {activeMockup.category} {activeMockup.uploadedBy ? `· by ${activeMockup.uploadedBy}` : ""}
+                      </p>
+                    </div>
+
+                    {isHost && proofingMockups.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveArtwork(activeMockup.id)}
+                        className="text-red-400 hover:text-red-300 font-meta text-[9px] px-1.5 py-0.5 rounded border border-red-500/30 hover:bg-red-500/20 shrink-0"
+                        title="Remove this deliverable from meeting canvas"
+                      >
+                        🗑️ Delete
+                      </button>
+                    )}
                   </div>
 
                   {/* Interactive Proofing Canvas */}
                   <div
                     onClick={handleLaserClick}
-                    className="relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 cursor-crosshair group shadow-lg bg-black"
+                    className="relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 cursor-crosshair group shadow-lg bg-black select-none"
                   >
                     <img
-                      src={proofingMockups[proofingIndex].image}
-                      alt="Proof Draft"
-                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                      src={activeMockup.image}
+                      alt={activeMockup.title}
+                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300 pointer-events-none"
                     />
 
                     {/* Glowing Laser Pointer Indicator */}
                     {laserPointer.active && (
                       <div
-                        className="absolute -ml-3 -mt-3 pointer-events-none transition-all duration-75"
+                        className="absolute -ml-3 -mt-3 pointer-events-none z-30 transition-all duration-75"
                         style={{ left: `${laserPointer.x}%`, top: `${laserPointer.y}%` }}
                       >
                         <div className="relative">
                           <div className="w-6 h-6 rounded-full bg-red-500/40 animate-ping absolute -inset-0.5" />
                           <div className="w-5 h-5 rounded-full bg-red-500 border-2 border-white shadow-[0_0_15px_red] flex items-center justify-center text-[7px] text-white font-bold" />
                           {laserPointer.senderName && (
-                            <span className="absolute left-6 top-0 whitespace-nowrap bg-black/80 text-white font-meta text-[8px] px-1.5 py-0.5 rounded border border-neutral-700">
+                            <span className="absolute left-6 top-0 whitespace-nowrap bg-black/90 text-white font-meta text-[8px] px-2 py-0.5 rounded-full border border-neutral-700 shadow-md">
                               🔴 {laserPointer.senderName}
                             </span>
                           )}
@@ -2254,13 +2381,13 @@ export default function MeetingRoom() {
                       </div>
                     )}
 
-                    <div className="absolute bottom-1.5 right-1.5 bg-black/80 backdrop-blur-sm px-2 py-0.5 rounded text-[8px] text-neutral-300 flex items-center gap-1">
+                    <div className="absolute bottom-1.5 right-1.5 bg-black/80 backdrop-blur-sm px-2 py-0.5 rounded text-[8px] text-neutral-300 flex items-center gap-1 pointer-events-none z-20">
                       <span>🎯</span> Tap image to point
                     </div>
                   </div>
 
                   <p className="text-neutral-300 text-[11px] italic bg-neutral-900/80 p-2.5 rounded-lg border border-neutral-700/50 leading-relaxed">
-                    "{proofingMockups[proofingIndex].notes}"
+                    "{activeMockup.notes || "High-resolution proof for design review."}"
                   </p>
 
                   {/* Client Live Feedback Notes & Approvals Timeline */}
@@ -2299,7 +2426,7 @@ export default function MeetingRoom() {
                       value={proofFeedbackDraft}
                       onChange={(e) => setProofFeedbackDraft(e.target.value)}
                       placeholder="Type design feedback or revisions…"
-                      className="w-full bg-neutral-900 border border-neutral-700 px-3 py-1.5 rounded-lg text-xs outline-none focus:border-[var(--dept)] text-white placeholder-neutral-500"
+                      className="w-full bg-neutral-900 border border-neutral-700 px-3 py-2 rounded-lg text-[16px] md:text-xs outline-none focus:border-[var(--dept)] text-white placeholder-neutral-500"
                     />
 
                     <div className="flex gap-2">
@@ -2687,21 +2814,31 @@ export default function MeetingRoom() {
       {isProofingMaximized && (
         <div className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-md flex flex-col p-3 sm:p-6 animate-in zoom-in-95 duration-200">
           {/* Top Theater Header Bar */}
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0 gap-2">
+            <div className="flex items-center gap-3 min-w-0">
               <span className="text-xl">🎨</span>
-              <div>
+              <div className="min-w-0">
                 <h3 className="font-display text-sm font-bold uppercase text-white truncate max-w-xs sm:max-w-md">
-                  {proofingMockups[proofingIndex].title}
+                  {activeMockup.title}
                 </h3>
                 <p className="font-meta text-[9px] text-neutral-400">
-                  Deliverable #{proofingIndex + 1} · {proofingMockups[proofingIndex].category}
+                  Deliverable #{proofingIndex + 1} of {proofingMockups.length} · {activeMockup.category} {activeMockup.uploadedBy ? `· by ${activeMockup.uploadedBy}` : ""}
                 </p>
               </div>
             </div>
 
-            {/* Zoom and Slide Controls */}
+            {/* Controls & Actions */}
             <div className="flex items-center gap-2">
+              {isHost && (
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(true)}
+                  className="font-meta text-[10px] px-3 py-1.5 bg-[var(--dept)] text-black rounded-lg font-bold hover:brightness-110 flex items-center gap-1.5 shadow-sm shrink-0"
+                >
+                  <span>📁</span> + Upload Artwork
+                </button>
+              )}
+
               <div className="flex items-center bg-neutral-800 rounded-lg p-0.5 border border-neutral-700">
                 <button
                   type="button"
@@ -2760,22 +2897,22 @@ export default function MeetingRoom() {
           </div>
 
           {/* Large High-Res Interactive Canvas */}
-          <div className="flex-1 flex items-center justify-center overflow-auto p-4 relative">
+          <div className="flex-1 flex items-center justify-center overflow-auto p-4 relative select-none">
             <div
               onClick={handleLaserClick}
               className="relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 cursor-crosshair transition-transform duration-200"
               style={{ transform: `scale(${proofZoom})` }}
             >
               <img
-                src={proofingMockups[proofingIndex].image}
-                alt="High-Res Proof Draft"
-                className="max-h-[72vh] w-auto object-contain rounded-2xl"
+                src={activeMockup.image}
+                alt={activeMockup.title}
+                className="max-h-[72vh] w-auto object-contain rounded-2xl pointer-events-none"
               />
 
               {/* Glowing Laser Pointer Indicator */}
               {laserPointer.active && (
                 <div
-                  className="absolute -ml-4 -mt-4 pointer-events-none"
+                  className="absolute -ml-4 -mt-4 pointer-events-none z-30 transition-all duration-75"
                   style={{ left: `${laserPointer.x}%`, top: `${laserPointer.y}%` }}
                 >
                   <div className="relative">
@@ -2792,35 +2929,189 @@ export default function MeetingRoom() {
             </div>
           </div>
 
-          {/* Bottom Feedback Action Bar in Theater Mode */}
-          <div className="pt-3 border-t border-neutral-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <p className="font-meta text-[11px] text-neutral-300 italic truncate max-w-md">
-              "{proofingMockups[proofingIndex].notes}"
-            </p>
+          {/* Bottom Feedback Action Bar & Thumbnail Selector in Theater Mode */}
+          <div className="pt-3 border-t border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+            {/* Thumbnail Row in Theater Mode */}
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full sm:max-w-md no-scrollbar py-0.5">
+              {proofingMockups.map((m, idx) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => handleSelectProof(idx)}
+                  className={`w-12 h-8 rounded-lg overflow-hidden border-2 transition-all shrink-0 ${
+                    idx === proofingIndex ? "border-[var(--dept)] scale-105" : "border-neutral-700 opacity-60 hover:opacity-100"
+                  }`}
+                >
+                  <img src={m.image} alt={m.title} className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <input
                 type="text"
                 value={proofFeedbackDraft}
                 onChange={(e) => setProofFeedbackDraft(e.target.value)}
                 placeholder="Type revision notes..."
-                className="bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded-lg text-xs outline-none text-white w-64"
+                className="bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded-lg text-[16px] md:text-xs outline-none text-white flex-1 sm:w-64"
               />
               <button
                 type="button"
                 onClick={() => handleSubmitProofFeedback(true)}
-                className="btn btn-dept !py-1.5 !px-4 font-display text-[10px] font-bold uppercase shadow-sm"
+                className="btn btn-dept !py-1.5 !px-4 font-display text-[10px] font-bold uppercase shadow-sm shrink-0"
               >
                 ✓ Approve Concept
               </button>
               <button
                 type="button"
                 onClick={() => handleSubmitProofFeedback(false)}
-                className="px-3 py-1.5 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 text-[10px] font-bold uppercase hover:bg-neutral-700"
+                className="px-3 py-1.5 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 text-[10px] font-bold uppercase hover:bg-neutral-700 shrink-0"
               >
                 Request Edits
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Artwork / Deliverable Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-[130] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-[var(--panel)] border border-[var(--line-strong)] p-6 rounded-2xl shadow-2xl text-[var(--ink)] space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🎨</span>
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase">Upload Artwork to Live Proofing</h3>
+                  <p className="font-meta text-[10px] text-[var(--muted)]">Upload design concepts or client deliverables to present live.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="text-[var(--muted)] hover:text-[var(--ink)] text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddArtworkSubmit} className="space-y-4 text-xs">
+              {/* Image File Chooser */}
+              <div>
+                <label className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                  Artwork File (PNG, JPG, SVG, WebP)
+                </label>
+                <input
+                  ref={artworkFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleArtworkFileChange}
+                  className="hidden"
+                />
+                <div
+                  onClick={() => artworkFileInputRef.current?.click()}
+                  className="border-2 border-dashed border-[var(--line)] hover:border-[var(--dept)] rounded-xl p-4 text-center cursor-pointer transition-colors bg-[var(--bg)]"
+                >
+                  {uploadImagePreview ? (
+                    <div className="relative aspect-video max-h-40 mx-auto rounded-lg overflow-hidden border border-[var(--line)]">
+                      <img src={uploadImagePreview} alt="Preview" className="w-full h-full object-contain bg-black" />
+                      <span className="absolute bottom-1 right-1 bg-black/80 text-white font-meta text-[8px] px-2 py-0.5 rounded">
+                        Tap to change image
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1 text-center py-2">
+                      <span className="text-2xl block">📁</span>
+                      <p className="font-bold text-[11px] uppercase dept-accent">Click to choose image file from device</p>
+                      <p className="font-meta text-[9px] text-[var(--muted)]">Maximum file size: 8MB</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Or URL */}
+              <div>
+                <label className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                  Or Paste Image Web URL
+                </label>
+                <input
+                  type="url"
+                  value={uploadImageUrl}
+                  onChange={(e) => {
+                    setUploadImageUrl(e.target.value);
+                    if (e.target.value) setUploadImagePreview(e.target.value);
+                  }}
+                  placeholder="https://images.unsplash.com/... or Figma export link"
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs rounded-lg outline-none focus:border-[var(--dept)]"
+                />
+              </div>
+
+              {/* Title & Category */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                    Deliverable Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder="e.g. Hero Banner 2026 Mockup"
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs rounded-lg outline-none focus:border-[var(--dept)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                    Category
+                  </label>
+                  <select
+                    value={uploadCategory}
+                    onChange={(e) => setUploadCategory(e.target.value)}
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs rounded-lg outline-none focus:border-[var(--dept)]"
+                  >
+                    <option value="Social Campaign">Social Campaign</option>
+                    <option value="Identity & Branding">Identity &amp; Branding</option>
+                    <option value="E-Commerce / Ads">E-Commerce / Ads</option>
+                    <option value="Web & App UI">Web &amp; App UI</option>
+                    <option value="Print / Banner">Print / Banner</option>
+                    <option value="Packaging & Merch">Packaging &amp; Merch</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Design Notes */}
+              <div>
+                <label className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                  Design Notes / Client Focus
+                </label>
+                <textarea
+                  rows={2}
+                  value={uploadNotes}
+                  onChange={(e) => setUploadNotes(e.target.value)}
+                  placeholder="e.g. Focus on color hierarchy, button typography, and contrast."
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 text-xs rounded-lg outline-none focus:border-[var(--dept)] resize-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="submit"
+                  disabled={isUploadingArtwork || (!uploadImagePreview && !uploadImageUrl.trim())}
+                  className="btn btn-dept flex-1 !py-2.5 font-display text-xs font-bold uppercase tracking-wider disabled:opacity-40 shadow-md"
+                >
+                  {isUploadingArtwork ? "Uploading..." : "🚀 Add & Present to Client"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(false)}
+                  className="px-4 py-2.5 rounded-lg border border-[var(--line)] text-xs text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

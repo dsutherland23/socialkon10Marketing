@@ -114,11 +114,46 @@ export interface ProofingFeedbackNote {
   createdAt: string;
 }
 
+export interface ProofingMockupItem {
+  id: string;
+  title: string;
+  category: string;
+  image: string;
+  notes?: string;
+  uploadedBy?: string;
+  createdAt?: string;
+}
+
+export const DEFAULT_PROOFING_MOCKUPS: ProofingMockupItem[] = [
+  {
+    id: "def_proof_1",
+    title: "Social Media Brand Campaign 2026",
+    category: "Social Campaign",
+    image: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop",
+    notes: "High-contrast dark mode aesthetics with neon department accents and conversion CTA.",
+  },
+  {
+    id: "def_proof_2",
+    title: "Studio Logo & Typography Lockup",
+    category: "Identity & Branding",
+    image: "https://images.unsplash.com/photo-1600132806370-bf17e65e942f?q=80&w=1200&auto=format&fit=crop",
+    notes: "Vector-ready SVG export with primary and secondary typography color palette.",
+  },
+  {
+    id: "def_proof_3",
+    title: "Product Launch Promotional Banner",
+    category: "E-Commerce / Ads",
+    image: "https://images.unsplash.com/photo-1557804506-669a67965ba0?q=80&w=1200&auto=format&fit=crop",
+    notes: "Optimized for Instagram 9:16 reels, TikTok ads, YouTube bumpers, and Google display.",
+  },
+];
+
 export interface LiveProofingState {
   active: boolean;
   mockupIndex: number;
   presenterId: string;
   presenterName: string;
+  mockups?: ProofingMockupItem[];
   laserPointer?: { x: number; y: number; updatedAt: number; senderName: string };
   zoomLevel?: number;
   feedbackNotes?: ProofingFeedbackNote[];
@@ -896,6 +931,48 @@ export async function setMeetingLiveProofing(
   await updateMeeting(meetingId, { liveProofing: payload });
 }
 
+/** Add a new deliverable/artwork to the Live Proofing canvas */
+export async function addMeetingProofingArtwork(
+  meetingId: string,
+  item: Omit<ProofingMockupItem, "id" | "createdAt">
+): Promise<ProofingMockupItem> {
+  const meeting = await getMeetingById(meetingId);
+  const existingMockups = meeting?.liveProofing?.mockups || DEFAULT_PROOFING_MOCKUPS;
+
+  const newItem: ProofingMockupItem = {
+    ...item,
+    id: `art_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    createdAt: new Date().toISOString(),
+  };
+
+  const updatedMockups = [...existingMockups, newItem];
+
+  await setMeetingLiveProofing(meetingId, {
+    mockups: updatedMockups,
+    mockupIndex: updatedMockups.length - 1, // Automatically focus newly added artwork
+    active: true,
+  });
+
+  return newItem;
+}
+
+/** Remove an artwork from the Live Proofing canvas */
+export async function removeMeetingProofingArtwork(
+  meetingId: string,
+  artworkId: string
+): Promise<void> {
+  const meeting = await getMeetingById(meetingId);
+  const existingMockups = meeting?.liveProofing?.mockups || DEFAULT_PROOFING_MOCKUPS;
+  const filtered = existingMockups.filter((m) => m.id !== artworkId);
+  const nextIdx = Math.max(0, Math.min(filtered.length - 1, (meeting?.liveProofing?.mockupIndex || 0)));
+
+  await setMeetingLiveProofing(meetingId, {
+    mockups: filtered.length > 0 ? filtered : DEFAULT_PROOFING_MOCKUPS,
+    mockupIndex: nextIdx,
+  });
+}
+
+/** Broadcast Laser pointer coordinates in real-time to all participants */
 export async function updateMeetingLaserPointer(
   meetingId: string,
   x: number,
@@ -905,6 +982,7 @@ export async function updateMeetingLaserPointer(
   const normId = normalizeRoomCode(meetingId);
   const laser = { x, y, updatedAt: Date.now(), senderName };
 
+  // 1. Instant local BroadcastChannel broadcast (sub-1ms for tabs/windows)
   try {
     if (typeof BroadcastChannel !== "undefined") {
       const bc = new BroadcastChannel(`sk_laser_${normId}`);
@@ -913,26 +991,29 @@ export async function updateMeetingLaserPointer(
     }
   } catch {}
 
+  // 2. High-speed Firestore subcollection doc: /meetings/{normId}/laser/pointer
   if (firebaseReady && db) {
     try {
       await setDoc(
-        doc(db, "meetings", normId),
-        cleanFirestoreObject({
-          "liveProofing.laserPointer": laser,
-          updatedAt: new Date().toISOString(),
-        }),
-        { merge: true }
+        doc(db, "meetings", normId, "laser", "pointer"),
+        cleanFirestoreObject(laser)
       );
-    } catch {}
+    } catch (err) {
+      console.warn("Firestore laser pointer write notice:", err);
+    }
   }
 }
 
+/** Subscribe to real-time Laser pointer updates from host and clients */
 export function subscribeToMeetingLaser(
   meetingId: string,
   onLaser: (laser: { x: number; y: number; senderName: string }) => void
 ): Unsubscribe {
   const normId = normalizeRoomCode(meetingId);
   let bc: BroadcastChannel | null = null;
+  let unsubDoc: Unsubscribe = () => {};
+
+  // 1. Broadcast Channel listener
   try {
     if (typeof BroadcastChannel !== "undefined") {
       bc = new BroadcastChannel(`sk_laser_${normId}`);
@@ -944,8 +1025,25 @@ export function subscribeToMeetingLaser(
     }
   } catch {}
 
+  // 2. Real-time Firestore Subcollection Listener
+  if (firebaseReady && db) {
+    try {
+      unsubDoc = onSnapshot(doc(db, "meetings", normId, "laser", "pointer"), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && typeof data.x === "number" && Date.now() - (data.updatedAt || 0) < 10000) {
+            onLaser(data as any);
+          }
+        }
+      });
+    } catch (err) {
+      console.warn("Firestore laser subscribe notice:", err);
+    }
+  }
+
   return () => {
     if (bc) bc.close();
+    unsubDoc();
   };
 }
 
