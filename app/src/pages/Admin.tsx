@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "sonner";
-import { CONTACT, FAQS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, WORK_FILTERS, formatMoney } from "../lib/data";
+import { CONTACT, FAQS, PROJECTS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, formatMoney } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
 import { useAuth } from "../lib/auth";
@@ -530,6 +530,581 @@ function ContentManager({ kind, fields, image }: { kind: "testimonials" | "faqs"
   );
 }
 
+/* ================= PORTFOLIO & WORK CMS MANAGER ================= */
+
+interface UnifiedProject {
+  id: string;
+  cmsId?: string;
+  slug: string;
+  title: string;
+  client: string;
+  categories: string[];
+  dept: "brand" | "social" | "web";
+  industry: string;
+  year: string;
+  services: string[];
+  summary: string;
+  liveUrl?: string;
+  image?: string;
+  featured?: boolean;
+  enabled: boolean;
+  isBuiltIn: boolean;
+  isCustomized: boolean;
+  caseStudy?: {
+    challenge?: string;
+    strategy?: string;
+    creative?: string;
+    execution?: string;
+    result?: string;
+  };
+}
+
+function PortfolioManager() {
+  const [managedItems, setManagedItems] = useState<ManagedItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [deptFilter, setDeptFilter] = useState<string>("ALL");
+  const [editingSlug, setEditingSlug] = useState<string | null>(null); // null | "new" | project slug
+  const [draft, setDraft] = useState<Record<string, any>>({});
+  const [uploading, setUploading] = useState(false);
+  const [showCaseStudy, setShowCaseStudy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const reload = () => listManaged("portfolio").then(setManagedItems);
+  useEffect(() => { reload(); }, []);
+
+  // Merge built-in sample projects with CMS Firestore overrides and custom entries
+  const projects: UnifiedProject[] = useMemo(() => {
+    const list: UnifiedProject[] = [];
+    const cmsMap = new Map<string, ManagedItem>();
+    managedItems.forEach((m) => {
+      const slug = String(m.slug || m.id);
+      cmsMap.set(slug, m);
+    });
+
+    // 1. Built-in sample projects from data.ts
+    PROJECTS.forEach((bp) => {
+      const cmsOverride = cmsMap.get(bp.slug) || cmsMap.get(bp.id);
+      if (cmsOverride) {
+        list.push({
+          id: bp.id,
+          cmsId: cmsOverride.id,
+          slug: bp.slug,
+          title: String(cmsOverride.title ?? bp.title),
+          client: String(cmsOverride.client ?? bp.client),
+          categories: cmsOverride.categories ? String(cmsOverride.categories).split(",").map((c) => c.trim().toUpperCase()).filter(Boolean) : bp.categories,
+          dept: ((cmsOverride.dept as any) || bp.dept) as "brand" | "social" | "web",
+          industry: String(cmsOverride.industry ?? bp.industry),
+          year: String(cmsOverride.year ?? bp.year),
+          services: cmsOverride.services ? String(cmsOverride.services).split(",").map((s) => s.trim()).filter(Boolean) : bp.services,
+          summary: String(cmsOverride.summary ?? bp.summary),
+          liveUrl: cmsOverride.liveUrl !== undefined ? String(cmsOverride.liveUrl) : bp.liveUrl,
+          image: cmsOverride.image ? String(cmsOverride.image) : bp.image,
+          featured: cmsOverride.featured !== undefined ? !!cmsOverride.featured : bp.featured,
+          enabled: cmsOverride.enabled !== false,
+          isBuiltIn: true,
+          isCustomized: true,
+          caseStudy: {
+            challenge: String(cmsOverride.challenge ?? bp.caseStudy?.challenge ?? ""),
+            strategy: String(cmsOverride.strategy ?? bp.caseStudy?.strategy ?? ""),
+            creative: String(cmsOverride.creative ?? bp.caseStudy?.creative ?? ""),
+            execution: String(cmsOverride.execution ?? bp.caseStudy?.execution ?? ""),
+            result: String(cmsOverride.result ?? bp.caseStudy?.result ?? ""),
+          },
+        });
+      } else {
+        list.push({
+          id: bp.id,
+          slug: bp.slug,
+          title: bp.title,
+          client: bp.client,
+          categories: bp.categories,
+          dept: bp.dept,
+          industry: bp.industry,
+          year: bp.year,
+          services: bp.services,
+          summary: bp.summary,
+          liveUrl: bp.liveUrl,
+          image: bp.image,
+          featured: bp.featured,
+          enabled: true,
+          isBuiltIn: true,
+          isCustomized: false,
+          caseStudy: bp.caseStudy,
+        });
+      }
+    });
+
+    // 2. Custom websites / projects created in CMS
+    const builtInSlugs = new Set(PROJECTS.map((p) => p.slug).concat(PROJECTS.map((p) => p.id)));
+    managedItems.forEach((m, i) => {
+      const slug = String(m.slug || m.id);
+      if (!builtInSlugs.has(slug)) {
+        list.unshift({
+          id: String(m.pid ?? m.id ?? `CMS-${i + 1}`),
+          cmsId: m.id,
+          slug,
+          title: String(m.title ?? "Untitled"),
+          client: String(m.client ?? ""),
+          categories: String(m.categories ?? "BRANDING").split(",").map((c) => c.trim().toUpperCase()).filter(Boolean),
+          dept: (((m.dept as any) || "brand") as "brand" | "social" | "web"),
+          industry: String(m.industry ?? ""),
+          year: String(m.year ?? new Date().getFullYear()),
+          services: String(m.services ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+          summary: String(m.summary ?? ""),
+          liveUrl: m.liveUrl ? String(m.liveUrl) : undefined,
+          image: m.image ? String(m.image) : undefined,
+          featured: !!m.featured,
+          enabled: m.enabled !== false,
+          isBuiltIn: false,
+          isCustomized: false,
+          caseStudy: {
+            challenge: String(m.challenge ?? ""),
+            strategy: String(m.strategy ?? ""),
+            creative: String(m.creative ?? ""),
+            execution: String(m.execution ?? ""),
+            result: String(m.result ?? ""),
+          },
+        });
+      }
+    });
+
+    return list;
+  }, [managedItems]);
+
+  const filtered = useMemo(() => {
+    let xs = projects;
+    if (deptFilter !== "ALL") {
+      xs = xs.filter((p) => p.dept.toUpperCase() === deptFilter);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      xs = xs.filter((p) =>
+        p.title.toLowerCase().includes(q) ||
+        p.client.toLowerCase().includes(q) ||
+        p.slug.toLowerCase().includes(q) ||
+        p.categories.some((c) => c.toLowerCase().includes(q)) ||
+        (p.liveUrl && p.liveUrl.toLowerCase().includes(q))
+      );
+    }
+    return xs;
+  }, [projects, search, deptFilter]);
+
+  const startNew = () => {
+    setDraft({
+      title: "",
+      client: "",
+      slug: "",
+      dept: "web",
+      categories: "WEB",
+      industry: "Business & Commerce",
+      year: String(new Date().getFullYear()),
+      services: "Website Design, Mobile Optimization, Lead Capture",
+      summary: "",
+      liveUrl: "https://",
+      image: "",
+      featured: false,
+      challenge: "",
+      strategy: "",
+      creative: "",
+      execution: "",
+      result: "",
+    });
+    setEditingSlug("new");
+    setShowCaseStudy(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const startEdit = (p: UnifiedProject) => {
+    setDraft({
+      id: p.id,
+      cmsId: p.cmsId,
+      slug: p.slug,
+      title: p.title,
+      client: p.client,
+      dept: p.dept,
+      categories: p.categories.join(", "),
+      industry: p.industry,
+      year: p.year,
+      services: p.services.join(", "),
+      summary: p.summary,
+      liveUrl: p.liveUrl ?? "",
+      image: p.image ?? "",
+      featured: !!p.featured,
+      challenge: p.caseStudy?.challenge ?? "",
+      strategy: p.caseStudy?.strategy ?? "",
+      creative: p.caseStudy?.creative ?? "",
+      execution: p.caseStudy?.execution ?? "",
+      result: p.caseStudy?.result ?? "",
+    });
+    setEditingSlug(p.slug);
+    setShowCaseStudy(!!(p.caseStudy?.challenge || p.caseStudy?.strategy || p.caseStudy?.creative));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const pickImage = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const url = await uploadImage(file, "portfolio");
+      setDraft((d) => ({ ...d, image: url }));
+      toast.success(firebaseReady ? "Cover image uploaded" : "Image attached (demo preview)");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    }
+    setUploading(false);
+  };
+
+  const save = async () => {
+    if (!draft.title?.trim()) { toast.error("Project title is required."); return; }
+    const slug = draft.slug?.trim() || draft.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const live = draft.liveUrl?.trim();
+    if (live && live !== "https://" && !/^https?:\/\//i.test(live)) {
+      toast.error("Live preview URL must be a valid https:// address (e.g. https://pinstripesrentals.com)");
+      return;
+    }
+
+    const payload: Record<string, any> = {
+      title: draft.title.trim(),
+      client: draft.client?.trim() || "",
+      slug,
+      dept: draft.dept || "web",
+      categories: draft.categories || "WEB",
+      industry: draft.industry || "",
+      year: draft.year || String(new Date().getFullYear()),
+      services: draft.services || "",
+      summary: draft.summary || "",
+      liveUrl: live && live !== "https://" ? live : "",
+      image: draft.image || "",
+      featured: !!draft.featured,
+      enabled: true,
+      challenge: draft.challenge || "",
+      strategy: draft.strategy || "",
+      creative: draft.creative || "",
+      execution: draft.execution || "",
+      result: draft.result || "",
+    };
+
+    let ok = false;
+    if (draft.cmsId) {
+      ok = await mutate(() => updateManaged("portfolio", draft.cmsId, payload), "Project updated — live now");
+    } else {
+      ok = await mutate(() => addManaged("portfolio", payload), "Project saved — live now");
+    }
+
+    if (ok) {
+      setDraft({});
+      setEditingSlug(null);
+      if (fileRef.current) fileRef.current.value = "";
+      reload();
+    }
+  };
+
+  const toggleVisibility = async (p: UnifiedProject) => {
+    const nextState = !p.enabled;
+    if (p.cmsId) {
+      await mutate(() => updateManaged("portfolio", p.cmsId!, { enabled: nextState }), nextState ? "Project visible on Work" : "Project hidden from Work");
+    } else {
+      await mutate(() => addManaged("portfolio", {
+        slug: p.slug,
+        title: p.title,
+        client: p.client,
+        dept: p.dept,
+        categories: p.categories.join(", "),
+        industry: p.industry,
+        year: p.year,
+        services: p.services.join(", "),
+        summary: p.summary,
+        liveUrl: p.liveUrl || "",
+        image: p.image || "",
+        enabled: nextState,
+      }), nextState ? "Project visible on Work" : "Project hidden from Work");
+    }
+    reload();
+  };
+
+  const removeOrReset = async (p: UnifiedProject) => {
+    if (p.cmsId) {
+      const ok = await mutate(() => removeManaged("portfolio", p.cmsId!), p.isBuiltIn ? "Reset to original default" : "Project deleted");
+      if (ok) reload();
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div>
+          <h2 className="font-display text-xl font-bold uppercase tracking-tight">Creative Archive & Websites CMS</h2>
+          <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+            Manage your sample websites, case studies, and live project embeds displayed on <a href="/work" target="_blank" rel="noreferrer" className="dept-accent underline">/work</a>.
+          </p>
+        </div>
+        {!editingSlug && (
+          <button className="btn btn-dept !py-2.5" onClick={startNew}>
+            + Add New Website / Project <span className="btn-arrow" aria-hidden>→</span>
+          </button>
+        )}
+      </div>
+
+      {/* EDIT / CREATE FORM */}
+      {editingSlug && (
+        <div className="border border-[var(--line-strong)] p-6 mb-8" style={{ background: "var(--panel)" }}>
+          <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+            <div>
+              <span className="idx">/{editingSlug === "new" ? "new-website-project" : `edit-${draft.slug || editingSlug}`}</span>
+              <h3 className="font-display text-lg font-bold uppercase mt-1">
+                {editingSlug === "new" ? "Add New Website / Portfolio Item" : `Edit Project: ${draft.title || draft.slug}`}
+              </h3>
+            </div>
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-500 transition-colors" onClick={() => { setEditingSlug(null); setDraft({}); }}>
+              Cancel ✕
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-5">
+            <div>
+              <label className={labelCls}>PROJECT TITLE *</label>
+              <input className={`${inputCls} mt-1`} value={draft.title ?? ""} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} placeholder="e.g. Pinstripes Rentals" />
+            </div>
+            <div>
+              <label className={labelCls}>CLIENT / BRAND NAME</label>
+              <input className={`${inputCls} mt-1`} value={draft.client ?? ""} onChange={(e) => setDraft((d) => ({ ...d, client: e.target.value }))} placeholder="e.g. Pinstripes Party & Event Rentals" />
+            </div>
+            <div>
+              <label className={labelCls}>URL SLUG (/work/:slug)</label>
+              <input className={`${inputCls} mt-1`} value={draft.slug ?? ""} onChange={(e) => setDraft((d) => ({ ...d, slug: e.target.value }))} placeholder="e.g. pinstripes-rentals" />
+            </div>
+
+            <div>
+              <label className={labelCls}>DEPARTMENT</label>
+              <select className={`${inputCls} mt-1`} value={draft.dept ?? "web"} onChange={(e) => setDraft((d) => ({ ...d, dept: e.target.value }))}>
+                <option value="web" className="text-black">Web Design & Ecommerce (web)</option>
+                <option value="brand" className="text-black">Branding & Identity (brand)</option>
+                <option value="social" className="text-black">Social Media & Marketing (social)</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>CATEGORIES (COMMA-SEPARATED)</label>
+              <input className={`${inputCls} mt-1`} value={draft.categories ?? ""} onChange={(e) => setDraft((d) => ({ ...d, categories: e.target.value }))} placeholder="e.g. WEB, BRANDING, ECOMMERCE" />
+            </div>
+            <div>
+              <label className={labelCls}>INDUSTRY & YEAR</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <input className={inputCls} value={draft.industry ?? ""} onChange={(e) => setDraft((d) => ({ ...d, industry: e.target.value }))} placeholder="Industry" />
+                <input className={inputCls} value={draft.year ?? ""} onChange={(e) => setDraft((d) => ({ ...d, year: e.target.value }))} placeholder="Year" />
+              </div>
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-3">
+              <label className={labelCls}>DELIVERED SERVICES (COMMA-SEPARATED)</label>
+              <input className={`${inputCls} mt-1`} value={draft.services ?? ""} onChange={(e) => setDraft((d) => ({ ...d, services: e.target.value }))} placeholder="e.g. Business Website, Mobile Optimization, Booking Engine, Brand Identity" />
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-3">
+              <label className={labelCls}>SUMMARY / VALUE PROPOSITION</label>
+              <textarea rows={2} className={`${inputCls} mt-1`} value={draft.summary ?? ""} onChange={(e) => setDraft((d) => ({ ...d, summary: e.target.value }))} placeholder="A short 1-2 sentence description of what was built and why it helped the business." />
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-3 border border-[var(--dept)] p-4" style={{ background: "var(--dept-soft)" }}>
+              <label className={labelCls}>🌐 LIVE PREVIEW URL (INTERACTIVE WINDOW ON /WORK)</label>
+              <div className="mt-1 flex gap-2">
+                <input className={`${inputCls} bg-white text-zinc-900`} value={draft.liveUrl ?? ""} onChange={(e) => setDraft((d) => ({ ...d, liveUrl: e.target.value }))} placeholder="https://pinstripesrentals.com/" />
+                {draft.liveUrl && /^https?:\/\//i.test(draft.liveUrl) && (
+                  <a href={draft.liveUrl} target="_blank" rel="noreferrer" className="btn btn-ghost !py-2 shrink-0">
+                    Test Link ↗
+                  </a>
+                )}
+              </div>
+              <span className="font-meta text-[9px] text-[var(--muted)] block mt-1.5 leading-relaxed">
+                Adding a live URL embeds an interactive browser window right on the Work archive and case study page so visitors can scroll and click your actual website!
+              </span>
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-3">
+              <span className={labelCls}>COVER / PREVIEW IMAGE</span>
+              <div className="mt-1 flex flex-wrap items-center gap-4">
+                <input ref={fileRef} type="file" accept="image/*" className="text-sm" onChange={(e) => pickImage(e.target.files?.[0])} aria-label="Upload cover image" />
+                {uploading && <span className="font-meta text-[10px] text-[var(--muted)]">Uploading to storage…</span>}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="font-meta text-[9px] text-[var(--muted)]">OR Image URL:</span>
+                <input className={`${inputCls} !py-1 text-xs`} value={draft.image ?? ""} onChange={(e) => setDraft((d) => ({ ...d, image: e.target.value }))} placeholder="/covers/pinstripes-rentals.webp or https://..." />
+              </div>
+              {draft.image && (
+                <div className="mt-3 flex items-center gap-4">
+                  <img src={draft.image} alt="Cover preview" className="w-32 h-20 object-cover border border-[var(--line)]" />
+                  <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors" onClick={() => setDraft((d) => ({ ...d, image: "" }))}>Remove image</button>
+                </div>
+              )}
+            </div>
+
+            {/* Case Study Details Toggle */}
+            <div className="sm:col-span-2 lg:col-span-3 mt-2">
+              <button type="button" className="font-meta text-[10px] dept-accent underline" onClick={() => setShowCaseStudy(!showCaseStudy)}>
+                {showCaseStudy ? "▼ Hide Full Case Study Fields (Challenge, Strategy, Creative, Execution, Result)" : "▶ Show Full Case Study Fields (Challenge, Strategy, Creative, Execution, Result)"}
+              </button>
+            </div>
+
+            {showCaseStudy && (
+              <div className="sm:col-span-2 lg:col-span-3 grid sm:grid-cols-2 gap-4 border border-[var(--line)] p-4" style={{ background: "var(--bg)" }}>
+                <div>
+                  <label className={labelCls}>1. THE CHALLENGE</label>
+                  <textarea rows={2} className={`${inputCls} mt-1`} value={draft.challenge ?? ""} onChange={(e) => setDraft((d) => ({ ...d, challenge: e.target.value }))} placeholder="What problem did the client have?" />
+                </div>
+                <div>
+                  <label className={labelCls}>2. THE STRATEGY</label>
+                  <textarea rows={2} className={`${inputCls} mt-1`} value={draft.strategy ?? ""} onChange={(e) => setDraft((d) => ({ ...d, strategy: e.target.value }))} placeholder="How was the project approached?" />
+                </div>
+                <div>
+                  <label className={labelCls}>3. CREATIVE APPROACH</label>
+                  <textarea rows={2} className={`${inputCls} mt-1`} value={draft.creative ?? ""} onChange={(e) => setDraft((d) => ({ ...d, creative: e.target.value }))} placeholder="Design language, visual choices, colors..." />
+                </div>
+                <div>
+                  <label className={labelCls}>4. EXECUTION & ROLLOUT</label>
+                  <textarea rows={2} className={`${inputCls} mt-1`} value={draft.execution ?? ""} onChange={(e) => setDraft((d) => ({ ...d, execution: e.target.value }))} placeholder="Deliverables built and launched." />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={labelCls}>5. MEASURABLE RESULT</label>
+                  <textarea rows={2} className={`${inputCls} mt-1`} value={draft.result ?? ""} onChange={(e) => setDraft((d) => ({ ...d, result: e.target.value }))} placeholder="Client outcome, bookings, feedback..." />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3 mt-6 pt-4 border-t border-[var(--line)]">
+            <button className="btn btn-dept !py-2.5" onClick={save}>
+              Save & Publish to Work <span className="btn-arrow" aria-hidden>→</span>
+            </button>
+            <button className="btn btn-ghost !py-2.5" onClick={() => { setEditingSlug(null); setDraft({}); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* FILTER & SEARCH BAR */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {["ALL", "WEB", "BRAND", "SOCIAL"].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDeptFilter(d)}
+              className="font-meta text-[10px] px-3 py-1.5 border transition-colors"
+              style={deptFilter === d ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}
+            >
+              {d}
+            </button>
+          ))}
+          <span className="font-meta text-[10px] text-[var(--muted)] ml-2">{filtered.length} projects</span>
+        </div>
+        <input
+          className={`${inputCls} !w-64 !py-1.5 text-xs`}
+          placeholder="Search by title, client, url..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
+      {/* PROJECTS LIST */}
+      <div className="flex flex-col gap-3">
+        {filtered.map((p: UnifiedProject) => (
+          <div
+            key={p.slug}
+            className={`border border-[var(--line)] p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors ${!p.enabled ? "opacity-50 bg-black/10" : ""}`}
+            style={{ background: "var(--panel)" }}
+          >
+            <div className="flex items-start gap-4 grow min-w-0">
+              {p.image ? (
+                <img src={p.image} alt="" className="w-16 h-12 object-cover border border-[var(--line)] shrink-0 rounded-sm" />
+              ) : (
+                <div className="w-16 h-12 border border-[var(--line)] bg-[var(--dept-soft)] flex items-center justify-center font-meta text-[9px] shrink-0">
+                  {p.dept.toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-display font-bold text-base truncate">{p.title}</span>
+                  {p.isBuiltIn && !p.isCustomized && (
+                    <span className="font-meta text-[8px] px-1.5 py-0.5 border border-[var(--line)] text-[var(--muted)]">DEFAULT SAMPLE</span>
+                  )}
+                  {p.isBuiltIn && p.isCustomized && (
+                    <span className="font-meta text-[8px] px-1.5 py-0.5 border border-[var(--dept)] dept-accent">CUSTOMIZED</span>
+                  )}
+                  {!p.isBuiltIn && (
+                    <span className="font-meta text-[8px] px-1.5 py-0.5 bg-[var(--dept)] text-[var(--on-dept)]">CUSTOM WEBSITE</span>
+                  )}
+                  {!p.enabled && (
+                    <span className="font-meta text-[8px] px-1.5 py-0.5 bg-red-600/20 text-red-500 border border-red-500/30">HIDDEN FROM WORK</span>
+                  )}
+                  {p.liveUrl && (
+                    <span className="font-meta text-[8px] px-1.5 py-0.5 border border-cyan-500/40 text-cyan-400">🌐 LIVE PREVIEW</span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-meta text-[9px] text-[var(--muted)] mt-1">
+                  <span>Client: {p.client || "Self"}</span>
+                  <span>·</span>
+                  <span>Dept: {p.dept}</span>
+                  <span>·</span>
+                  <span>Categories: {p.categories.join(", ")}</span>
+                  {p.liveUrl && (
+                    <>
+                      <span>·</span>
+                      <a href={p.liveUrl} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline truncate max-w-[200px]">
+                        {p.liveUrl}
+                      </a>
+                    </>
+                  )}
+                </div>
+
+                {p.summary && (
+                  <p className="text-xs text-[var(--muted)] mt-1 line-clamp-1">{p.summary}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-center">
+              <a
+                href={`/work/${p.slug}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-ghost !py-1 !px-3 text-xs"
+              >
+                View ↗
+              </a>
+              <button
+                className="btn btn-dept !py-1 !px-3 text-xs"
+                onClick={() => startEdit(p)}
+              >
+                Edit
+              </button>
+              <button
+                className={`btn btn-ghost !py-1 !px-3 text-xs ${p.enabled ? "text-amber-500" : "dept-accent"}`}
+                onClick={() => toggleVisibility(p)}
+              >
+                {p.enabled ? "Hide" : "Show"}
+              </button>
+              {p.cmsId && (
+                <button
+                  className="btn btn-ghost !py-1 !px-3 text-xs !text-red-500 hover:!border-red-500"
+                  onClick={() => removeOrReset(p)}
+                >
+                  {p.isBuiltIn ? "Reset" : "Delete"}
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {filtered.length === 0 && (
+          <div className="border border-[var(--line)] p-8 text-center" style={{ background: "var(--panel)" }}>
+            <p className="text-sm text-[var(--muted)]">No projects match your search.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ================= SETTINGS ================= */
 
 function SettingsManager() {
@@ -806,22 +1381,7 @@ export default function Admin() {
           {tab === "Orders" && <Orders />}
           {tab === "Leads" && <Leads />}
           {tab === "Products" && <Products />}
-          {tab === "Portfolio" && (
-            <>
-              <p className="font-meta text-[10px] text-[var(--muted)] mb-6 max-w-2xl">
-                Portfolio CMS (PRD §67) — add, edit and remove archive projects, with cover image uploads.
-                Categories: {WORK_FILTERS.filter((f) => f !== "ALL").join(", ")} (comma-separated). Departments: brand / social / web.
-                Set a Live preview URL to give visitors a contained in-site preview window. The sample site must allow embedding — remove any X-Frame-Options header or set CSP frame-ancestors to include this site's domain.
-              </p>
-              <ContentManager kind="portfolio" image fields={[
-                { key: "title", label: "Project name" }, { key: "client", label: "Client" },
-                { key: "categories", label: "Categories (e.g. BRANDING, EVENTS)" }, { key: "dept", label: "Department (brand/social/web)" },
-                { key: "industry", label: "Industry" }, { key: "year", label: "Year" },
-                { key: "services", label: "Services (comma-separated)" }, { key: "summary", label: "One-line summary", area: true },
-                { key: "liveUrl", label: "Live preview URL (https://…)", optional: true, hint: "Enables the contained Live Window preview on the Work archive and case study page." },
-              ]} />
-            </>
-          )}
+          {tab === "Portfolio" && <PortfolioManager />}
           {tab === "Promos" && (
             <>
               <p className="font-meta text-[10px] text-[var(--muted)] mb-6 max-w-2xl">

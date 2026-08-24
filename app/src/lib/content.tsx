@@ -136,30 +136,40 @@ export function ContentProvider({ children }: { children: ReactNode }) {
           ...managedF.map((f) => ({ q: String(f.q), a: String(f.a), dept: (f.dept as FaqItem["dept"]) ?? "checkout" })),
         ];
 
-        // admin-added portfolio projects (PRD §67) — appended after shipped work
-        const managedProjects: Project[] = managedP.map((p, i) => ({
-          id: String(p.pid ?? `CMS-${String(i + 1).padStart(3, "0")}`),
-          slug: String(p.slug ?? p.id),
-          title: String(p.title ?? "Untitled"),
-          client: String(p.client ?? ""),
-          categories: String(p.categories ?? "BRANDING").split(",").map((c) => c.trim().toUpperCase()).filter(Boolean),
-          dept: (p.dept as Project["dept"]) ?? "brand",
-          industry: String(p.industry ?? ""),
-          year: String(p.year ?? new Date().getFullYear()),
-          services: String(p.services ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-          coverSeed: (Number(p.id) || 7) * 13 + 5,
-          hue: Number(p.hue ?? 210),
-          summary: String(p.summary ?? ""),
-          image: p.image ? String(p.image) : undefined,
-          liveUrl: p.liveUrl && /^https:\/\//.test(String(p.liveUrl)) ? String(p.liveUrl) : undefined,
-          caseStudy: {
-            challenge: String(p.challenge ?? ""),
-            strategy: String(p.strategy ?? ""),
-            creative: String(p.creative ?? ""),
-            execution: String(p.execution ?? ""),
-            result: String(p.result ?? ""),
-          },
-        }));
+        // admin-added / edited portfolio projects (PRD §67)
+        const managedProjects: Project[] = managedP
+          .filter((p) => p.enabled !== false)
+          .map((p, i) => ({
+            id: String(p.pid ?? `CMS-${String(i + 1).padStart(3, "0")}`),
+            slug: String(p.slug ?? p.id),
+            title: String(p.title ?? "Untitled"),
+            client: String(p.client ?? ""),
+            categories: String(p.categories ?? "BRANDING").split(",").map((c) => c.trim().toUpperCase()).filter(Boolean),
+            dept: (p.dept as Project["dept"]) ?? "brand",
+            industry: String(p.industry ?? ""),
+            year: String(p.year ?? new Date().getFullYear()),
+            services: String(p.services ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+            coverSeed: (Number(p.id) || 7) * 13 + 5,
+            hue: Number(p.hue ?? 210),
+            summary: String(p.summary ?? ""),
+            image: p.image ? String(p.image) : undefined,
+            liveUrl: p.liveUrl && /^https:\/\//.test(String(p.liveUrl)) ? String(p.liveUrl) : undefined,
+            featured: p.featured === true || p.featured === "true",
+            caseStudy: {
+              challenge: String(p.challenge ?? ""),
+              strategy: String(p.strategy ?? ""),
+              creative: String(p.creative ?? ""),
+              execution: String(p.execution ?? ""),
+              result: String(p.result ?? ""),
+            },
+          }));
+
+        // Built-ins: exclude any that were overridden or disabled by the CMS
+        const managedSlugs = new Set(managedP.map((p) => String(p.slug || p.id)));
+        const builtIns = PROJECTS
+          .filter((p) => !managedSlugs.has(p.slug) && !managedSlugs.has(p.id));
+
+        const projects = [...managedProjects, ...builtIns];
 
         const promos: Record<string, PromoCode> = {};
         managedPromo.forEach((m) => {
@@ -192,7 +202,7 @@ export function ContentProvider({ children }: { children: ReactNode }) {
           services,
           testimonials,
           faqs,
-          projects: [...PROJECTS, ...managedProjects],
+          projects,
           promos,
           contact,
           socials: settings.socials?.length ? settings.socials : SOCIAL_LINKS,

@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { CONTACT, formatMoney } from "../lib/data";
 import { useDepartment } from "../lib/dept";
-import { depositFor, useShop } from "../lib/shop";
+import { useShop } from "../lib/shop";
 import { activeProviders } from "../lib/payments";
 import { useSEO, track } from "../lib/seo";
 import { Reveal } from "../lib/motion";
@@ -13,7 +13,7 @@ import { auth as fbAuth, firebaseReady } from "../lib/firebase";
 /* ------------------------------------------------------------------
    CHECKOUT (PRD §29–31)
    PROJECT → DETAILS → FILES → PAYMENT → DONE
-   Streamlined, accessible, no traditional ecommerce sprawl.
+   Streamlined, accessible, 100% full payment upfront.
 ------------------------------------------------------------------- */
 
 const STEPS = ["Project", "Details", "Files", "Payment", "Done"] as const;
@@ -36,7 +36,7 @@ export default function Checkout() {
   useDepartment(null);
   const { items, remove, currency, promo, applyPromo, clearPromo, subtotal, discount, total, clear } = useShop();
   const [step, setStep] = useState(0);
-  const [payMode, setPayMode] = useState<"deposit" | "full">("deposit");
+  const payMode = "full" as const;
   const [promoInput, setPromoInput] = useState("");
   const [promoError, setPromoError] = useState<string | null>(null);
   const [details, setDetails] = useState<Details>({ name: "", company: "", email: "", phone: "", website: "", industry: "", audience: "", goals: "", deadline: "", colors: "", style: "", extra: "" });
@@ -62,11 +62,9 @@ export default function Checkout() {
     }
   }, [items.length]);
 
+  useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure and complete payment for your project or template.", path: "/checkout" });
 
-  useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure, pay your deposit and start your project.", path: "/checkout" });
-
-  const depositTotal = useMemo(() => items.reduce((s, i) => s + depositFor(i), 0), [items]);
-  const dueToday = payMode === "deposit" ? Math.max(0, depositTotal - discount) : total;
+  const dueToday = total;
 
   const set = (k: keyof Details) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setDetails((d) => ({ ...d, [k]: e.target.value }));
@@ -103,7 +101,7 @@ export default function Checkout() {
       orderId: `SK-${Date.now()}`,
       amountUsd: dueToday,
       description: items.map((i) => i.name).join(", "),
-      kind: payMode === "deposit" ? "deposit" : "full",
+      kind: "full",
     });
     if (!res.ok) {
       setPaying(false);
@@ -220,10 +218,12 @@ export default function Checkout() {
                         <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
                           {i.addons.length > 0 && `+ ${i.addons.map((a) => a.name).join(", ")} · `}
                           {i.rush && "Rush +25% · "}
-                          {i.billing === "monthly" ? "Monthly retainer" : "One-time"} · {i.depositPct}% deposit
+                          {i.billing === "monthly" ? "Monthly retainer" : "Full payment upfront"}
                         </span>
                       </div>
-                      <span className="font-display font-bold">{formatMoney(depositFor(i) / (i.depositPct / 100), currency)}</span>
+                      <span className="font-display font-bold">
+                        {formatMoney((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1), currency)}
+                      </span>
                       <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => remove(i.key)} aria-label={`Remove ${i.name}`}>Remove</button>
                     </li>
                   ))}
@@ -326,27 +326,34 @@ export default function Checkout() {
         {step === 3 && (
           <div className="grid md:grid-cols-2 gap-10">
             <div>
-              <span className="idx">/payment-mode</span>
-              <div className="mt-4 flex flex-col gap-2" role="radiogroup" aria-label="Payment mode">
-                {(["deposit", "full"] as const).map((m) => (
-                  <label key={m} className="flex items-center justify-between border border-[var(--line)] px-5 py-4 cursor-pointer has-[:checked]:border-[var(--dept)] has-[:checked]:bg-[var(--dept-soft)] transition-colors">
-                    <span className="flex items-center gap-3">
-                      <input type="radio" name="paymode" checked={payMode === m} onChange={() => setPayMode(m)} className="accent-[var(--dept)] w-4 h-4" />
-                      <span className="font-display text-sm font-bold uppercase">{m === "deposit" ? "Pay deposit" : "Pay in full"}</span>
-                    </span>
-                    <span className="font-display font-bold">{formatMoney(m === "deposit" ? Math.max(0, depositTotal - discount) : total, currency)}</span>
-                  </label>
-                ))}
+              <span className="idx">/order-summary</span>
+              <div className="mt-4 border border-[var(--line)] p-6 flex flex-col gap-4" style={{ background: "var(--panel)" }}>
+                <div>
+                  <h3 className="font-display text-base font-bold uppercase">Payment Breakdown</h3>
+                  <p className="font-meta text-[9px] text-[var(--muted)] mt-1">100% full payment upfront · instant access & kickoff</p>
+                </div>
+                <div className="flex flex-col gap-2 rule-t pt-4 text-sm">
+                  <div className="flex justify-between"><span className="text-[var(--muted)]">Subtotal</span><span>{formatMoney(subtotal, currency)}</span></div>
+                  {discount > 0 && <div className="flex justify-between dept-accent"><span>Discount</span><span>−{formatMoney(discount, currency)}</span></div>}
+                  <div className="flex justify-between font-display text-lg font-bold rule-t pt-2 mt-1">
+                    <span>Total Due Now</span>
+                    <span className="dept-accent">{formatMoney(total, currency)}</span>
+                  </div>
+                </div>
+                <div className="rule-t pt-3 flex flex-col gap-1.5 font-meta text-[9.5px] text-[var(--muted)]">
+                  <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Instant order confirmation & receipt</p>
+                  <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Immediate access to digital files & editor</p>
+                  <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Direct kickoff & project onboarding</p>
+                </div>
               </div>
-              <p className="font-meta text-[9px] text-[var(--muted)] mt-4 leading-relaxed">
-                Deposits are non-refundable and secure your kickoff. The balance is due upon final approval, before files are delivered.
-              </p>
             </div>
             <div>
               <span className="idx">/provider</span>
               <div className="mt-4 border border-[var(--line-strong)] p-6" style={{ background: "var(--panel)" }}>
-                <div className="flex justify-between text-sm"><span className="text-[var(--muted)]">Due today</span><span className="font-display text-2xl font-bold">{formatMoney(dueToday, currency)}</span></div>
-                {payMode === "deposit" && <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Balance on approval</span><span>{formatMoney(total - dueToday, currency)}</span></div>}
+                <div className="flex justify-between items-baseline">
+                  <span className="text-[var(--muted)] text-sm">Total Due Today</span>
+                  <span className="font-display text-3xl font-bold">{formatMoney(dueToday, currency)}</span>
+                </div>
                 <div className="mt-6 flex flex-col gap-2">
                   {activeProviders().map((p) => (
                     <button key={p.id} disabled={paying} onClick={pay} className="btn btn-dept justify-center disabled:opacity-60">
@@ -356,7 +363,7 @@ export default function Checkout() {
                 </div>
                 {payError && <p className="font-meta text-[10px] text-red-600 mt-3" role="alert">{payError}</p>}
                 <p className="font-meta text-[8.5px] text-[var(--muted)] mt-5 leading-relaxed">
-                  Cards are processed by the payment provider — we never see or store card data. PayPal (cards + PayPal balance) is being configured for production; the demo gateway is active in this build.
+                  Cards are processed securely by the payment provider — we never see or store card data. 256-bit SSL encryption.
                 </p>
               </div>
               <div className="mt-6"><button className="btn btn-ghost" onClick={() => setStep(2)}>← Back</button></div>
@@ -370,8 +377,7 @@ export default function Checkout() {
             <span className="idx">/order-{orderId}</span>
             <h2 className="display-section mt-4">Order confirmed.</h2>
             <p className="mt-4 text-[var(--muted)] max-w-md mx-auto">
-              {payMode === "deposit" ? "Deposit received." : "Payment received."} Your project is in the queue —
-              next step: complete your project questionnaire.
+              Payment received in full. Your project is in the queue — next step: complete your project questionnaire.
             </p>
             <div className="mt-8 max-w-sm mx-auto text-left">
               {["Confirmation email with your receipt", "Project questionnaire link", "Onboarding instructions + file upload access", "Kickoff scheduling within 1 business day"].map((s, i) => (
