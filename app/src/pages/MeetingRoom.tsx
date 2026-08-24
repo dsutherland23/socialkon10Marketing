@@ -27,6 +27,10 @@ import {
   subscribeToWebRTCSignals,
   downloadCalendarIcs,
   normalizeRoomCode,
+  setMeetingLiveProofing,
+  updateMeetingLaserPointer,
+  subscribeToMeetingLaser,
+  submitMeetingProofFeedback,
 } from "../lib/meetings";
 import {
   getMediaDevices,
@@ -157,25 +161,30 @@ export default function MeetingRoom() {
 
   // 2026 Creative Live Deliverables Proofing State
   const [proofingIndex, setProofingIndex] = useState(0);
-  const [laserPointer, setLaserPointer] = useState<{ x: number; y: number; active: boolean }>({ x: 50, y: 50, active: false });
+  const [laserPointer, setLaserPointer] = useState<{ x: number; y: number; active: boolean; senderName?: string }>({ x: 50, y: 50, active: false });
+  const [isProofingMaximized, setIsProofingMaximized] = useState(false);
+  const [proofZoom, setProofZoom] = useState(1);
+  const [proofFeedbackDraft, setProofFeedbackDraft] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   const proofingMockups = [
     {
-      title: "Social Media Brand Concept 2026",
+      title: "Social Media Brand Campaign 2026",
       category: "Social Campaign",
       image: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop",
-      notes: "High-contrast dark mode aesthetics with neon department accents.",
+      notes: "High-contrast dark mode aesthetics with neon department accents and conversion CTA.",
     },
     {
       title: "Studio Logo & Typography Lockup",
       category: "Identity & Branding",
       image: "https://images.unsplash.com/photo-1600132806370-bf17e65e942f?q=80&w=1200&auto=format&fit=crop",
-      notes: "Vector-ready SVG export with primary and secondary color palette.",
+      notes: "Vector-ready SVG export with primary and secondary typography color palette.",
     },
     {
       title: "Product Launch Promotional Banner",
       category: "E-Commerce / Ads",
       image: "https://images.unsplash.com/photo-1557804506-669a67965ba0?q=80&w=1200&auto=format&fit=crop",
-      notes: "Optimized for Instagram 9:16 reels, TikTok ads, and Google display.",
+      notes: "Optimized for Instagram 9:16 reels, TikTok ads, YouTube bumpers, and Google display.",
     },
   ];
 
@@ -444,6 +453,54 @@ export default function MeetingRoom() {
     return () => document.removeEventListener("fullscreenchange", handleFs);
   }, []);
 
+  // 11. Synchronize Live Proofing state across host and clients
+  const prevProofingActive = useRef(false);
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const proofing = meeting.liveProofing;
+    if (!proofing) return;
+
+    if (typeof proofing.mockupIndex === "number") {
+      setProofingIndex(proofing.mockupIndex);
+    }
+
+    if (proofing.laserPointer && Date.now() - proofing.laserPointer.updatedAt < 6000) {
+      setLaserPointer({
+        x: proofing.laserPointer.x,
+        y: proofing.laserPointer.y,
+        active: true,
+        senderName: proofing.laserPointer.senderName,
+      });
+    }
+
+    // Audio / chime notification to attendees when host initializes proofing session
+    if (proofing.active && !prevProofingActive.current && !isHost) {
+      playDoorbellChime();
+      triggerHapticFeedback(100);
+      toast.info(`🎨 ${proofing.presenterName || "Host"} initialized Live Deliverables Proofing!`, { duration: 6000 });
+    }
+    prevProofingActive.current = !!proofing.active;
+  }, [meeting?.liveProofing, phase, isHost]);
+
+  // 12. High-speed Laser Pointer Channel
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const unsubLaser = subscribeToMeetingLaser(meeting.id, (l) => {
+      setLaserPointer({ x: l.x, y: l.y, active: true, senderName: l.senderName });
+      setTimeout(() => {
+        setLaserPointer((prev) => (prev.x === l.x && prev.y === l.y ? { ...prev, active: false } : prev));
+      }, 3500);
+    });
+    return () => unsubLaser();
+  }, [meeting?.id, phase]);
+
+  // 13. Auto-scroll chat box when new messages arrive
+  useEffect(() => {
+    if (activeDrawer === "chat") {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, activeDrawer]);
+
   // Handlers
   const handleToggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -518,29 +575,29 @@ export default function MeetingRoom() {
   };
 
   const handleToggleMic = async () => {
-    if (!localStream || localStream.getAudioTracks().length === 0) {
-      await requestMediaPermissions();
-      return;
-    }
     const next = !isMicMuted;
     setIsMicMuted(next);
-    localStream.getAudioTracks().forEach((t) => (t.enabled = !next));
-    if (meeting && phase === "in_meeting") {
-      updateParticipant(meeting.id, myParticipantId, { isMuted: next });
+    if (localStream) {
+      localStream.getAudioTracks().forEach((t) => (t.enabled = !next));
     }
+    if (meeting && phase === "in_meeting") {
+      await updateParticipant(meeting.id, myParticipantId, { isMuted: next });
+    }
+    toast.info(next ? "Microphone Muted" : "Microphone Active");
   };
 
   const handleToggleVideo = async () => {
-    if (!localStream || localStream.getVideoTracks().length === 0) {
-      await requestMediaPermissions();
-      return;
-    }
     const next = !isVideoOff;
     setIsVideoOff(next);
-    localStream.getVideoTracks().forEach((t) => (t.enabled = !next));
-    if (meeting && phase === "in_meeting") {
-      updateParticipant(meeting.id, myParticipantId, { isVideoOff: next });
+    if (localStream) {
+      localStream.getVideoTracks().forEach((t) => (t.enabled = !next));
+    } else if (!next) {
+      await requestMediaPermissions();
     }
+    if (meeting && phase === "in_meeting") {
+      await updateParticipant(meeting.id, myParticipantId, { isVideoOff: next });
+    }
+    toast.info(next ? "Camera Stopped" : "Camera Active");
   };
 
   const handleStartScreenShare = async (preferWindow: boolean = false) => {
@@ -555,9 +612,14 @@ export default function MeetingRoom() {
 
     try {
       const stream = await getDisplayMediaStream({ preferWindow, withAudio: true });
+      if (!stream) return;
       setScreenStream(stream);
       setIsScreenSharing(true);
-      if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
+
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = stream;
+        screenVideoRef.current.play().catch(() => {});
+      }
 
       stream.getVideoTracks()[0].onended = () => {
         setIsScreenSharing(false);
@@ -575,17 +637,86 @@ export default function MeetingRoom() {
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatDraft.trim() || !meeting) return;
-    const text = chatDraft;
+    const text = chatDraft.trim();
     setChatDraft("");
     const role: ParticipantRole = isHost ? "host" : isAdmin ? "cohost" : "participant";
-    await sendMeetingChatMessage(
-      meeting.id,
-      myParticipantId,
-      displayName,
-      role,
-      text,
-      chatRecipient || undefined
-    );
+
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const optimisticMsg: MeetingChatMessage = {
+      id: tempId,
+      meetingId: meeting.id,
+      senderId: myParticipantId,
+      senderName: displayName,
+      senderRole: role,
+      recipientId: chatRecipient || undefined,
+      message: text,
+      createdAt: new Date().toISOString(),
+    };
+
+    setChatMessages((prev) => [...prev, optimisticMsg]);
+
+    try {
+      const sent = await sendMeetingChatMessage(
+        meeting.id,
+        myParticipantId,
+        displayName,
+        role,
+        text,
+        chatRecipient || undefined
+      );
+      setChatMessages((prev) => prev.map((m) => (m.id === tempId ? sent : m)));
+    } catch (err: any) {
+      console.error("Chat send error:", err);
+      toast.error("Failed to send message. Please retry.");
+    }
+  };
+
+  const handleSelectProof = async (newIdx: number) => {
+    const clamped = Math.max(0, Math.min(proofingMockups.length - 1, newIdx));
+    setProofingIndex(clamped);
+    if (meeting) {
+      await setMeetingLiveProofing(meeting.id, {
+        mockupIndex: clamped,
+        active: true,
+        presenterId: myParticipantId,
+        presenterName: displayName,
+      });
+    }
+  };
+
+  const handleLaserClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    setLaserPointer({ x, y, active: true, senderName: displayName });
+    if (meeting) {
+      await updateMeetingLaserPointer(meeting.id, x, y, displayName);
+    }
+  };
+
+  const handleSubmitProofFeedback = async (approved: boolean) => {
+    if (!meeting) return;
+    const text = proofFeedbackDraft.trim() || (approved ? "Deliverable concept approved by client!" : "Revision requested.");
+    setProofFeedbackDraft("");
+    await submitMeetingProofFeedback(meeting.id, displayName, text, approved);
+    toast.success(approved ? "Concept approved!" : "Feedback recorded.");
+  };
+
+  const handleToggleProofingSession = async () => {
+    if (!meeting) return;
+    const nextActive = !(meeting.liveProofing?.active ?? false);
+    await setMeetingLiveProofing(meeting.id, {
+      active: nextActive,
+      mockupIndex: proofingIndex,
+      presenterId: myParticipantId,
+      presenterName: displayName,
+    });
+    if (nextActive) {
+      setActiveDrawer("proofing");
+      toast.success("Live Deliverables Proofing broadcast started!");
+    } else {
+      toast.info("Proofing session stopped.");
+    }
   };
 
   const handleSendReaction = async (emoji: "thumbs_up" | "heart" | "laugh" | "clap" | "celebrate" | "question") => {
@@ -1290,6 +1421,32 @@ export default function MeetingRoom() {
         </div>
       )}
 
+      {/* Floating Alert When Live Proofing is Active & Drawer is Closed */}
+      {meeting.liveProofing?.active && activeDrawer !== "proofing" && !isProofingMaximized && (
+        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 border-2 border-[var(--dept)] p-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-4 max-w-md w-[92%] animate-in slide-in-from-top-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-[var(--dept)]/20 border border-[var(--dept)]/40 text-[var(--dept)] flex items-center justify-center text-base shrink-0 animate-pulse">
+              🎨
+            </div>
+            <div className="min-w-0">
+              <p className="font-display text-xs font-bold uppercase text-white truncate">
+                {meeting.liveProofing.presenterName || "Host"} is presenting Proof #{meeting.liveProofing.mockupIndex + 1}
+              </p>
+              <p className="font-meta text-[9px] text-[var(--muted)] truncate">
+                {proofingMockups[meeting.liveProofing.mockupIndex]?.title || "Deliverable Concept"}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveDrawer("proofing")}
+            className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shrink-0 flex items-center gap-1 shadow-md"
+          >
+            👁️ Open Proof Canvas
+          </button>
+        </div>
+      )}
+
       {/* Top Header Bar */}
       <div className="h-12 sm:h-14 px-3 sm:px-6 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
@@ -1838,6 +1995,7 @@ export default function MeetingRoom() {
                       </div>
                     ))
                   )}
+                  <div ref={chatEndRef} />
                 </div>
 
                 <form onSubmit={handleSendChat} className="mt-3 pt-3 border-t border-neutral-800 flex gap-2">
@@ -1858,90 +2016,169 @@ export default function MeetingRoom() {
             {/* DRAWER: 2026 LIVE DELIVERABLES PROOFING & ASSETS CO-VIEWER */}
             {activeDrawer === "proofing" && (
               <div className="flex-1 p-4 overflow-y-auto space-y-4 text-xs">
-                <div className="p-3 bg-neutral-800/80 rounded-xl border border-neutral-700 space-y-2">
+                {/* Proofing Status & Broadcaster Banner */}
+                <div className="p-3 bg-neutral-800/90 rounded-xl border border-neutral-700 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-meta text-[9px] uppercase font-bold text-[var(--dept)]">
-                      Proof #{proofingIndex + 1} of {proofingMockups.length}
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="font-meta text-[9px] uppercase font-bold text-[var(--dept)]">
+                        Live Proofing Canvas
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsProofingMaximized(true)}
+                        className="font-meta text-[9px] px-2 py-1 bg-neutral-700 hover:bg-neutral-600 rounded text-white font-bold flex items-center gap-1"
+                        title="Maximize Canvas"
+                      >
+                        <span>⛶</span> Maximize
+                      </button>
+
+                      {isHost && (
+                        <button
+                          type="button"
+                          onClick={handleToggleProofingSession}
+                          className={`font-meta text-[9px] px-2 py-1 rounded font-bold transition-all ${
+                            meeting.liveProofing?.active
+                              ? "bg-red-500/20 text-red-300 border border-red-500/40"
+                              : "bg-[var(--dept)] text-black"
+                          }`}
+                        >
+                          {meeting.liveProofing?.active ? "Stop Broadcast" : "Broadcast"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Carousel Selector */}
+                  <div className="flex items-center justify-between pt-1 border-t border-neutral-700/60">
+                    <span className="font-meta text-[8.5px] text-neutral-400">
+                      Deliverable #{proofingIndex + 1} of {proofingMockups.length}
                     </span>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => setProofingIndex((i) => Math.max(0, i - 1))}
+                        type="button"
+                        onClick={() => handleSelectProof(proofingIndex - 1)}
                         disabled={proofingIndex === 0}
-                        className="px-2 py-0.5 rounded bg-neutral-700 disabled:opacity-40 text-xs"
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
                       >
                         ←
                       </button>
                       <button
-                        onClick={() => setProofingIndex((i) => Math.min(proofingMockups.length - 1, i + 1))}
+                        type="button"
+                        onClick={() => handleSelectProof(proofingIndex + 1)}
                         disabled={proofingIndex === proofingMockups.length - 1}
-                        className="px-2 py-0.5 rounded bg-neutral-700 disabled:opacity-40 text-xs"
+                        className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
                       >
                         →
                       </button>
                     </div>
                   </div>
 
-                  <h4 className="font-display text-xs font-bold uppercase text-white">
-                    {proofingMockups[proofingIndex].title}
-                  </h4>
-                  <p className="font-meta text-[9px] text-neutral-400">
-                    Category: {proofingMockups[proofingIndex].category}
-                  </p>
+                  <div>
+                    <h4 className="font-display text-xs font-bold uppercase text-white truncate">
+                      {proofingMockups[proofingIndex].title}
+                    </h4>
+                    <p className="font-meta text-[9px] text-neutral-400">
+                      Category: {proofingMockups[proofingIndex].category}
+                    </p>
+                  </div>
 
                   {/* Interactive Proofing Canvas */}
                   <div
-                    onClick={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const x = ((e.clientX - rect.left) / rect.width) * 100;
-                      const y = ((e.clientY - rect.top) / rect.height) * 100;
-                      setLaserPointer({ x, y, active: true });
-                      toast.info(`Pinpoint set at (${Math.round(x)}%, ${Math.round(y)}%)`);
-                    }}
-                    className="relative aspect-video rounded-lg overflow-hidden border border-neutral-700 cursor-crosshair group shadow-md"
+                    onClick={handleLaserClick}
+                    className="relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 cursor-crosshair group shadow-lg bg-black"
                   >
                     <img
                       src={proofingMockups[proofingIndex].image}
                       alt="Proof Draft"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                     />
 
                     {/* Glowing Laser Pointer Indicator */}
                     {laserPointer.active && (
                       <div
-                        className="absolute w-4 h-4 -ml-2 -mt-2 rounded-full bg-red-500 border-2 border-white shadow-[0_0_12px_red] animate-ping"
+                        className="absolute -ml-3 -mt-3 pointer-events-none transition-all duration-75"
                         style={{ left: `${laserPointer.x}%`, top: `${laserPointer.y}%` }}
-                      />
+                      >
+                        <div className="relative">
+                          <div className="w-6 h-6 rounded-full bg-red-500/40 animate-ping absolute -inset-0.5" />
+                          <div className="w-5 h-5 rounded-full bg-red-500 border-2 border-white shadow-[0_0_15px_red] flex items-center justify-center text-[7px] text-white font-bold" />
+                          {laserPointer.senderName && (
+                            <span className="absolute left-6 top-0 whitespace-nowrap bg-black/80 text-white font-meta text-[8px] px-1.5 py-0.5 rounded border border-neutral-700">
+                              🔴 {laserPointer.senderName}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     )}
 
-                    <div className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded text-[8px] text-neutral-300">
-                      Tap image to laser point
+                    <div className="absolute bottom-1.5 right-1.5 bg-black/80 backdrop-blur-sm px-2 py-0.5 rounded text-[8px] text-neutral-300 flex items-center gap-1">
+                      <span>🎯</span> Tap image to point
                     </div>
                   </div>
 
-                  <p className="text-neutral-300 text-[11px] italic bg-neutral-900/60 p-2 rounded border border-neutral-700/50">
+                  <p className="text-neutral-300 text-[11px] italic bg-neutral-900/80 p-2.5 rounded-lg border border-neutral-700/50 leading-relaxed">
                     "{proofingMockups[proofingIndex].notes}"
                   </p>
 
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => {
-                        toast.success("Deliverable concept approved!");
-                        handleSendChat({
-                          preventDefault: () => {},
-                        } as any);
-                      }}
-                      className="btn btn-dept flex-1 !py-2 font-display text-[9px] font-bold uppercase"
-                    >
-                      ✓ Approve Concept
-                    </button>
-                    <button
-                      onClick={() => {
-                        toast.info("Feedback noted for next revision.");
-                      }}
-                      className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 text-[9px] font-bold uppercase"
-                    >
-                      Request Edits
-                    </button>
+                  {/* Client Live Feedback Notes & Approvals Timeline */}
+                  {meeting.liveProofing?.feedbackNotes && meeting.liveProofing.feedbackNotes.length > 0 && (
+                    <div className="space-y-1.5 pt-2 border-t border-neutral-700/60">
+                      <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block">
+                        Live Review Notes ({meeting.liveProofing.feedbackNotes.length})
+                      </span>
+                      <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                        {meeting.liveProofing.feedbackNotes.map((note) => (
+                          <div
+                            key={note.id}
+                            className={`p-2 rounded-lg border text-[10px] ${
+                              note.approved
+                                ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-200"
+                                : "bg-neutral-900 border-neutral-700 text-neutral-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between font-bold text-[9px] mb-0.5">
+                              <span>{note.approved ? "✅ Approved by" : "📝 Note from"} {note.senderName}</span>
+                              <span className="text-neutral-500 font-meta text-[8px]">
+                                {new Date(note.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                              </span>
+                            </div>
+                            <p className="leading-snug">{note.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Note Input & 1-Click Approval Form */}
+                  <div className="pt-2 border-t border-neutral-700/60 space-y-2">
+                    <input
+                      type="text"
+                      value={proofFeedbackDraft}
+                      onChange={(e) => setProofFeedbackDraft(e.target.value)}
+                      placeholder="Type design feedback or revisions…"
+                      className="w-full bg-neutral-900 border border-neutral-700 px-3 py-1.5 rounded-lg text-xs outline-none focus:border-[var(--dept)] text-white placeholder-neutral-500"
+                    />
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSubmitProofFeedback(true)}
+                        className="btn btn-dept flex-1 !py-2 font-display text-[9px] font-bold uppercase shadow-sm"
+                      >
+                        ✓ Approve Concept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSubmitProofFeedback(false)}
+                        className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold uppercase transition-colors"
+                      >
+                        Request Edits
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2306,6 +2543,148 @@ export default function MeetingRoom() {
           )}
         </div>
       </div>
+
+      {/* Fullscreen / Theater Mode Maximized Proofing Modal */}
+      {isProofingMaximized && (
+        <div className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-md flex flex-col p-3 sm:p-6 animate-in zoom-in-95 duration-200">
+          {/* Top Theater Header Bar */}
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-800 shrink-0">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🎨</span>
+              <div>
+                <h3 className="font-display text-sm font-bold uppercase text-white truncate max-w-xs sm:max-w-md">
+                  {proofingMockups[proofingIndex].title}
+                </h3>
+                <p className="font-meta text-[9px] text-neutral-400">
+                  Deliverable #{proofingIndex + 1} · {proofingMockups[proofingIndex].category}
+                </p>
+              </div>
+            </div>
+
+            {/* Zoom and Slide Controls */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center bg-neutral-800 rounded-lg p-0.5 border border-neutral-700">
+                <button
+                  type="button"
+                  onClick={() => setProofZoom((z) => Math.max(0.75, z - 0.25))}
+                  className="px-2.5 py-1 text-xs hover:bg-neutral-700 rounded text-white"
+                  title="Zoom Out"
+                >
+                  -
+                </button>
+                <span className="font-mono text-[10px] px-2 text-neutral-300">{Math.round(proofZoom * 100)}%</span>
+                <button
+                  type="button"
+                  onClick={() => setProofZoom((z) => Math.min(3, z + 0.25))}
+                  className="px-2.5 py-1 text-xs hover:bg-neutral-700 rounded text-white"
+                  title="Zoom In"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProofZoom(1)}
+                  className="font-meta text-[9px] px-2 py-1 border-l border-neutral-700 text-neutral-400 hover:text-white"
+                >
+                  Reset
+                </button>
+              </div>
+
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleSelectProof(proofingIndex - 1)}
+                  disabled={proofingIndex === 0}
+                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold"
+                >
+                  ← Prev
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectProof(proofingIndex + 1)}
+                  disabled={proofingIndex === proofingMockups.length - 1}
+                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-xs font-bold"
+                >
+                  Next →
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsProofingMaximized(false)}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-white flex items-center justify-center font-bold text-sm ml-2"
+                title="Close Theater Mode"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Large High-Res Interactive Canvas */}
+          <div className="flex-1 flex items-center justify-center overflow-auto p-4 relative">
+            <div
+              onClick={handleLaserClick}
+              className="relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 cursor-crosshair transition-transform duration-200"
+              style={{ transform: `scale(${proofZoom})` }}
+            >
+              <img
+                src={proofingMockups[proofingIndex].image}
+                alt="High-Res Proof Draft"
+                className="max-h-[72vh] w-auto object-contain rounded-2xl"
+              />
+
+              {/* Glowing Laser Pointer Indicator */}
+              {laserPointer.active && (
+                <div
+                  className="absolute -ml-4 -mt-4 pointer-events-none"
+                  style={{ left: `${laserPointer.x}%`, top: `${laserPointer.y}%` }}
+                >
+                  <div className="relative">
+                    <div className="w-8 h-8 rounded-full bg-red-500/40 animate-ping absolute -inset-0.5" />
+                    <div className="w-7 h-7 rounded-full bg-red-500 border-2 border-white shadow-[0_0_20px_red] flex items-center justify-center text-[8px] text-white font-bold" />
+                    {laserPointer.senderName && (
+                      <span className="absolute left-8 top-1 whitespace-nowrap bg-black/90 text-white font-meta text-[9px] px-2 py-0.5 rounded-full border border-neutral-700 shadow-lg">
+                        🔴 {laserPointer.senderName}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Feedback Action Bar in Theater Mode */}
+          <div className="pt-3 border-t border-neutral-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+            <p className="font-meta text-[11px] text-neutral-300 italic truncate max-w-md">
+              "{proofingMockups[proofingIndex].notes}"
+            </p>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={proofFeedbackDraft}
+                onChange={(e) => setProofFeedbackDraft(e.target.value)}
+                placeholder="Type revision notes..."
+                className="bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded-lg text-xs outline-none text-white w-64"
+              />
+              <button
+                type="button"
+                onClick={() => handleSubmitProofFeedback(true)}
+                className="btn btn-dept !py-1.5 !px-4 font-display text-[10px] font-bold uppercase shadow-sm"
+              >
+                ✓ Approve Concept
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubmitProofFeedback(false)}
+                className="px-3 py-1.5 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 text-[10px] font-bold uppercase hover:bg-neutral-700"
+              >
+                Request Edits
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

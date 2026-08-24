@@ -5,12 +5,10 @@ import {
   doc,
   getDoc,
   getDocs,
-  limit,
   onSnapshot,
   orderBy,
   query,
   setDoc,
-  updateDoc,
   where,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -108,6 +106,25 @@ export interface MeetingIntelligence {
   generatedAt: string;
 }
 
+export interface ProofingFeedbackNote {
+  id: string;
+  senderName: string;
+  text: string;
+  approved: boolean;
+  createdAt: string;
+}
+
+export interface LiveProofingState {
+  active: boolean;
+  mockupIndex: number;
+  presenterId: string;
+  presenterName: string;
+  laserPointer?: { x: number; y: number; updatedAt: number; senderName: string };
+  zoomLevel?: number;
+  feedbackNotes?: ProofingFeedbackNote[];
+  updatedAt: string;
+}
+
 export interface MeetingRecord {
   id: string;
   title: string;
@@ -138,6 +155,7 @@ export interface MeetingRecord {
   participants: MeetingParticipant[];
   breakoutRooms?: MeetingBreakoutRoom[];
   intelligence?: MeetingIntelligence;
+  liveProofing?: LiveProofingState;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -304,19 +322,35 @@ export async function createMeeting(
   return meeting;
 }
 
+export function cleanFirestoreObject<T extends Record<string, any>>(obj: T): T {
+  if (!obj || typeof obj !== "object") return obj;
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
+        out[k] = cleanFirestoreObject(v);
+      } else {
+        out[k] = v;
+      }
+    }
+  }
+  return out as T;
+}
+
 export async function updateMeeting(
   id: string,
   updates: Partial<MeetingRecord>
 ): Promise<void> {
   const now = new Date().toISOString();
-  const payload = { ...updates, updatedAt: now };
+  const rawPayload = { ...updates, updatedAt: now };
+  const payload = cleanFirestoreObject(rawPayload);
 
   if (firebaseReady && db) {
     try {
-      await updateDoc(doc(db, "meetings", id), payload);
-      const alphaKey = getAlphanumericRoomKey(id);
-      if (alphaKey && alphaKey !== id) {
-        await updateDoc(doc(db, "meetings", alphaKey), payload).catch(() => {});
+      const normalized = normalizeRoomCode(id);
+      await setDoc(doc(db, "meetings", id), payload, { merge: true });
+      if (normalized && normalized !== id) {
+        await setDoc(doc(db, "meetings", normalized), payload, { merge: true }).catch(() => {});
       }
       return;
     } catch (err) {
@@ -642,18 +676,23 @@ export async function sendMeetingChatMessage(
   recipientId?: string
 ): Promise<MeetingChatMessage> {
   const normId = normalizeRoomCode(meetingId);
+  const now = new Date().toISOString();
+  const id = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
   const chatMsg: MeetingChatMessage = {
-    id: `chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id,
     meetingId: normId,
     senderId,
     senderName,
     senderRole,
-    recipientId,
     message: message.trim(),
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   };
+  if (recipientId) {
+    chatMsg.recipientId = recipientId;
+  }
 
-  // Broadcast via local channel for instant tab-to-tab responsiveness
+  // 1. Broadcast via local channel for zero-latency in same-device testing
   try {
     if (typeof BroadcastChannel !== "undefined") {
       const bc = new BroadcastChannel(`sk_chat_${normId}`);
@@ -662,15 +701,18 @@ export async function sendMeetingChatMessage(
     }
   } catch {}
 
+  // 2. Persist cleanly to Firestore
   if (firebaseReady && db) {
     try {
-      await addDoc(collection(db, "meetings", normId, "chat"), chatMsg);
+      const cleanData = cleanFirestoreObject(chatMsg);
+      await setDoc(doc(db, "meetings", normId, "chat", id), cleanData);
       return chatMsg;
     } catch (err) {
       console.warn("Firestore chat error, using local storage:", err);
     }
   }
 
+  // 3. Local storage fallback
   const key = `sk_chat_${normId}`;
   const existing: MeetingChatMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
   existing.push(chatMsg);
@@ -687,11 +729,15 @@ export function subscribeToMeetingChat(
 
   if (firebaseReady && db) {
     try {
-      const q = query(collection(db, "meetings", normId, "chat"), orderBy("createdAt", "asc"));
+      const chatCol = collection(db, "meetings", normId, "chat");
       unsubFirestore = onSnapshot(
-        q,
+        chatCol,
         (snap) => {
-          onMessages(snap.docs.map((d) => d.data() as MeetingChatMessage));
+          const msgs = snap.docs
+            .map((d) => d.data() as MeetingChatMessage)
+            .filter((m) => m && m.message && m.createdAt)
+            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+          onMessages(msgs);
         },
         (err) => {
           console.warn("Firestore chat subscription error, fallback to local:", err);
@@ -769,7 +815,7 @@ export async function sendMeetingReaction(
 
   if (firebaseReady && db) {
     try {
-      await addDoc(collection(db, "meetings", normId, "reactions"), data);
+      await setDoc(doc(db, "meetings", normId, "reactions", data.id), cleanFirestoreObject(data));
     } catch {}
   }
 }
@@ -783,16 +829,12 @@ export function subscribeToMeetingReactions(
 
   if (firebaseReady && db) {
     try {
-      const q = query(
-        collection(db, "meetings", normId, "reactions"),
-        orderBy("createdAt", "desc"),
-        limit(5)
-      );
+      const q = collection(db, "meetings", normId, "reactions");
       unsubFirestore = onSnapshot(q, (snap) => {
         snap.docChanges().forEach((change) => {
           if (change.type === "added") {
             const rx = change.doc.data() as MeetingReactionEvent;
-            if (Date.now() - rx.createdAt < 5000) {
+            if (Date.now() - rx.createdAt < 6000) {
               onReaction(rx);
             }
           }
@@ -817,6 +859,119 @@ export function subscribeToMeetingReactions(
     unsubFirestore();
     if (bc) bc.close();
   };
+}
+
+/* ---------------- Real-Time Synchronized Live Proofing & Deliverables ---------------- */
+
+export async function setMeetingLiveProofing(
+  meetingId: string,
+  updates: Partial<LiveProofingState>
+): Promise<void> {
+  const meeting = await getMeetingById(meetingId);
+  const existing: LiveProofingState = meeting?.liveProofing || {
+    active: true,
+    mockupIndex: 0,
+    presenterId: "",
+    presenterName: "",
+    updatedAt: new Date().toISOString(),
+  };
+
+  const payload: LiveProofingState = {
+    ...existing,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const normId = normalizeRoomCode(meetingId);
+
+  // Broadcast channel for instantaneous local testing
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_proofing_${normId}`);
+      bc.postMessage(payload);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  await updateMeeting(meetingId, { liveProofing: payload });
+}
+
+export async function updateMeetingLaserPointer(
+  meetingId: string,
+  x: number,
+  y: number,
+  senderName: string
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  const laser = { x, y, updatedAt: Date.now(), senderName };
+
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_laser_${normId}`);
+      bc.postMessage(laser);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  if (firebaseReady && db) {
+    try {
+      await setDoc(
+        doc(db, "meetings", normId),
+        cleanFirestoreObject({
+          "liveProofing.laserPointer": laser,
+          updatedAt: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+    } catch {}
+  }
+}
+
+export function subscribeToMeetingLaser(
+  meetingId: string,
+  onLaser: (laser: { x: number; y: number; senderName: string }) => void
+): Unsubscribe {
+  const normId = normalizeRoomCode(meetingId);
+  let bc: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_laser_${normId}`);
+      bc.onmessage = (e) => {
+        if (e.data && typeof e.data.x === "number") {
+          onLaser(e.data);
+        }
+      };
+    }
+  } catch {}
+
+  return () => {
+    if (bc) bc.close();
+  };
+}
+
+export async function submitMeetingProofFeedback(
+  meetingId: string,
+  senderName: string,
+  text: string,
+  approved: boolean
+): Promise<void> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return;
+
+  const note: ProofingFeedbackNote = {
+    id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    senderName,
+    text: text.trim(),
+    approved,
+    createdAt: new Date().toISOString(),
+  };
+
+  const existingNotes = meeting.liveProofing?.feedbackNotes || [];
+  const updatedNotes = [...existingNotes, note];
+
+  await setMeetingLiveProofing(meetingId, {
+    feedbackNotes: updatedNotes,
+  });
 }
 
 /* ---------------- Call History & Active Calls ---------------- */
