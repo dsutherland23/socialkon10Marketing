@@ -2421,9 +2421,10 @@ function AdminCommunications() {
 
       {/* MODAL 1: SCHEDULE MEETING */}
       {scheduleModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-[var(--panel)] border border-[var(--line-strong)] rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-5 my-8">
-            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto p-3 sm:p-6">
+          <div className="min-h-full flex items-start sm:items-center justify-center py-6 sm:py-10">
+            <div className="bg-[var(--panel)] border border-[var(--line-strong)] rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl space-y-5 my-auto">
+              <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
               <h3 className="font-display text-base font-bold uppercase">Schedule Studio Meeting</h3>
               <button onClick={() => setScheduleModalOpen(false)} className="text-[var(--muted)] hover:text-[var(--ink)]">✕</button>
             </div>
@@ -2633,6 +2634,7 @@ function AdminCommunications() {
             </form>
           </div>
         </div>
+      </div>
       )}
 
       {/* MODAL 2: INSTANT CALL */}

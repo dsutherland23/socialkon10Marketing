@@ -544,3 +544,41 @@ export function playMeetingReminderChime(): void {
     }, 1000);
   } catch {}
 }
+
+/** Play a doorbell chime when a participant enters the waiting room */
+export function playDoorbellChime(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Two-tone Ding-Dong (G5 783.99 Hz, then E5 659.25 Hz)
+    const tones = [
+      { freq: 783.99, start: now, dur: 0.6 },
+      { freq: 659.25, start: now + 0.35, dur: 0.8 },
+    ];
+
+    tones.forEach(({ freq, start, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(start + dur + 0.05);
+    });
+
+    setTimeout(() => {
+      ctx.close();
+    }, 1500);
+  } catch {}
+}

@@ -33,6 +33,7 @@ import {
   createAudioLevelMeter,
   playSpeakerTestSound,
   playMessageNotificationSound,
+  playDoorbellChime,
   triggerHapticFeedback,
   WebRTCMeshSession,
   type MediaDeviceList,
@@ -73,6 +74,7 @@ function VideoTile({
       ref={videoRef}
       autoPlay
       playsInline
+      {...({ "webkit-playsinline": "true" } as any)}
       muted={muted}
       className={`${className} ${isMirrored ? "transform -scale-x-100" : ""}`}
     />
@@ -212,7 +214,7 @@ export default function MeetingRoom() {
   };
 
   useEffect(() => {
-    if (phase === "ended") return;
+    if (phase === "ended" || !localStream) return;
     requestMediaPermissions();
   }, [selectedAudioInput, selectedVideoInput]);
 
@@ -322,6 +324,18 @@ export default function MeetingRoom() {
       toast.error("You have been removed from the meeting by the host.");
     }
   }, [meeting, myParticipantId, phase]);
+
+  // 7. Watch for incoming Waiting Room participants (Host Doorbell Notification)
+  const prevWaitingCount = useRef(0);
+  useEffect(() => {
+    if (!meeting || !isHost || phase !== "in_meeting") return;
+    const count = meeting.participants.filter((p) => p.status === "waiting").length;
+    if (count > prevWaitingCount.current && prevWaitingCount.current >= 0) {
+      playDoorbellChime();
+      triggerHapticFeedback([150, 80, 200]);
+    }
+    prevWaitingCount.current = count;
+  }, [meeting?.participants, isHost, phase]);
 
   // Handlers
   const handleTestSpeaker = async () => {
@@ -640,50 +654,6 @@ export default function MeetingRoom() {
           </p>
         </div>
 
-        {/* Prominent Mobile Camera & Mic Permission Callout */}
-        {!localStream && (
-          <div className="mb-5 p-3.5 sm:p-4 border-2 border-[var(--dept)] bg-[var(--dept-soft)] rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in duration-200">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[var(--dept)] text-[var(--on-dept)] flex items-center justify-center text-xl shrink-0 font-bold shadow-sm">
-                📹
-              </div>
-              <div className="min-w-0">
-                <p className="font-display text-xs font-bold uppercase text-[var(--ink)] truncate">
-                  Camera &amp; Mic Access Required
-                </p>
-                <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5 line-clamp-2">
-                  {hardwareError || 'Mobile browsers require you to tap "Allow" to activate your camera and microphone.'}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 shrink-0 w-full sm:w-auto">
-              <button
-                type="button"
-                disabled={isRequestingMedia}
-                onClick={requestMediaPermissions}
-                className="btn btn-dept flex-1 sm:flex-none !py-2.5 !px-4 font-display text-[10px] font-bold uppercase shadow-sm flex items-center justify-center gap-1.5"
-              >
-                {isRequestingMedia ? (
-                  <>
-                    <span className="animate-spin">⏳</span> Requesting...
-                  </>
-                ) : (
-                  <>
-                    <span>🎙️</span> Tap to Allow
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowPermissionGuide(true)}
-                className="font-meta text-[10px] px-3 py-2 rounded-lg border border-[var(--line-strong)] bg-[var(--bg)] text-[var(--ink)] hover:border-[var(--dept)] shrink-0"
-              >
-                📱 Guide
-              </button>
-            </div>
-          </div>
-        )}
-
         <div className="grid lg:grid-cols-12 gap-6 sm:gap-8 items-start">
           {/* LEFT: Video Preview & Volume Level */}
           <div className="lg:col-span-7 border border-[var(--line)] rounded-2xl bg-[var(--panel)] overflow-hidden shadow-lg p-3.5 sm:p-6">
@@ -702,7 +672,7 @@ export default function MeetingRoom() {
                           Camera &amp; Microphone
                         </p>
                         <p className="text-[11px] text-neutral-300 mt-0.5">
-                          Tap below to grant access or join in listen mode.
+                          {hardwareError || "Tap below to grant access or join in listen mode."}
                         </p>
                       </div>
                       <div className="flex flex-col gap-2 w-full pt-1">
@@ -1185,8 +1155,58 @@ export default function MeetingRoom() {
 
       {/* Main Workspace Area (Stage + Grid + Drawers) */}
       <div className="flex-1 flex overflow-hidden relative">
+        {/* Floating Waiting Room Admission Bar for Host */}
+        {isHost && waitingParticipants.length > 0 && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-40 bg-neutral-900/95 border-2 border-amber-400 p-3 sm:p-3.5 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-3 animate-in slide-in-from-top-3 max-w-lg w-[92%]">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-base shrink-0">
+                🔔
+              </div>
+              <div className="min-w-0">
+                <p className="font-display text-xs font-bold uppercase text-white truncate">
+                  {waitingParticipants.length === 1
+                    ? `${waitingParticipants[0].displayName} is in the waiting room`
+                    : `${waitingParticipants.length} people in waiting room`}
+                </p>
+                <p className="font-meta text-[9px] text-amber-300">
+                  Grant permission to admit into live meeting
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+              {waitingParticipants.length === 1 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => admitParticipant(meeting.id, waitingParticipants[0].id)}
+                    className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shadow-sm"
+                  >
+                    ✅ Admit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeParticipant(meeting.id, waitingParticipants[0].id)}
+                    className="px-2.5 py-1.5 rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-300 hover:text-white font-meta text-[10px]"
+                  >
+                    Deny
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => admitAllParticipants(meeting.id)}
+                  className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shadow-sm"
+                >
+                  ⚡ Admit All ({waitingParticipants.length})
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Stage & Video Tiles */}
-        <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
+        <div className="flex-1 p-2 sm:p-4 flex flex-col gap-4 overflow-y-auto">
           {/* Screen Share Stage (if active) */}
           {isScreenSharing && (
             <div className="relative w-full aspect-video max-h-[55vh] bg-black rounded-2xl overflow-hidden border border-neutral-700 shadow-2xl flex items-center justify-center">
@@ -1626,11 +1646,16 @@ export default function MeetingRoom() {
 
           <button
             onClick={() => setActiveDrawer(activeDrawer === "participants" ? "none" : "participants")}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`relative flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "participants" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="Toggle Participants"
           >
+            {isHost && waitingParticipants.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+                {waitingParticipants.length}
+              </span>
+            )}
             <span className="text-sm sm:text-base">👥</span>
             <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">People</span>
           </button>

@@ -5,6 +5,7 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   sendPasswordResetEmail,
   sendEmailVerification,
   sendSignInLinkToEmail,
@@ -116,7 +117,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         provider.setCustomParameters({ prompt: "select_account" });
         await signInWithPopup(auth!, provider);
         return null;
-      } catch (e) { return errMsg(e); }
+      } catch (e: any) {
+        const code = e?.code || "";
+        const msg = e?.message || String(e);
+        if (code === "auth/popup-blocked" || msg.includes("Cross-Origin-Opener-Policy") || msg.includes("window.close") || msg.includes("popup")) {
+          try {
+            const provider = new GoogleAuthProvider();
+            await signInWithRedirect(auth!, provider);
+            return null;
+          } catch (rErr) {
+            return errMsg(rErr);
+          }
+        }
+        return errMsg(e);
+      }
     },
 
     resetPassword: async (email) => {
