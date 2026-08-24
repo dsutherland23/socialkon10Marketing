@@ -16,6 +16,14 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
 
   componentDidCatch(error: Error, info: unknown) {
     console.error("[error-boundary]", error, info);
+    const isChunkError = /Failed to fetch dynamically imported module|Loading chunk|Importing a module script failed|status of 404/i.test(error.message || "");
+    if (isChunkError) {
+      const retryKey = "sk_chunk_reload_" + window.location.pathname;
+      if (!sessionStorage.getItem(retryKey)) {
+        sessionStorage.setItem(retryKey, "true");
+        window.location.reload();
+      }
+    }
   }
 
   render() {

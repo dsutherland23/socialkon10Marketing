@@ -29,20 +29,38 @@ import About from "./pages/About";
 import Insights from "./pages/Insights";
 import NotFound from "./pages/NotFound";
 
+function lazyWithRetry<T extends React.ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+  return lazy(async () => {
+    try {
+      return await factory();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const isChunkError = /Failed to fetch dynamically imported module|Loading chunk|Importing a module script failed|status of 404/i.test(msg);
+      const retryKey = "sk_chunk_reload_" + window.location.pathname;
+      if (isChunkError && !sessionStorage.getItem(retryKey)) {
+        sessionStorage.setItem(retryKey, "true");
+        window.location.reload();
+        return new Promise<{ default: T }>(() => {});
+      }
+      throw error;
+    }
+  });
+}
+
 /* Route-based code splitting (PRD §58) — conversion + account flows
    and heavy pages load on demand, keeping the landing bundle lean. */
-const ProjectPage = lazy(() => import("./pages/Project"));
-const InsightArticle = lazy(() => import("./pages/Insight"));
-const Checkout = lazy(() => import("./pages/Checkout"));
-const AuthPage = lazy(() => import("./pages/Auth"));
-const ClientPortal = lazy(() => import("./pages/Client"));
-const Admin = lazy(() => import("./pages/Admin"));
-const DesignStore = lazy(() => import("./pages/DesignStore"));
-const DesignServicePage = lazy(() => import("./pages/DesignService"));
-const CustomPackage = lazy(() => import("./pages/CustomPackage"));
-const Templates = lazy(() => import("./pages/Templates"));
-const TemplateDetail = lazy(() => import("./pages/TemplateDetail"));
-const Editor = lazy(() => import("./pages/Editor"));
+const ProjectPage = lazyWithRetry(() => import("./pages/Project"));
+const InsightArticle = lazyWithRetry(() => import("./pages/Insight"));
+const Checkout = lazyWithRetry(() => import("./pages/Checkout"));
+const AuthPage = lazyWithRetry(() => import("./pages/Auth"));
+const ClientPortal = lazyWithRetry(() => import("./pages/Client"));
+const Admin = lazyWithRetry(() => import("./pages/Admin"));
+const DesignStore = lazyWithRetry(() => import("./pages/DesignStore"));
+const DesignServicePage = lazyWithRetry(() => import("./pages/DesignService"));
+const CustomPackage = lazyWithRetry(() => import("./pages/CustomPackage"));
+const Templates = lazyWithRetry(() => import("./pages/Templates"));
+const TemplateDetail = lazyWithRetry(() => import("./pages/TemplateDetail"));
+const Editor = lazyWithRetry(() => import("./pages/Editor"));
 
 
 function ScrollAndTrack() {
