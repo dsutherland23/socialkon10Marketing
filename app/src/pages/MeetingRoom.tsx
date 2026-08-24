@@ -202,6 +202,7 @@ export default function MeetingRoom() {
   const [pendingPinCoord, setPendingPinCoord] = useState<{ x: number; y: number } | null>(null);
   const [pinCommentDraft, setPinCommentDraft] = useState("");
   const [selectedPinDetail, setSelectedPinDetail] = useState<CanvasPin | null>(null);
+  const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
 
   const [proofingIndex, setProofingIndex] = useState(0);
   const [laserPointer, setLaserPointer] = useState<{ x: number; y: number; active: boolean; senderName?: string }>({ x: 50, y: 50, active: false });
@@ -1219,14 +1220,44 @@ export default function MeetingRoom() {
     toast.info("Redo markup");
   };
 
-  const handleClearAnnotations = async () => {
+  const handleClearAnnotations = () => {
     if (!meeting || !activeMockup) return;
-    if (mockupStrokes.length === 0 && mockupPins.length === 0) return;
+    if (mockupStrokes.length === 0 && mockupPins.length === 0) {
+      toast.info("Canvas is already clear.");
+      return;
+    }
+    if (mockupPins.length > 0) {
+      setShowClearConfirmModal(true);
+    } else {
+      handleClearDrawingsOnly();
+    }
+  };
+
+  const handleClearDrawingsOnly = async () => {
+    if (!meeting || !activeMockup) return;
     setUndoStack((prev) => [...prev, { strokes: mockupStrokes, pins: mockupPins }]);
+    setRedoStack([]);
+    setMockupStrokes([]);
+    setShowClearConfirmModal(false);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, {
+      strokes: [],
+      pins: mockupPins,
+    });
+    toast.success("Drawings cleared (Pins preserved)");
+  };
+
+  const handleClearAllAnnotations = async () => {
+    if (!meeting || !activeMockup) return;
+    setUndoStack((prev) => [...prev, { strokes: mockupStrokes, pins: mockupPins }]);
+    setRedoStack([]);
     setMockupStrokes([]);
     setMockupPins([]);
-    await updateMockupAnnotations(meeting.id, activeMockup.id, { strokes: [], pins: [] });
-    toast.info("Canvas markups cleared.");
+    setShowClearConfirmModal(false);
+    await updateMockupAnnotations(meeting.id, activeMockup.id, {
+      strokes: [],
+      pins: [],
+    });
+    toast.info("All drawings and pins cleared.");
   };
 
   const handleExportMarkedProof = () => {
@@ -3050,26 +3081,75 @@ export default function MeetingRoom() {
                       {vanishingStrokes.map((stroke) => renderCanvasStroke(stroke))}
                     </svg>
 
-                    {/* Numbered Pins */}
-                    {mockupPins.map((pin) => (
-                      <div
-                        key={pin.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedPinDetail(pin);
-                        }}
-                        className="absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer group"
-                        style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
-                      >
+                    {/* Numbered Pins with Hover Message Preview */}
+                    {mockupPins.map((pin) => {
+                      const isNearBottom = pin.y > 60;
+                      const isNearRight = pin.x > 65;
+                      const isNearLeft = pin.x < 35;
+                      return (
                         <div
-                          className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center font-bold text-[9px] sm:text-[10px] text-white shadow-lg border-2 border-white transition-transform group-hover:scale-125 ${
-                            pin.resolved ? "bg-emerald-500 ring-2 ring-emerald-300" : "bg-[var(--dept)] text-black ring-2 ring-cyan-300"
-                          }`}
+                          key={pin.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPinDetail(pin);
+                          }}
+                          className="absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer group"
+                          style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
                         >
-                          {pin.number}
+                          <div
+                            className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center font-bold text-[9px] sm:text-[10px] shadow-lg border-2 border-white transition-transform group-hover:scale-125 ${
+                              pin.resolved
+                                ? "bg-emerald-500 text-white ring-2 ring-emerald-300"
+                                : "bg-[var(--dept)] text-black ring-2 ring-cyan-300"
+                            }`}
+                          >
+                            {pin.number}
+                          </div>
+
+                          {/* Hover Floating Message Preview Tooltip */}
+                          <div
+                            className={`absolute opacity-0 group-hover:opacity-100 transition-all duration-150 pointer-events-none group-hover:pointer-events-auto z-40 w-52 sm:w-64 bg-neutral-900/95 backdrop-blur-md border border-neutral-700/90 rounded-xl p-2.5 shadow-2xl text-white select-none ${
+                              isNearBottom ? "bottom-full mb-2" : "top-full mt-2"
+                            } ${
+                              isNearRight ? "right-0" : isNearLeft ? "left-0" : "left-1/2 -translate-x-1/2"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-neutral-800">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span
+                                  className={`w-4 h-4 rounded-full font-bold text-[8px] flex items-center justify-center shrink-0 ${
+                                    pin.resolved ? "bg-emerald-500 text-white" : "bg-[var(--dept)] text-black"
+                                  }`}
+                                >
+                                  {pin.number}
+                                </span>
+                                <span className="font-bold text-[9px] text-white truncate">
+                                  {pin.senderName || "Client"}
+                                </span>
+                              </div>
+                              <span
+                                className={`font-meta text-[7.5px] px-1.5 py-0.2 rounded font-bold uppercase shrink-0 ${
+                                  pin.resolved
+                                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                  : "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                                }`}
+                              >
+                                {pin.resolved ? "Resolved" : "Active"}
+                              </span>
+                            </div>
+
+                            <p className="text-[10px] text-neutral-200 mt-1.5 line-clamp-3 leading-relaxed font-normal">
+                              {pin.text}
+                            </p>
+
+                            <div className="mt-1.5 pt-1 border-t border-neutral-800 flex items-center justify-between text-[7.5px] font-meta text-neutral-400">
+                              <span>{new Date(pin.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                              <span className="text-[var(--dept)] font-bold">Tap to view / resolve →</span>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {/* Glowing Laser Pointer Indicator */}
                     {laserPointer.active && (
@@ -3777,26 +3857,75 @@ export default function MeetingRoom() {
                 {vanishingStrokes.map((stroke) => renderCanvasStroke(stroke))}
               </svg>
 
-              {/* Numbered Pins */}
-              {mockupPins.map((pin) => (
-                <div
-                  key={pin.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedPinDetail(pin);
-                  }}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer group"
-                  style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
-                >
+              {/* Numbered Pins with Hover Message Preview */}
+              {mockupPins.map((pin) => {
+                const isNearBottom = pin.y > 60;
+                const isNearRight = pin.x > 65;
+                const isNearLeft = pin.x < 35;
+                return (
                   <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] text-white shadow-lg border-2 border-white transition-transform group-hover:scale-125 ${
-                      pin.resolved ? "bg-emerald-500 ring-2 ring-emerald-300" : "bg-[var(--dept)] text-black ring-2 ring-cyan-300"
-                    }`}
+                    key={pin.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedPinDetail(pin);
+                    }}
+                    className="absolute -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer group"
+                    style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
                   >
-                    {pin.number}
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] shadow-lg border-2 border-white transition-transform group-hover:scale-125 ${
+                        pin.resolved
+                          ? "bg-emerald-500 text-white ring-2 ring-emerald-300"
+                          : "bg-[var(--dept)] text-black ring-2 ring-cyan-300"
+                      }`}
+                    >
+                      {pin.number}
+                    </div>
+
+                    {/* Hover Floating Message Preview Tooltip */}
+                    <div
+                      className={`absolute opacity-0 group-hover:opacity-100 transition-all duration-150 pointer-events-none group-hover:pointer-events-auto z-40 w-56 sm:w-64 bg-neutral-900/95 backdrop-blur-md border border-neutral-700/90 rounded-xl p-2.5 shadow-2xl text-white select-none ${
+                        isNearBottom ? "bottom-full mb-2" : "top-full mt-2"
+                      } ${
+                        isNearRight ? "right-0" : isNearLeft ? "left-0" : "left-1/2 -translate-x-1/2"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-neutral-800">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`w-4 h-4 rounded-full font-bold text-[8px] flex items-center justify-center shrink-0 ${
+                              pin.resolved ? "bg-emerald-500 text-white" : "bg-[var(--dept)] text-black"
+                            }`}
+                          >
+                            {pin.number}
+                          </span>
+                          <span className="font-bold text-[9px] text-white truncate">
+                            {pin.senderName || "Client"}
+                          </span>
+                        </div>
+                        <span
+                          className={`font-meta text-[7.5px] px-1.5 py-0.2 rounded font-bold uppercase shrink-0 ${
+                            pin.resolved
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                            : "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                          }`}
+                        >
+                          {pin.resolved ? "Resolved" : "Active"}
+                        </span>
+                      </div>
+
+                      <p className="text-[10px] text-neutral-200 mt-1.5 line-clamp-3 leading-relaxed font-normal">
+                        {pin.text}
+                      </p>
+
+                      <div className="mt-1.5 pt-1 border-t border-neutral-800 flex items-center justify-between text-[7.5px] font-meta text-neutral-400">
+                        <span>{new Date(pin.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                        <span className="text-[var(--dept)] font-bold">Tap to view / resolve →</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {/* Safe Zone Overlays */}
               {safeZoneOverlay === "social_reels" && (
@@ -4322,6 +4451,75 @@ export default function MeetingRoom() {
                 className="px-3 py-2 rounded-xl border border-red-500/40 bg-red-950/30 text-red-300 hover:bg-red-900/50 text-[10px] font-bold uppercase"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear Canvas Confirmation Modal (Protects Pins vs Drawings) */}
+      {showClearConfirmModal && (
+        <div className="fixed inset-0 z-[160] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100 select-none">
+          <div className="w-full max-w-sm bg-neutral-900 border border-neutral-700 p-5 rounded-2xl shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🧹</span>
+                <h4 className="font-display text-xs font-bold uppercase">Clear Canvas Options</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClearConfirmModal(false)}
+                className="text-neutral-400 hover:text-white text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              You have <strong className="text-[var(--dept)]">{mockupPins.length} revision {mockupPins.length === 1 ? 'pin' : 'pins'}</strong> with client notes on this deliverable. What would you like to clear?
+            </p>
+
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={handleClearDrawingsOnly}
+                className="w-full p-3 rounded-xl bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/50 text-cyan-200 text-left text-xs font-bold flex items-center justify-between transition-colors group"
+              >
+                <div>
+                  <div className="flex items-center gap-1.5 text-[var(--dept)] font-bold">
+                    <span>✏️</span> Clear Drawings Only
+                  </div>
+                  <p className="text-[9.5px] text-neutral-400 font-normal mt-0.5">
+                    (Recommended) Keep all {mockupPins.length} feedback pins &amp; review notes intact.
+                  </p>
+                </div>
+                <span className="text-xs font-bold opacity-75 group-hover:opacity-100">✓</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearAllAnnotations}
+                className="w-full p-3 rounded-xl bg-red-950/30 hover:bg-red-900/50 border border-red-500/40 text-red-300 text-left text-xs font-bold flex items-center justify-between transition-colors"
+              >
+                <div>
+                  <div className="flex items-center gap-1.5 text-red-300 font-bold">
+                    <span>💥</span> Clear Everything
+                  </div>
+                  <p className="text-[9.5px] text-neutral-400 font-normal mt-0.5">
+                    Remove all drawings AND delete all {mockupPins.length} feedback pins.
+                  </p>
+                </div>
+                <span className="text-xs font-bold">🗑️</span>
+              </button>
+            </div>
+
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={() => setShowClearConfirmModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-neutral-400 hover:text-white font-meta uppercase font-bold"
+              >
+                Cancel
               </button>
             </div>
           </div>
