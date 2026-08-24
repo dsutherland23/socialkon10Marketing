@@ -682,6 +682,42 @@ export interface MessageRecord {
   attachments?: MessageAttachment[];
 }
 
+async function compressImageForChat(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_DIM = 1200;
+        let { width, height } = img;
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          } else {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/webp", 0.82));
+        } else {
+          resolve(e.target?.result as string);
+        }
+      };
+      img.onerror = () => resolve(e.target?.result as string);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve("");
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Upload a project chat attachment (logos, reference photos, copy docs, vectors). */
 export async function uploadChatAttachment(orderId: string, file: File): Promise<MessageAttachment> {
   const ext = file.name.split(".").pop()?.toLowerCase() || "";
@@ -694,28 +730,26 @@ export async function uploadChatAttachment(orderId: string, file: File): Promise
   const path = `orders/${orderId}/chat/${Date.now()}-${safeName}`;
 
   let url = "";
+
+  // 1. Attempt upload to Firebase Storage
   if (firebaseReady && storage) {
     try {
       const storageRef = ref(storage, path);
       await uploadBytes(storageRef, file, { contentType: file.type || "application/octet-stream" });
       url = await getDownloadURL(storageRef);
     } catch (storageErr) {
-      console.warn("Storage upload rejected/unavailable, falling back to embedded data URL:", storageErr);
+      console.warn("Storage upload rejected/unavailable (403), activating inline resilient fallback:", storageErr);
     }
   }
 
+  // 2. Seamless Inline Fallback: Optimized Data URL or local blob
   if (!url) {
     try {
-      const buffer = await file.arrayBuffer();
-      await storeLocalBinary(path, buffer);
-      if (isImg || file.size < 4 * 1024 * 1024) {
-        url = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => resolve("");
-          reader.readAsDataURL(file);
-        });
+      if (isImg) {
+        url = await compressImageForChat(file);
       } else {
+        const buffer = await file.arrayBuffer();
+        await storeLocalBinary(path, buffer);
         const blob = new Blob([buffer], { type: file.type || "application/octet-stream" });
         url = URL.createObjectURL(blob);
       }
@@ -735,14 +769,29 @@ export async function uploadChatAttachment(orderId: string, file: File): Promise
 }
 
 export async function listMessages(orderId: string): Promise<MessageRecord[]> {
+  const localList = ((await idbGet<MessageRecord[]>("sk-demo-messages")) || [])
+    .filter((m) => m.orderId === orderId);
+
   if (!firebaseReady || !db) {
-    const all = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
-    return all
-      .filter((m) => m.orderId === orderId)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return localList.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
-  const snap = await getDocs(query(collection(db, "orders", orderId, "messages"), orderBy("createdAt", "asc")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as MessageRecord);
+
+  try {
+    const snap = await getDocs(query(collection(db, "orders", orderId, "messages"), orderBy("createdAt", "asc")));
+    const remoteList = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+      createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+    })) as MessageRecord[];
+
+    // Merge any locally queued messages not yet in remote
+    const remoteIds = new Set(remoteList.map((r) => r.id));
+    const merged = [...remoteList, ...localList.filter((l) => !remoteIds.has(l.id))];
+    return merged.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  } catch (err) {
+    console.warn("Error fetching remote messages, using local store:", err);
+    return localList.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
 }
 
 export async function postMessage(
@@ -759,13 +808,28 @@ export async function postMessage(
     author,
     ...(attachments && attachments.length ? { attachments } : {}),
   };
+
+  const localEntry: MessageRecord = {
+    ...msg,
+    id: `MSG-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+  };
+
   if (!firebaseReady || !db) {
     const xs = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
-    xs.push({ ...msg, id: `MSG-${Date.now()}`, createdAt: new Date().toISOString() } as MessageRecord);
+    xs.push(localEntry);
     await idbSet("sk-demo-messages", xs);
     return;
   }
-  await addDoc(collection(db, "orders", orderId, "messages"), { ...msg, createdAt: serverTimestamp() });
+
+  try {
+    await addDoc(collection(db, "orders", orderId, "messages"), { ...msg, createdAt: serverTimestamp() });
+  } catch (err) {
+    console.warn("Firestore addDoc error, saving locally:", err);
+    const xs = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
+    xs.push(localEntry);
+    await idbSet("sk-demo-messages", xs);
+  }
 }
 
 /* ---------------- quote → payable order (PRD §70) ---------------- */
