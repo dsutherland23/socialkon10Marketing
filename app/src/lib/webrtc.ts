@@ -39,30 +39,243 @@ export async function getMediaDevices(): Promise<MediaDeviceList> {
   }
 }
 
-/** Request local camera and microphone media stream */
+/** Request local camera and microphone media stream with progressive fallback */
 export async function getLocalUserMedia(options?: {
   audioDeviceId?: string;
   videoDeviceId?: string;
   audio?: boolean;
   video?: boolean;
 }): Promise<MediaStream> {
-  const audio = options?.audio ?? true;
-  const video = options?.video ?? true;
+  const wantAudio = options?.audio ?? true;
+  const wantVideo = options?.video ?? true;
 
-  const constraints: MediaStreamConstraints = {
-    audio: audio
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera and microphone are not supported in this browser.");
+  }
+
+  // 1. First Attempt: Target specific devices with ideal constraints
+  const primaryConstraints: MediaStreamConstraints = {
+    audio: wantAudio
       ? options?.audioDeviceId
-        ? { deviceId: { exact: options.audioDeviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        ? { deviceId: { ideal: options.audioDeviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         : { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       : false,
-    video: video
+    video: wantVideo
       ? options?.videoDeviceId
-        ? { deviceId: { exact: options.videoDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+        ? { deviceId: { ideal: options.videoDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
         : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
       : false,
   };
 
-  return navigator.mediaDevices.getUserMedia(constraints);
+  try {
+    return await navigator.mediaDevices.getUserMedia(primaryConstraints);
+  } catch (err1) {
+    console.warn("Primary media request failed, attempting fallback:", err1);
+
+    // 2. Second Attempt: Generic audio + video constraints
+    if (wantAudio && wantVideo) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        });
+      } catch (err2) {
+        console.warn("Generic audio+video request failed:", err2);
+      }
+    }
+
+    // 3. Third Attempt: Audio-only fallback if camera is blocked/busy
+    if (wantAudio) {
+      try {
+        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        return audioOnlyStream;
+      } catch (err3) {
+        console.warn("Audio-only fallback failed:", err3);
+      }
+    }
+
+    // 4. Fourth Attempt: Video-only fallback if mic is blocked
+    if (wantVideo) {
+      try {
+        const videoOnlyStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        return videoOnlyStream;
+      } catch (err4) {
+        console.warn("Video-only fallback failed:", err4);
+      }
+    }
+
+    throw new Error("Unable to access camera or microphone. Please check your browser device permissions.");
+  }
+}
+
+/* ---------------- WebRTC Multi-Peer Mesh Session ---------------- */
+
+export const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+  ],
+};
+
+export class WebRTCMeshSession {
+  private myParticipantId: string;
+  private onSignalOut: (targetParticipantId: string, type: "offer" | "answer" | "candidate", payload: string) => void;
+  private onRemoteTrack: (participantId: string, stream: MediaStream) => void;
+  private onRemoteTrackRemoved: (participantId: string) => void;
+  private peers = new Map<string, RTCPeerConnection>();
+  private remoteStreams = new Map<string, MediaStream>();
+  private localStream: MediaStream | null = null;
+
+  constructor(opts: {
+    myParticipantId: string;
+    localStream: MediaStream | null;
+    onSignalOut: (targetParticipantId: string, type: "offer" | "answer" | "candidate", payload: string) => void;
+    onRemoteTrack: (participantId: string, stream: MediaStream) => void;
+    onRemoteTrackRemoved: (participantId: string) => void;
+  }) {
+    this.myParticipantId = opts.myParticipantId;
+    this.localStream = opts.localStream;
+    this.onSignalOut = opts.onSignalOut;
+    this.onRemoteTrack = opts.onRemoteTrack;
+    this.onRemoteTrackRemoved = opts.onRemoteTrackRemoved;
+  }
+
+  public getMyId(): string {
+    return this.myParticipantId;
+  }
+
+  public setLocalStream(stream: MediaStream | null) {
+    this.localStream = stream;
+    if (!stream) return;
+
+    // Update tracks for existing peer connections
+    this.peers.forEach((pc) => {
+      const senders = pc.getSenders();
+      stream.getTracks().forEach((track) => {
+        const sender = senders.find((s) => s.track?.kind === track.kind);
+        if (sender) {
+          sender.replaceTrack(track).catch(() => {});
+        } else {
+          try {
+            pc.addTrack(track, stream);
+          } catch {}
+        }
+      });
+    });
+  }
+
+  public async connectToPeer(remoteParticipantId: string, isInitiator: boolean): Promise<RTCPeerConnection> {
+    if (this.peers.has(remoteParticipantId)) {
+      return this.peers.get(remoteParticipantId)!;
+    }
+
+    const pc = new RTCPeerConnection(RTC_CONFIG);
+    this.peers.set(remoteParticipantId, pc);
+
+    // 1. Add local tracks
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => {
+        try {
+          pc.addTrack(track, this.localStream!);
+        } catch {}
+      });
+    }
+
+    // 2. Handle remote tracks
+    pc.ontrack = (event) => {
+      let rStream = this.remoteStreams.get(remoteParticipantId);
+      if (!rStream) {
+        rStream = new MediaStream();
+        this.remoteStreams.set(remoteParticipantId, rStream);
+      }
+      if (event.track) {
+        rStream.addTrack(event.track);
+      }
+      if (event.streams && event.streams[0]) {
+        this.onRemoteTrack(remoteParticipantId, event.streams[0]);
+      } else {
+        this.onRemoteTrack(remoteParticipantId, rStream);
+      }
+    };
+
+    // 3. ICE Candidate handling
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.onSignalOut(remoteParticipantId, "candidate", JSON.stringify(event.candidate));
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
+        this.closePeer(remoteParticipantId);
+      }
+    };
+
+    // 4. If initiator, create and send SDP offer
+    if (isInitiator) {
+      try {
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        });
+        await pc.setLocalDescription(offer);
+        this.onSignalOut(remoteParticipantId, "offer", JSON.stringify(offer));
+      } catch (err) {
+        console.warn(`Create offer failed for ${remoteParticipantId}:`, err);
+      }
+    }
+
+    return pc;
+  }
+
+  public async handleIncomingSignal(fromParticipantId: string, type: "offer" | "answer" | "candidate", payload: string) {
+    let pc = this.peers.get(fromParticipantId);
+    if (!pc) {
+      pc = await this.connectToPeer(fromParticipantId, false);
+    }
+
+    try {
+      const data = JSON.parse(payload);
+
+      if (type === "offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        this.onSignalOut(fromParticipantId, "answer", JSON.stringify(answer));
+      } else if (type === "answer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+      } else if (type === "candidate") {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data));
+        } catch {}
+      }
+    } catch (err) {
+      console.warn(`Signal handling error (${type}) from ${fromParticipantId}:`, err);
+    }
+  }
+
+  public closePeer(remoteParticipantId: string) {
+    const pc = this.peers.get(remoteParticipantId);
+    if (pc) {
+      try {
+        pc.close();
+      } catch {}
+      this.peers.delete(remoteParticipantId);
+    }
+    this.remoteStreams.delete(remoteParticipantId);
+    this.onRemoteTrackRemoved(remoteParticipantId);
+  }
+
+  public closeAll() {
+    this.peers.forEach((pc) => {
+      try {
+        pc.close();
+      } catch {}
+    });
+    this.peers.clear();
+    this.remoteStreams.clear();
+  }
 }
 
 /** Request screen share stream (window, tab, or entire display) */

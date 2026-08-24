@@ -695,3 +695,168 @@ export function downloadCalendarIcs(meeting: MeetingRecord): void {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+/* ---------------- Meeting Sharing Helpers (Invite, WhatsApp, Email) ---------------- */
+
+export interface MeetingShareInfo {
+  inviteUrl: string;
+  shortSummary: string;
+  copyInviteLink: () => Promise<void>;
+  copyFullInvitation: () => Promise<void>;
+  shareWhatsApp: () => void;
+  shareEmail: () => void;
+}
+
+export function getMeetingShareDetails(meeting: MeetingRecord): MeetingShareInfo {
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://socialkon10.pro";
+  const inviteUrl = `${origin}/meet/${meeting.roomId}`;
+  const dateStr = new Date(meeting.scheduledStart).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const timeStr = new Date(meeting.scheduledStart).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  const fullText = [
+    `🎥 You're invited to a Social Kon10 Studio Meeting!`,
+    ``,
+    `Topic: ${meeting.title}`,
+    `When: ${dateStr} at ${timeStr} (${meeting.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+    `Duration: ${meeting.durationMinutes} minutes`,
+    ``,
+    `🚀 Join Meeting Link:`,
+    `${inviteUrl}`,
+    meeting.passcode ? `🔑 Meeting Passcode: ${meeting.passcode}` : "",
+    ``,
+    `Host: ${meeting.hostName}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    inviteUrl,
+    shortSummary: fullText,
+    copyInviteLink: async () => {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(inviteUrl);
+      }
+    },
+    copyFullInvitation: async () => {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(fullText);
+      }
+    },
+    shareWhatsApp: () => {
+      const encoded = encodeURIComponent(fullText);
+      window.open(`https://wa.me/?text=${encoded}`, "_blank");
+    },
+    shareEmail: () => {
+      const subject = encodeURIComponent(`Meeting Invitation: ${meeting.title}`);
+      const body = encodeURIComponent(fullText);
+      window.open(`mailto:?subject=${subject}&body=${body}`, "_blank");
+    },
+  };
+}
+
+/* ---------------- WebRTC Signaling (Firestore & BroadcastChannel) ---------------- */
+
+export interface WebRTCSignalData {
+  id?: string;
+  meetingId: string;
+  fromParticipantId: string;
+  toParticipantId?: string; // empty means broadcast to everyone in room
+  type: "offer" | "answer" | "candidate" | "leave";
+  payload: string; // JSON serialized string
+  createdAt: number;
+}
+
+export async function sendWebRTCSignal(signal: Omit<WebRTCSignalData, "createdAt">): Promise<void> {
+  const data: WebRTCSignalData = {
+    ...signal,
+    createdAt: Date.now(),
+  };
+
+  // 1. Send via BroadcastChannel for zero-latency multi-tab testing
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_signal_${signal.meetingId}`);
+      bc.postMessage(data);
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  // 2. Send via Firestore if online
+  if (firebaseReady && db) {
+    try {
+      await addDoc(collection(db!, "meetings", signal.meetingId, "signals"), data);
+    } catch (err) {
+      console.warn("Firestore signal error:", err);
+    }
+  }
+}
+
+export function subscribeToWebRTCSignals(
+  meetingId: string,
+  myParticipantId: string,
+  onSignal: (signal: WebRTCSignalData) => void
+): Unsubscribe {
+  const processedSignalIds = new Set<string>();
+
+  // 1. Listen via BroadcastChannel
+  let bc: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_signal_${meetingId}`);
+      bc.onmessage = (e) => {
+        const sig = e.data as WebRTCSignalData;
+        if (!sig || sig.fromParticipantId === myParticipantId) return;
+        if (sig.toParticipantId && sig.toParticipantId !== myParticipantId) return;
+        onSignal(sig);
+      };
+    }
+  } catch {}
+
+  // 2. Listen via Firestore
+  let fsUnsub: Unsubscribe = () => {};
+  if (firebaseReady && db) {
+    const minTime = Date.now() - 30000;
+    const q = query(
+      collection(db!, "meetings", meetingId, "signals"),
+      where("createdAt", ">=", minTime),
+      orderBy("createdAt", "asc")
+    );
+
+    fsUnsub = onSnapshot(
+      q,
+      (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const sig = { id: change.doc.id, ...change.doc.data() } as WebRTCSignalData;
+            if (processedSignalIds.has(sig.id!)) return;
+            processedSignalIds.add(sig.id!);
+
+            if (sig.fromParticipantId === myParticipantId) return;
+            if (sig.toParticipantId && sig.toParticipantId !== myParticipantId) return;
+            onSignal(sig);
+          }
+        });
+      },
+      (err) => {
+        console.warn("Signals snapshot error:", err);
+      }
+    );
+  }
+
+  return () => {
+    if (bc) {
+      try {
+        bc.close();
+      } catch {}
+    }
+    fsUnsub();
+  };
+}

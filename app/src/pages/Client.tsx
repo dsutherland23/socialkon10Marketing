@@ -28,6 +28,7 @@ import {
   recordCallHistory,
   downloadCalendarIcs,
   isMeetingJoinable,
+  getMeetingShareDetails,
   type MeetingRecord,
 } from "../lib/meetings";
 import {
@@ -1306,10 +1307,21 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-[var(--line)]">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={async () => {
+                          const share = getMeetingShareDetails(m);
+                          await share.copyInviteLink();
+                          toast.success("Meeting link copied to clipboard!");
+                        }}
+                        className="font-meta text-[9px] px-2 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] bg-[var(--bg)] transition-colors font-bold"
+                        title="Copy direct meeting join link"
+                      >
+                        📋 Copy Link
+                      </button>
                       <button
                         onClick={() => downloadCalendarIcs(m)}
-                        className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+                        className="font-meta text-[9px] px-2 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
                         title="Download Calendar .ICS file"
                       >
                         📥 Add to Cal

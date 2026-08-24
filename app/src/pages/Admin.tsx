@@ -19,7 +19,7 @@ import { MessageThread } from "../components/messages";
 import {
   createMeeting, deleteMeeting, listAllMeetings,
   recordCallHistory, listCallHistory, downloadCalendarIcs,
-  generatePasscode,
+  generatePasscode, getMeetingShareDetails,
   type MeetingRecord, type CallHistoryRecord, type SessionType,
 } from "../lib/meetings";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
@@ -2182,13 +2182,35 @@ function AdminCommunications() {
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-[var(--line)]">
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          onClick={async () => {
+                            const share = getMeetingShareDetails(m);
+                            await share.copyInviteLink();
+                            toast.success("Meeting link copied!");
+                          }}
+                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] bg-[var(--bg)] transition-colors font-bold"
+                          title="Copy direct meeting join link"
+                        >
+                          📋 Copy Link
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const share = getMeetingShareDetails(m);
+                            await share.copyFullInvitation();
+                            toast.success("Full invitation details copied!");
+                          }}
+                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+                          title="Copy full invitation for email or message"
+                        >
+                          ✉️ Invite Text
+                        </button>
                         <button
                           onClick={() => downloadCalendarIcs(m)}
                           className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
                           title="Download Calendar .ICS file"
                         >
-                          📥 Add to Cal
+                          📥 .ICS
                         </button>
                         <button
                           onClick={async () => {
@@ -2206,7 +2228,7 @@ function AdminCommunications() {
 
                       <button
                         onClick={() => window.open(`/meet/${m.roomId}`, "_blank")}
-                        className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase tracking-wider"
+                        className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase tracking-wider shadow-sm"
                       >
                         🚀 Join Room →
                       </button>
