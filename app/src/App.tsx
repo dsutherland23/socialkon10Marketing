@@ -61,6 +61,8 @@ const CustomPackage = lazyWithRetry(() => import("./pages/CustomPackage"));
 const Templates = lazyWithRetry(() => import("./pages/Templates"));
 const TemplateDetail = lazyWithRetry(() => import("./pages/TemplateDetail"));
 const Editor = lazyWithRetry(() => import("./pages/Editor"));
+const MeetingRoom = lazyWithRetry(() => import("./pages/MeetingRoom"));
+import { IncomingCallModal } from "./components/IncomingCallModal";
 
 
 function ScrollAndTrack() {
@@ -148,6 +150,8 @@ function Shell() {
               <Route path="/contact" element={<Start />} />
               <Route path="/client" element={<ClientPortal />} />
               <Route path="/admin" element={<Admin />} />
+              <Route path="/meet/:roomId" element={<MeetingRoom />} />
+              <Route path="/meet" element={<MeetingRoom />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
             </div>
@@ -155,6 +159,7 @@ function Shell() {
         </ErrorBoundary>
       </main>
       <SiteFooter />
+      <IncomingCallModal />
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
       <HandEgg />
       <LogoEgg />

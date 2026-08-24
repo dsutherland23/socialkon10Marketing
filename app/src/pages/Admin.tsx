@@ -16,6 +16,12 @@ import {
 import { HOME_SECTIONS } from "../lib/content";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
+import {
+  createMeeting, deleteMeeting, listAllMeetings,
+  recordCallHistory, listCallHistory, downloadCalendarIcs,
+  generatePasscode,
+  type MeetingRecord, type CallHistoryRecord, type SessionType,
+} from "../lib/meetings";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
@@ -1787,9 +1793,830 @@ function HomepageManager() {
   );
 }
 
+/* ================= COMMUNICATIONS & MEETINGS (communication-meetings-v1) ================= */
+
+function AdminCommunications() {
+  const { user } = useAuth();
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
+  const [calls, setCalls] = useState<CallHistoryRecord[]>([]);
+  const [activeSubTab, setActiveSubTab] = useState<"meetings" | "calendar" | "calls" | "intelligence">("meetings");
+  const [filterStatus, setFilterStatus] = useState<string>("ALL");
+  const [search, setSearch] = useState("");
+
+  // Modals
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [instantCallModalOpen, setInstantCallModalOpen] = useState(false);
+
+  // Schedule Form State
+  const [formTitle, setFormTitle] = useState("");
+  const [formDesc, setFormDesc] = useState("");
+  const [formDate, setFormDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [formTime, setFormTime] = useState("14:00");
+  const [formDuration, setFormDuration] = useState(30);
+  const [formTimezone, setFormTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [formParticipants, setFormParticipants] = useState("");
+  const formType: SessionType = "scheduled_meeting";
+  const [formPasscode, setFormPasscode] = useState(() => generatePasscode());
+  const [formWaitingRoom, setFormWaitingRoom] = useState(true);
+  const [formAuthReq, setFormAuthReq] = useState(true);
+  const [formAiSummary, setFormAiSummary] = useState(true);
+  const [formRecording, setFormRecording] = useState(true);
+  const formScreenShare = "everyone";
+  const [savingMeeting, setSavingMeeting] = useState(false);
+
+  // Instant Call Form State
+  const [instantName, setInstantName] = useState("");
+  const [instantEmail, setInstantEmail] = useState("");
+  const [instantType, setInstantType] = useState<"video" | "voice">("video");
+  const [startingCall, setStartingCall] = useState(false);
+
+  const reloadData = async () => {
+    const [m, c] = await Promise.all([listAllMeetings(), listCallHistory()]);
+    setMeetings(m);
+    setCalls(c);
+  };
+
+  useEffect(() => {
+    reloadData();
+  }, []);
+
+  const activeMeetings = meetings.filter((m) => m.status === "live" || m.status === "scheduled");
+  const liveMeetings = meetings.filter((m) => m.status === "live");
+
+  const filteredMeetings = meetings.filter((m) => {
+    if (filterStatus !== "ALL" && m.status !== filterStatus) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const matchTitle = m.title.toLowerCase().includes(q);
+      const matchHost = m.hostName.toLowerCase().includes(q);
+      const matchPart = m.participants.some((p) => p.displayName.toLowerCase().includes(q) || p.email.toLowerCase().includes(q));
+      return matchTitle || matchHost || matchPart;
+    }
+    return true;
+  });
+
+  const handleScheduleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formTitle.trim() || !formDate || !formTime) {
+      toast.error("Please fill in the meeting title, date, and start time.");
+      return;
+    }
+
+    setSavingMeeting(true);
+    try {
+      const startIso = new Date(`${formDate}T${formTime}:00`).toISOString();
+      const endIso = new Date(new Date(startIso).getTime() + formDuration * 60000).toISOString();
+
+      const parsedParticipants = formParticipants
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((pStr) => {
+          const isEmail = pStr.includes("@");
+          return {
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            meetingId: "",
+            email: isEmail ? pStr : `${pStr.toLowerCase().replace(/\s+/g, ".")}@client.local`,
+            displayName: isEmail ? pStr.split("@")[0] : pStr,
+            role: "participant" as const,
+            status: "invited" as const,
+          };
+        });
+
+      const newM = await createMeeting({
+        title: formTitle.trim(),
+        description: formDesc.trim(),
+        hostId: user?.uid || "admin",
+        hostName: user?.displayName || "Social Kon10 Studio",
+        hostEmail: user?.email || "admin@socialkon10.pro",
+        type: formType,
+        status: "scheduled",
+        scheduledStart: startIso,
+        scheduledEnd: endIso,
+        durationMinutes: formDuration,
+        timezone: formTimezone,
+        passcode: formPasscode,
+        waitingRoomEnabled: formWaitingRoom,
+        authenticationRequired: formAuthReq,
+        meetingLocked: false,
+        allowGuests: !formAuthReq,
+        recordingEnabled: formRecording,
+        transcriptionEnabled: true,
+        aiSummaryEnabled: formAiSummary,
+        chatEnabled: true,
+        reactionsEnabled: true,
+        screenShareMode: formScreenShare,
+        allowCamera: true,
+        allowMicrophone: true,
+        participants: parsedParticipants,
+      });
+
+      toast.success(`Meeting "${newM.title}" scheduled successfully.`);
+      setScheduleModalOpen(false);
+      setFormTitle("");
+      setFormDesc("");
+      setFormParticipants("");
+      reloadData();
+    } catch (err) {
+      console.error("Schedule meeting failed:", err);
+      toast.error("Failed to schedule meeting.");
+    } finally {
+      setSavingMeeting(false);
+    }
+  };
+
+  const handleStartInstantCall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!instantEmail.trim()) {
+      toast.error("Please enter the client's email address.");
+      return;
+    }
+
+    setStartingCall(true);
+    try {
+      const now = new Date().toISOString();
+      const end = new Date(Date.now() + 60 * 60000).toISOString();
+      const title = `Instant ${instantType === "video" ? "Video" : "Voice"} Call with ${instantName || instantEmail}`;
+
+      const meet = await createMeeting({
+        title,
+        description: "Studio initiated instant consultation session.",
+        hostId: user?.uid || "admin",
+        hostName: user?.displayName || "Social Kon10 Studio",
+        hostEmail: user?.email || "admin@socialkon10.pro",
+        type: instantType === "video" ? "instant_video_call" : "instant_voice_call",
+        status: "live",
+        scheduledStart: now,
+        scheduledEnd: end,
+        durationMinutes: 60,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        waitingRoomEnabled: false,
+        authenticationRequired: false,
+        meetingLocked: false,
+        allowGuests: true,
+        recordingEnabled: true,
+        transcriptionEnabled: true,
+        aiSummaryEnabled: true,
+        chatEnabled: true,
+        reactionsEnabled: true,
+        screenShareMode: "everyone",
+        allowCamera: instantType === "video",
+        allowMicrophone: true,
+        participants: [
+          {
+            id: `p_admin_${Date.now()}`,
+            meetingId: "",
+            email: user?.email || "admin@socialkon10.pro",
+            displayName: user?.displayName || "Social Kon10 Studio",
+            role: "host",
+            status: "joined",
+          },
+          {
+            id: `p_client_${Date.now()}`,
+            meetingId: "",
+            email: instantEmail.trim().toLowerCase(),
+            displayName: instantName.trim() || instantEmail.split("@")[0],
+            role: "participant",
+            status: "waiting",
+          },
+        ],
+      });
+
+      // Record in call history with ringing state
+      await recordCallHistory({
+        sessionId: meet.roomId,
+        callerId: user?.uid || "admin",
+        callerName: user?.displayName || "Social Kon10 Studio",
+        callerEmail: user?.email || "admin@socialkon10.pro",
+        recipientId: instantEmail.trim(),
+        recipientName: instantName.trim() || instantEmail.split("@")[0],
+        recipientEmail: instantEmail.trim().toLowerCase(),
+        type: instantType,
+        status: "ringing",
+        startedAt: now,
+        durationSeconds: 0,
+      });
+
+      setInstantCallModalOpen(false);
+      window.open(`/meet/${meet.roomId}`, "_blank");
+      reloadData();
+    } catch (err) {
+      console.error("Instant call error:", err);
+      toast.error("Failed to initiate instant call.");
+    } finally {
+      setStartingCall(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Top Header & Overview Metric Widgets */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)]">
+          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Upcoming Meetings</span>
+          <p className="font-display text-2xl font-bold mt-1 text-[var(--ink)]">{activeMeetings.length}</p>
+          <span className="font-meta text-[9px] text-emerald-600 mt-1 block">● Real-time synced</span>
+        </div>
+
+        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)]">
+          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Live Sessions</span>
+          <p className="font-display text-2xl font-bold mt-1 dept-accent">{liveMeetings.length}</p>
+          <span className="font-meta text-[9px] text-[var(--muted)] mt-1 block">Active video rooms</span>
+        </div>
+
+        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)]">
+          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Call Logs Recorded</span>
+          <p className="font-display text-2xl font-bold mt-1 text-[var(--ink)]">{calls.length}</p>
+          <span className="font-meta text-[9px] text-[var(--muted)] mt-1 block">Instant voice &amp; video</span>
+        </div>
+
+        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col justify-between">
+          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Instant Launch</span>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => { setInstantType("video"); setInstantCallModalOpen(true); }}
+              className="flex-1 btn btn-dept !py-1.5 font-meta text-[9px] font-bold"
+            >
+              🎥 Call
+            </button>
+            <button
+              onClick={() => setScheduleModalOpen(true)}
+              className="flex-1 font-meta text-[9px] font-bold px-2 py-1.5 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+            >
+              + Schedule
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Sub-Tabs Navigation Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-3">
+        <div className="flex flex-wrap gap-1.5" role="tablist">
+          <button
+            onClick={() => setActiveSubTab("meetings")}
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+              activeSubTab === "meetings" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            📅 Meetings ({meetings.length})
+          </button>
+          <button
+            onClick={() => setActiveSubTab("calendar")}
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+              activeSubTab === "calendar" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            📆 Visual Calendar
+          </button>
+          <button
+            onClick={() => setActiveSubTab("calls")}
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+              activeSubTab === "calls" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            📞 Call History ({calls.length})
+          </button>
+          <button
+            onClick={() => setActiveSubTab("intelligence")}
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+              activeSubTab === "intelligence" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            ✨ Meeting Intelligence ({meetings.filter((m) => m.intelligence).length})
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setScheduleModalOpen(true)}
+            className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] uppercase font-bold"
+          >
+            + Schedule Meeting
+          </button>
+        </div>
+      </div>
+
+      {/* SUB-TAB 1: MEETINGS LIST */}
+      {activeSubTab === "meetings" && (
+        <div className="flex flex-col gap-4">
+          {/* Status filter & search */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex gap-1.5">
+              {["ALL", "scheduled", "live", "completed", "cancelled"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setFilterStatus(s)}
+                  className={`font-meta text-[9px] uppercase px-2.5 py-1 rounded border transition-colors ${
+                    filterStatus === s ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)] font-bold" : "border-[var(--line)] text-[var(--muted)]"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search meetings by title or participant…"
+              className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-64"
+            />
+          </div>
+
+          {filteredMeetings.length === 0 ? (
+            <div className="p-12 border border-[var(--line)] rounded-xl text-center bg-[var(--panel)]">
+              <span className="text-3xl block mb-2">📅</span>
+              <p className="font-display text-sm font-bold uppercase">No meetings found</p>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1">Schedule a consultation or review meeting to get started.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-4">
+              {filteredMeetings.map((m) => {
+                const isLive = m.status === "live";
+                const dateStr = new Date(m.scheduledStart).toLocaleDateString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                });
+                const timeStr = new Date(m.scheduledStart).toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
+                return (
+                  <div
+                    key={m.id}
+                    className="p-5 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col justify-between gap-4 shadow-sm hover:border-[var(--dept)] transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className={`font-meta text-[8.5px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                          isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse" :
+                          m.status === "scheduled" ? "bg-cyan-500/10 text-cyan-500 border-cyan-500/30" :
+                          m.status === "completed" ? "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" :
+                          "bg-red-500/10 text-red-500 border-red-500/30"
+                        }`}>
+                          {m.status}
+                        </span>
+                        <span className="font-meta text-[9px] text-[var(--muted)]">
+                          {m.durationMinutes} mins · {m.timezone}
+                        </span>
+                      </div>
+
+                      <h3 className="font-display text-base font-bold uppercase line-clamp-1">{m.title}</h3>
+                      {m.description && <p className="text-xs text-[var(--muted)] line-clamp-2 mt-1">{m.description}</p>}
+
+                      <div className="mt-3 p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-[11px] space-y-1">
+                        <p className="font-medium text-[var(--ink)]">
+                          📅 {dateStr} at {timeStr}
+                        </p>
+                        <p className="font-meta text-[9.5px] text-[var(--muted)] truncate">
+                          👥 {m.participants.length > 0 ? m.participants.map((p) => p.displayName).join(", ") : "Open invitation"}
+                        </p>
+                        {m.passcode && (
+                          <p className="font-meta text-[9.5px] text-[var(--muted)]">
+                            🔑 Passcode: <code className="text-[var(--ink)] font-bold">{m.passcode}</code>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-[var(--line)]">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => downloadCalendarIcs(m)}
+                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+                          title="Download Calendar .ICS file"
+                        >
+                          📥 Add to Cal
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (window.confirm("Delete this meeting?")) {
+                              await deleteMeeting(m.id);
+                              toast.success("Meeting deleted.");
+                              reloadData();
+                            }
+                          }}
+                          className="font-meta text-[9px] text-[var(--muted)] hover:text-red-500 px-2 py-1"
+                        >
+                          Delete
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => window.open(`/meet/${m.roomId}`, "_blank")}
+                        className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase tracking-wider"
+                      >
+                        🚀 Join Room →
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SUB-TAB 2: VISUAL CALENDAR */}
+      {activeSubTab === "calendar" && (
+        <div className="p-6 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display text-sm font-bold uppercase">Scheduled Studio Calendar</h3>
+            <span className="font-meta text-[9px] text-[var(--muted)]">
+              Timezone: <strong className="text-[var(--ink)]">{Intl.DateTimeFormat().resolvedOptions().timeZone}</strong>
+            </span>
+          </div>
+
+          <div className="divide-y divide-[var(--line)] border border-[var(--line)] rounded-lg bg-[var(--bg)]">
+            {meetings.length === 0 ? (
+              <p className="p-8 text-center text-xs text-[var(--muted)]">No meetings currently on the calendar.</p>
+            ) : (
+              meetings.map((m) => (
+                <div key={m.id} className="p-4 flex flex-wrap items-center justify-between gap-4 text-xs hover:bg-[var(--dept-soft)]/20 transition-colors">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold font-display uppercase">{m.title}</span>
+                      <span className="font-meta text-[8.5px] px-2 py-0.5 rounded border border-[var(--line)] text-[var(--muted)]">{m.status}</span>
+                    </div>
+                    <p className="font-meta text-[10px] text-[var(--muted)]">
+                      {new Date(m.scheduledStart).toLocaleString()} · {m.durationMinutes} mins · Room #{m.roomId}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => downloadCalendarIcs(m)}
+                      className="font-meta text-[9px] px-2.5 py-1 rounded border border-[var(--line)] hover:border-[var(--dept)]"
+                    >
+                      Export .ICS
+                    </button>
+                    <button
+                      onClick={() => window.open(`/meet/${m.roomId}`, "_blank")}
+                      className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px]"
+                    >
+                      Open Room
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 3: CALL HISTORY */}
+      {activeSubTab === "calls" && (
+        <div className="p-6 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display text-sm font-bold uppercase">Instant Voice &amp; Video Call Logs</h3>
+            <span className="font-meta text-[9px] text-[var(--muted)]">{calls.length} entries</span>
+          </div>
+
+          <div className="border border-[var(--line)] rounded-lg divide-y divide-[var(--line)] bg-[var(--bg)] text-xs">
+            {calls.length === 0 ? (
+              <p className="p-8 text-center text-[var(--muted)]">No instant calls placed yet.</p>
+            ) : (
+              calls.map((c) => (
+                <div key={c.id} className="p-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{c.type === "video" ? "🎥" : "📞"}</span>
+                      <span className="font-bold">{c.recipientName || c.recipientEmail}</span>
+                      <span className={`font-meta text-[8.5px] px-2 py-0.2 rounded border ${
+                        c.status === "completed" || c.status === "accepted" ? "text-emerald-500 border-emerald-500/30" : "text-amber-500 border-amber-500/30"
+                      }`}>
+                        {c.status}
+                      </span>
+                    </div>
+                    <p className="font-meta text-[9px] text-[var(--muted)]">
+                      {new Date(c.startedAt).toLocaleString()} · Caller: {c.callerName}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setInstantName(c.recipientName);
+                      setInstantEmail(c.recipientEmail);
+                      setInstantType(c.type);
+                      setInstantCallModalOpen(true);
+                    }}
+                    className="font-meta text-[9px] px-3 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
+                  >
+                    Call Back ↻
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 4: AI INTELLIGENCE & TRANSCRIPTS */}
+      {activeSubTab === "intelligence" && (
+        <div className="space-y-4">
+          {meetings.filter((m) => m.intelligence).length === 0 ? (
+            <div className="p-12 border border-[var(--line)] rounded-xl text-center bg-[var(--panel)]">
+              <span className="text-3xl block mb-2">✨</span>
+              <p className="font-display text-sm font-bold uppercase">No AI Summaries Generated Yet</p>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                During or after a meeting, launch the "AI" panel inside the meeting room to generate structured decisions and action items.
+              </p>
+            </div>
+          ) : (
+            meetings.filter((m) => m.intelligence).map((m) => (
+              <div key={m.id} className="p-6 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-display text-base font-bold uppercase">✨ {m.title}</h3>
+                  <span className="font-meta text-[9px] text-[var(--muted)]">
+                    Generated {new Date(m.intelligence!.generatedAt).toLocaleDateString()}
+                  </span>
+                </div>
+
+                <div className="p-4 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-xs space-y-2">
+                  <p className="font-display font-bold uppercase dept-accent text-[11px]">Executive Summary</p>
+                  <p className="text-[var(--muted)] leading-relaxed">{m.intelligence!.summary}</p>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4 text-xs">
+                  <div className="p-4 bg-[var(--bg)] border border-[var(--line)] rounded-lg space-y-2">
+                    <p className="font-display font-bold uppercase text-emerald-600 text-[11px]">Key Decisions</p>
+                    <ul className="list-disc pl-4 space-y-1 text-[var(--muted)]">
+                      {m.intelligence!.decisions.map((d, i) => (
+                        <li key={i}>{d}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="p-4 bg-[var(--bg)] border border-[var(--line)] rounded-lg space-y-2">
+                    <p className="font-display font-bold uppercase text-amber-600 text-[11px]">Action Items</p>
+                    <div className="space-y-1.5">
+                      {m.intelligence!.actionItems.map((act, i) => (
+                        <div key={i} className="p-2 border border-[var(--line)] rounded bg-[var(--panel)]">
+                          <p className="font-bold text-[var(--ink)]">{act.task}</p>
+                          <p className="font-meta text-[9px] text-[var(--muted)]">
+                            Assignee: {act.assignee} · Due: {act.dueDate}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* MODAL 1: SCHEDULE MEETING */}
+      {scheduleModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[var(--panel)] border border-[var(--line-strong)] rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-5 my-8">
+            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
+              <h3 className="font-display text-base font-bold uppercase">Schedule Studio Meeting</h3>
+              <button onClick={() => setScheduleModalOpen(false)} className="text-[var(--muted)] hover:text-[var(--ink)]">✕</button>
+            </div>
+
+            <form onSubmit={handleScheduleSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Meeting Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={formTitle}
+                  onChange={(e) => setFormTitle(e.target.value)}
+                  placeholder="e.g. Brand Identity Kickoff & Vector Review"
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                />
+              </div>
+
+              <div>
+                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Description / Agenda</label>
+                <textarea
+                  rows={2}
+                  value={formDesc}
+                  onChange={(e) => setFormDesc(e.target.value)}
+                  placeholder="Outline key review goals or items to discuss…"
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                />
+              </div>
+
+              <div>
+                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">
+                  Invite Participants (Comma-separated emails or names)
+                </label>
+                <input
+                  type="text"
+                  value={formParticipants}
+                  onChange={(e) => setFormParticipants(e.target.value)}
+                  placeholder="client@brand.com, artdirector@studio.com"
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                />
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={formDate}
+                    onChange={(e) => setFormDate(e.target.value)}
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Start Time *</label>
+                  <input
+                    type="time"
+                    required
+                    value={formTime}
+                    onChange={(e) => setFormTime(e.target.value)}
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Duration</label>
+                  <select
+                    value={formDuration}
+                    onChange={(e) => setFormDuration(Number(e.target.value))}
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                  >
+                    <option value={15}>15 mins</option>
+                    <option value={30}>30 mins</option>
+                    <option value={45}>45 mins</option>
+                    <option value={60}>60 mins (1 hr)</option>
+                    <option value={90}>90 mins</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-3 pt-2">
+                <div>
+                  <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Timezone</label>
+                  <input
+                    type="text"
+                    value={formTimezone}
+                    onChange={(e) => setFormTimezone(e.target.value)}
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Meeting Passcode</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={formPasscode}
+                      onChange={(e) => setFormPasscode(e.target.value)}
+                      className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setFormPasscode(generatePasscode())}
+                      className="px-2.5 py-1 border border-[var(--line)] rounded font-meta text-[9px]"
+                      title="Generate new passcode"
+                    >
+                      🎲
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Security & Features Toggles */}
+              <div className="pt-2 border-t border-[var(--line)] space-y-2">
+                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Security &amp; Intelligence Controls</span>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 p-2 border border-[var(--line)] rounded bg-[var(--bg)] cursor-pointer">
+                    <input type="checkbox" checked={formWaitingRoom} onChange={(e) => setFormWaitingRoom(e.target.checked)} className="accent-[var(--dept)]" />
+                    <span>Waiting Room Enabled</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 border border-[var(--line)] rounded bg-[var(--bg)] cursor-pointer">
+                    <input type="checkbox" checked={formAiSummary} onChange={(e) => setFormAiSummary(e.target.checked)} className="accent-[var(--dept)]" />
+                    <span>AI Meeting Intelligence</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 border border-[var(--line)] rounded bg-[var(--bg)] cursor-pointer">
+                    <input type="checkbox" checked={formRecording} onChange={(e) => setFormRecording(e.target.checked)} className="accent-[var(--dept)]" />
+                    <span>Cloud Recording</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 border border-[var(--line)] rounded bg-[var(--bg)] cursor-pointer">
+                    <input type="checkbox" checked={formAuthReq} onChange={(e) => setFormAuthReq(e.target.checked)} className="accent-[var(--dept)]" />
+                    <span>Require Authentication</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[var(--line)]">
+                <button
+                  type="button"
+                  onClick={() => setScheduleModalOpen(false)}
+                  className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingMeeting}
+                  className="btn btn-dept !py-2 !px-5 font-display text-xs font-bold uppercase tracking-wider"
+                >
+                  {savingMeeting ? "Scheduling…" : "Confirm &amp; Schedule"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: INSTANT CALL */}
+      {instantCallModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[var(--panel)] border border-[var(--line-strong)] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
+              <h3 className="font-display text-base font-bold uppercase">
+                Instant {instantType === "video" ? "Video" : "Voice"} Call
+              </h3>
+              <button onClick={() => setInstantCallModalOpen(false)} className="text-[var(--muted)] hover:text-[var(--ink)]">✕</button>
+            </div>
+
+            <form onSubmit={handleStartInstantCall} className="space-y-4 text-xs">
+              <div>
+                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Client Email Address *</label>
+                <input
+                  type="email"
+                  required
+                  value={instantEmail}
+                  onChange={(e) => setInstantEmail(e.target.value)}
+                  placeholder="client@domain.com"
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                />
+              </div>
+
+              <div>
+                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Client Name (Optional)</label>
+                <input
+                  type="text"
+                  value={instantName}
+                  onChange={(e) => setInstantName(e.target.value)}
+                  placeholder="e.g. Alex Henderson"
+                  className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInstantType("video")}
+                  className={`flex-1 py-2 rounded border font-meta text-[10px] uppercase font-bold transition-colors ${
+                    instantType === "video" ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)]" : "border-[var(--line)]"
+                  }`}
+                >
+                  🎥 Video Call
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInstantType("voice")}
+                  className={`flex-1 py-2 rounded border font-meta text-[10px] uppercase font-bold transition-colors ${
+                    instantType === "voice" ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)]" : "border-[var(--line)]"
+                  }`}
+                >
+                  📞 Voice Call
+                </button>
+              </div>
+
+              <p className="font-meta text-[9px] text-[var(--muted)]">
+                The client will receive an animated incoming call alert with ringtone in their portal and can accept immediately.
+              </p>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--line)]">
+                <button
+                  type="button"
+                  onClick={() => setInstantCallModalOpen(false)}
+                  className="font-meta text-[10px] text-[var(--muted)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={startingCall}
+                  className="btn btn-dept !py-2 !px-5 font-display text-xs font-bold uppercase tracking-wider"
+                >
+                  {startingCall ? "Dialing…" : "Start Call →"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ================= PAGE ================= */
 
-const TABS = ["Orders", "Leads", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
+const TABS = ["Orders", "Communications", "Leads", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
 
 const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
 const labelCls2 = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
@@ -1913,6 +2740,7 @@ export default function Admin() {
             </button>
           </div>
           {tab === "Orders" && <Orders />}
+          {tab === "Communications" && <AdminCommunications />}
           {tab === "Leads" && <Leads />}
           {tab === "Products" && <Products />}
           {tab === "Portfolio" && <PortfolioManager />}

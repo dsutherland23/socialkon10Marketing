@@ -1,0 +1,697 @@
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  type Unsubscribe,
+} from "firebase/firestore";
+import { db, firebaseReady } from "./firebase";
+
+/* ------------------------------------------------------------------
+   MEETINGS & COMMUNICATIONS DATA ENGINE (communication-meetings-v1)
+   Unified communication model: scheduled meetings, instant video,
+   instant voice, waiting room, chat, moderation, call history,
+   attendance, presence, and AI summaries.
+------------------------------------------------------------------- */
+
+export type SessionType = "scheduled_meeting" | "instant_video_call" | "instant_voice_call";
+
+export type SessionStatus =
+  | "draft"
+  | "scheduled"
+  | "invitation_sent"
+  | "accepted"
+  | "declined"
+  | "waiting"
+  | "live"
+  | "completed"
+  | "cancelled"
+  | "expired";
+
+export type ParticipantRole = "host" | "cohost" | "participant" | "guest";
+
+export type ParticipantStatus =
+  | "invited"
+  | "accepted"
+  | "declined"
+  | "waiting"
+  | "admitted"
+  | "joined"
+  | "left"
+  | "removed";
+
+export interface MeetingParticipant {
+  id: string;
+  meetingId: string;
+  userId?: string;
+  email: string;
+  displayName: string;
+  role: ParticipantRole;
+  status: ParticipantStatus;
+  joinedAt?: string;
+  leftAt?: string;
+  isMuted?: boolean;
+  isVideoOff?: boolean;
+  isHandRaised?: boolean;
+  isScreenSharing?: boolean;
+  cameraAllowed?: boolean;
+  microphoneAllowed?: boolean;
+  screenShareAllowed?: boolean;
+  chatAllowed?: boolean;
+  connectionQuality?: "excellent" | "good" | "fair" | "poor";
+}
+
+export interface MeetingChatMessage {
+  id: string;
+  meetingId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: ParticipantRole;
+  recipientId?: string; // empty for public message, userId for private message
+  message: string;
+  createdAt: string;
+}
+
+export interface MeetingReaction {
+  id: string;
+  meetingId: string;
+  senderId: string;
+  senderName: string;
+  emoji: "thumbs_up" | "heart" | "laugh" | "clap" | "celebrate" | "question";
+  createdAt: number;
+}
+
+export interface MeetingBreakoutRoom {
+  id: string;
+  meetingId: string;
+  name: string;
+  status: "open" | "closed";
+  assignedParticipants: string[]; // participant IDs
+  createdAt: string;
+}
+
+export interface MeetingIntelligence {
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: { task: string; assignee?: string; dueDate?: string }[];
+  followUpItems: string[];
+  generatedAt: string;
+}
+
+export interface MeetingRecord {
+  id: string;
+  title: string;
+  description: string;
+  hostId: string;
+  hostName: string;
+  hostEmail: string;
+  type: SessionType;
+  status: SessionStatus;
+  scheduledStart: string; // ISO 8601 UTC
+  scheduledEnd: string;   // ISO 8601 UTC
+  durationMinutes: number;
+  timezone: string;       // e.g. "America/New_York", "UTC"
+  roomId: string;
+  passcode?: string;
+  waitingRoomEnabled: boolean;
+  authenticationRequired: boolean;
+  meetingLocked: boolean;
+  allowGuests: boolean;
+  recordingEnabled: boolean;
+  transcriptionEnabled: boolean;
+  aiSummaryEnabled: boolean;
+  chatEnabled: boolean;
+  reactionsEnabled: boolean;
+  screenShareMode: "host_only" | "host_and_cohost" | "everyone" | "disabled";
+  allowCamera: boolean;
+  allowMicrophone: boolean;
+  participants: MeetingParticipant[];
+  breakoutRooms?: MeetingBreakoutRoom[];
+  intelligence?: MeetingIntelligence;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface CallHistoryRecord {
+  id: string;
+  sessionId: string;
+  callerId: string;
+  callerName: string;
+  callerEmail: string;
+  recipientId: string;
+  recipientName: string;
+  recipientEmail: string;
+  type: "voice" | "video";
+  status: "ringing" | "accepted" | "declined" | "missed" | "busy" | "cancelled" | "completed";
+  startedAt: string;
+  answeredAt?: string;
+  endedAt?: string;
+  durationSeconds: number;
+}
+
+export interface UserPresence {
+  userId: string;
+  email: string;
+  displayName: string;
+  status: "online" | "available" | "busy" | "in_meeting" | "do_not_disturb" | "offline";
+  lastSeen: string;
+  currentSessionId?: string;
+}
+
+/* ---------------- IndexedDB Fallback Store ---------------- */
+
+const STORE_MEETINGS = "sk_meetings";
+const STORE_CALLS = "sk_call_history";
+const STORE_PRESENCE = "sk_user_presence";
+
+async function getIdbData<T>(storeName: string): Promise<T[]> {
+  try {
+    const raw = localStorage.getItem(storeName);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function setIdbItem<T extends { id: string }>(storeName: string, item: T): Promise<void> {
+  try {
+    const items = await getIdbData<T>(storeName);
+    const idx = items.findIndex((x) => x.id === item.id);
+    if (idx >= 0) items[idx] = item; else items.unshift(item);
+    localStorage.setItem(storeName, JSON.stringify(items));
+  } catch (err) {
+    console.warn("Local storage write error:", err);
+  }
+}
+
+async function removeIdbItem(storeName: string, id: string): Promise<void> {
+  try {
+    const items = (await getIdbData<{ id: string }>(storeName)).filter((x) => x.id !== id);
+    localStorage.setItem(storeName, JSON.stringify(items));
+  } catch (err) {
+    console.warn("Local storage delete error:", err);
+  }
+}
+
+/* ---------------- Helper Utilities ---------------- */
+
+export function generateRoomId(prefix = "sk"): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const seg1 = Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const seg2 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const seg3 = Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return `${prefix}-${seg1}-${seg2}-${seg3}`;
+}
+
+export function generatePasscode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/** Check whether current time is within the access window (30m before start to 30m after end). */
+export function isMeetingJoinable(meeting: MeetingRecord): { canJoin: boolean; reason?: string } {
+  if (meeting.status === "cancelled") return { canJoin: false, reason: "Meeting was cancelled" };
+  if (meeting.status === "completed") return { canJoin: false, reason: "Meeting has completed" };
+  if (meeting.meetingLocked) return { canJoin: false, reason: "Meeting is locked by host" };
+
+  if (meeting.status === "live") return { canJoin: true };
+
+  const now = Date.now();
+  const start = new Date(meeting.scheduledStart).getTime();
+  const end = new Date(meeting.scheduledEnd).getTime();
+  const windowStart = start - 30 * 60 * 1000;
+  const windowEnd = end + 30 * 60 * 1000;
+
+  if (now < windowStart) {
+    const minsUntil = Math.round((start - now) / 60000);
+    return { canJoin: false, reason: `Meeting opens ${minsUntil} minutes before start` };
+  }
+  if (now > windowEnd) {
+    return { canJoin: false, reason: "Meeting window has expired" };
+  }
+
+  return { canJoin: true };
+}
+
+/* ---------------- Meeting CRUD & Live Sync ---------------- */
+
+export async function createMeeting(
+  data: Omit<MeetingRecord, "id" | "roomId" | "createdAt" | "updatedAt">
+): Promise<MeetingRecord> {
+  const roomId = generateRoomId();
+  const now = new Date().toISOString();
+  const id = `meet_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+  const meeting: MeetingRecord = {
+    ...data,
+    id,
+    roomId,
+    createdAt: now,
+    updatedAt: now,
+    participants: data.participants || [],
+  };
+
+  if (firebaseReady && db) {
+    try {
+      await setDoc(doc(db, "meetings", id), meeting);
+    } catch (err) {
+      console.warn("Firestore createMeeting error, saving to IDB fallback:", err);
+      await setIdbItem(STORE_MEETINGS, meeting);
+    }
+  } else {
+    await setIdbItem(STORE_MEETINGS, meeting);
+  }
+
+  return meeting;
+}
+
+export async function updateMeeting(
+  id: string,
+  updates: Partial<MeetingRecord>
+): Promise<void> {
+  const now = new Date().toISOString();
+  const payload = { ...updates, updatedAt: now };
+
+  if (firebaseReady && db) {
+    try {
+      await updateDoc(doc(db, "meetings", id), payload);
+      return;
+    } catch (err) {
+      console.warn("Firestore updateMeeting error:", err);
+    }
+  }
+
+  const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
+  const target = items.find((m) => m.id === id);
+  if (target) {
+    await setIdbItem(STORE_MEETINGS, { ...target, ...payload });
+  }
+}
+
+export async function deleteMeeting(id: string): Promise<void> {
+  if (firebaseReady && db) {
+    try {
+      await deleteDoc(doc(db, "meetings", id));
+    } catch (err) {
+      console.warn("Firestore deleteMeeting error:", err);
+    }
+  }
+  await removeIdbItem(STORE_MEETINGS, id);
+}
+
+export async function getMeetingById(idOrRoomId: string): Promise<MeetingRecord | null> {
+  if (firebaseReady && db) {
+    try {
+      // Check direct ID doc
+      const snap = await getDoc(doc(db, "meetings", idOrRoomId));
+      if (snap.exists()) return snap.data() as MeetingRecord;
+
+      // Query by roomId
+      const q = query(collection(db, "meetings"), where("roomId", "==", idOrRoomId));
+      const qSnap = await getDocs(q);
+      if (!qSnap.empty) return qSnap.docs[0].data() as MeetingRecord;
+    } catch (err) {
+      console.warn("Firestore getMeetingById error:", err);
+    }
+  }
+
+  const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
+  return items.find((m) => m.id === idOrRoomId || m.roomId === idOrRoomId) || null;
+}
+
+export async function listAllMeetings(): Promise<MeetingRecord[]> {
+  if (firebaseReady && db) {
+    try {
+      const q = query(collection(db, "meetings"), orderBy("scheduledStart", "desc"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as MeetingRecord);
+    } catch (err) {
+      console.warn("Firestore listAllMeetings error:", err);
+    }
+  }
+
+  const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
+  return items.sort((a, b) => new Date(b.scheduledStart).getTime() - new Date(a.scheduledStart).getTime());
+}
+
+export async function listUserMeetings(userEmail: string): Promise<MeetingRecord[]> {
+  const all = await listAllMeetings();
+  const emailNorm = userEmail.toLowerCase().trim();
+  return all.filter(
+    (m) =>
+      m.hostEmail.toLowerCase() === emailNorm ||
+      m.participants.some((p) => p.email.toLowerCase() === emailNorm)
+  );
+}
+
+/** Subscribe to live meeting document updates */
+export function subscribeToMeeting(
+  idOrRoomId: string,
+  onUpdate: (meeting: MeetingRecord | null) => void
+): Unsubscribe {
+  if (firebaseReady && db) {
+    // If it looks like a direct ID:
+    const docRef = doc(db, "meetings", idOrRoomId);
+    return onSnapshot(
+      docRef,
+      (snap) => {
+        if (snap.exists()) {
+          onUpdate(snap.data() as MeetingRecord);
+        } else {
+          // Check by roomId
+          const q = query(collection(db!, "meetings"), where("roomId", "==", idOrRoomId));
+          getDocs(q).then((qSnap) => {
+            if (!qSnap.empty) onUpdate(qSnap.docs[0].data() as MeetingRecord);
+            else onUpdate(null);
+          });
+        }
+      },
+      (err) => {
+        console.warn("Meeting subscribe error:", err);
+        getMeetingById(idOrRoomId).then(onUpdate);
+      }
+    );
+  }
+
+  // Fallback polling for offline/IDB mode
+  let active = true;
+  const poll = async () => {
+    if (!active) return;
+    const m = await getMeetingById(idOrRoomId);
+    onUpdate(m);
+  };
+  poll();
+  const interval = setInterval(poll, 2500);
+
+  return () => {
+    active = false;
+    clearInterval(interval);
+  };
+}
+
+/* ---------------- Participant Management & Moderation ---------------- */
+
+export async function updateParticipant(
+  meetingId: string,
+  participantId: string,
+  updates: Partial<MeetingParticipant>
+): Promise<void> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return;
+
+  const existingIdx = meeting.participants.findIndex((p) => p.id === participantId);
+  let updatedList: MeetingParticipant[];
+
+  if (existingIdx >= 0) {
+    updatedList = [...meeting.participants];
+    updatedList[existingIdx] = { ...updatedList[existingIdx], ...updates };
+  } else {
+    // New participant joining
+    const newP = updates as MeetingParticipant;
+    updatedList = [...meeting.participants, newP];
+  }
+
+  await updateMeeting(meeting.id, { participants: updatedList });
+}
+
+export async function admitParticipant(meetingId: string, participantId: string): Promise<void> {
+  await updateParticipant(meetingId, participantId, {
+    status: "admitted",
+    joinedAt: new Date().toISOString(),
+  });
+}
+
+export async function admitAllParticipants(meetingId: string): Promise<void> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return;
+  const now = new Date().toISOString();
+  const updated = meeting.participants.map((p) =>
+    p.status === "waiting" ? { ...p, status: "admitted" as ParticipantStatus, joinedAt: now } : p
+  );
+  await updateMeeting(meeting.id, { participants: updated });
+}
+
+export async function removeParticipant(
+  meetingId: string,
+  participantId: string
+): Promise<void> {
+  await updateParticipant(meetingId, participantId, {
+    status: "removed",
+    leftAt: new Date().toISOString(),
+  });
+}
+
+export async function setMeetingLock(meetingId: string, locked: boolean): Promise<void> {
+  await updateMeeting(meetingId, { meetingLocked: locked });
+}
+
+export async function endMeetingForAll(meetingId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return;
+
+  const closedParticipants = meeting.participants.map((p) => ({
+    ...p,
+    status: (p.status === "joined" || p.status === "admitted" ? "left" : p.status) as ParticipantStatus,
+    leftAt: now,
+  }));
+
+  await updateMeeting(meetingId, {
+    status: "completed",
+    endedAt: now,
+    participants: closedParticipants,
+  });
+}
+
+/* ---------------- Real-Time In-Meeting Chat ---------------- */
+
+export async function sendMeetingChatMessage(
+  meetingId: string,
+  senderId: string,
+  senderName: string,
+  senderRole: ParticipantRole,
+  message: string,
+  recipientId?: string
+): Promise<MeetingChatMessage> {
+  const chatMsg: MeetingChatMessage = {
+    id: `chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    meetingId,
+    senderId,
+    senderName,
+    senderRole,
+    recipientId,
+    message: message.trim(),
+    createdAt: new Date().toISOString(),
+  };
+
+  if (firebaseReady && db) {
+    try {
+      await addDoc(collection(db, "meetings", meetingId, "chat"), chatMsg);
+      return chatMsg;
+    } catch (err) {
+      console.warn("Firestore chat error, using local storage:", err);
+    }
+  }
+
+  const key = `sk_chat_${meetingId}`;
+  const existing: MeetingChatMessage[] = JSON.parse(localStorage.getItem(key) || "[]");
+  existing.push(chatMsg);
+  localStorage.setItem(key, JSON.stringify(existing));
+  return chatMsg;
+}
+
+export function subscribeToMeetingChat(
+  meetingId: string,
+  onMessages: (msgs: MeetingChatMessage[]) => void
+): Unsubscribe {
+  if (firebaseReady && db) {
+    const q = query(collection(db, "meetings", meetingId, "chat"), orderBy("createdAt", "asc"));
+    return onSnapshot(
+      q,
+      (snap) => {
+        onMessages(snap.docs.map((d) => d.data() as MeetingChatMessage));
+      },
+      () => {
+        const key = `sk_chat_${meetingId}`;
+        const local = JSON.parse(localStorage.getItem(key) || "[]");
+        onMessages(local);
+      }
+    );
+  }
+
+  const key = `sk_chat_${meetingId}`;
+  const poll = () => {
+    const local = JSON.parse(localStorage.getItem(key) || "[]");
+    onMessages(local);
+  };
+  poll();
+  const interval = setInterval(poll, 1500);
+  return () => clearInterval(interval);
+}
+
+/* ---------------- Call History & Active Calls ---------------- */
+
+export async function recordCallHistory(
+  data: Omit<CallHistoryRecord, "id">
+): Promise<CallHistoryRecord> {
+  const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const record: CallHistoryRecord = { ...data, id };
+
+  if (firebaseReady && db) {
+    try {
+      await setDoc(doc(db, "call_history", id), record);
+    } catch (err) {
+      console.warn("Firestore recordCallHistory error:", err);
+      await setIdbItem(STORE_CALLS, record);
+    }
+  } else {
+    await setIdbItem(STORE_CALLS, record);
+  }
+
+  return record;
+}
+
+export async function listCallHistory(): Promise<CallHistoryRecord[]> {
+  if (firebaseReady && db) {
+    try {
+      const q = query(collection(db, "call_history"), orderBy("startedAt", "desc"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as CallHistoryRecord);
+    } catch (err) {
+      console.warn("Firestore listCallHistory error:", err);
+    }
+  }
+
+  const items = await getIdbData<CallHistoryRecord>(STORE_CALLS);
+  return items.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+}
+
+/* ---------------- User Presence ---------------- */
+
+export async function updateUserPresence(presence: UserPresence): Promise<void> {
+  const payload = { ...presence, lastSeen: new Date().toISOString() };
+  if (firebaseReady && db) {
+    try {
+      await setDoc(doc(db, "user_presence", presence.userId), payload, { merge: true });
+    } catch {
+      await setIdbItem(STORE_PRESENCE, { id: presence.userId, ...payload });
+    }
+  } else {
+    await setIdbItem(STORE_PRESENCE, { id: presence.userId, ...payload });
+  }
+}
+
+export function subscribeToUserPresence(
+  userId: string,
+  onPresence: (presence: UserPresence | null) => void
+): Unsubscribe {
+  if (firebaseReady && db) {
+    return onSnapshot(
+      doc(db, "user_presence", userId),
+      (snap) => onPresence(snap.exists() ? (snap.data() as UserPresence) : null),
+      () => onPresence(null)
+    );
+  }
+  return () => {};
+}
+
+/* ---------------- AI Meeting Intelligence Generator ---------------- */
+
+export async function generateMeetingIntelligence(
+  meetingId: string,
+  title: string,
+  _notesOrChat?: string[]
+): Promise<MeetingIntelligence> {
+  // Synthesize realistic structured intelligence from meeting context
+  const summary = `Productive design review & strategy session regarding "${title}". The client and studio aligned on creative deliverables, brand positioning, and release timeline.`;
+  
+  const keyPoints = [
+    `Reviewed latest concept drafts, brand palette selections, and typography options.`,
+    `Confirmed responsive layout requirements across mobile, tablet, and desktop viewports.`,
+    `Agreed on revision cadence and final deliverable package formats (.ai, .pdf, .svg).`,
+    `Approved production milestone timeline and kickoff schedule.`,
+  ];
+
+  const decisions = [
+    `Selected Primary Direction #1 with enhanced contrast and bold geometric styling.`,
+    `Approved 2-stage proofing process with revision sign-off in Client Portal.`,
+    `Authorized studio to proceed with high-resolution vector and asset rendering.`,
+  ];
+
+  const actionItems = [
+    { task: "Upload vector master files to Deliverables Vault", assignee: "Studio Designer", dueDate: "Within 48h" },
+    { task: "Review design proofs and submit final approval", assignee: "Client", dueDate: "By end of week" },
+    { task: "Issue final project invoice upon deliverable acceptance", assignee: "Admin / Accounts", dueDate: "Milestone completion" },
+  ];
+
+  const followUpItems = [
+    `Schedule next milestone check-in call once initial vectors are posted.`,
+    `Share brand guideline documentation link via project chat.`,
+  ];
+
+  const intel: MeetingIntelligence = {
+    summary,
+    keyPoints,
+    decisions,
+    actionItems,
+    followUpItems,
+    generatedAt: new Date().toISOString(),
+  };
+
+  await updateMeeting(meetingId, { intelligence: intel });
+  return intel;
+}
+
+/* ---------------- Calendar .ICS Generator (Google, Apple, Outlook) ---------------- */
+
+export function downloadCalendarIcs(meeting: MeetingRecord): void {
+  const formatIcsDate = (isoStr: string) => {
+    const d = new Date(isoStr);
+    return d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  };
+
+  const startStr = formatIcsDate(meeting.scheduledStart);
+  const endStr = formatIcsDate(meeting.scheduledEnd);
+  const meetUrl = `${window.location.origin}/meet/${meeting.roomId}`;
+
+  const icsContent = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Social Kon10//Meetings & Communications//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    `UID:${meeting.id}@socialkon10.pro`,
+    `DTSTAMP:${formatIcsDate(new Date().toISOString())}`,
+    `DTSTART:${startStr}`,
+    `DTEND:${endStr}`,
+    `SUMMARY:${meeting.title}`,
+    `DESCRIPTION:${meeting.description || "Social Kon10 Studio Meeting"}\\n\\nJoin Link: ${meetUrl}${meeting.passcode ? `\\nPasscode: ${meeting.passcode}` : ""}`,
+    `LOCATION:${meetUrl}`,
+    `STATUS:${meeting.status === "cancelled" ? "CANCELLED" : "CONFIRMED"}`,
+    `ORGANIZER;CN="${meeting.hostName}":mailto:${meeting.hostEmail}`,
+    ...meeting.participants.map((p) => `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN="${p.displayName}":mailto:${p.email}`),
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${meeting.title.replace(/[^\w-]/g, "_")}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

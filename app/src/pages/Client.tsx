@@ -22,6 +22,15 @@ import { activeProviders } from "../lib/payments";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
 import {
+  listUserMeetings,
+  updateParticipant,
+  createMeeting,
+  recordCallHistory,
+  downloadCalendarIcs,
+  isMeetingJoinable,
+  type MeetingRecord,
+} from "../lib/meetings";
+import {
   currentVersion, downloadTemplate, entitlementsFromOrders, useTemplateFavorites, useTemplates,
   type Entitlement, type Template,
 } from "../lib/templates";
@@ -1095,14 +1104,318 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
   );
 }
 
-function Dashboard() {
-  const { user, signOut, isAdmin } = useAuth();
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
+function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"Projects" | "My Templates" | "My Designs" | "Favorites">("Projects");
+  const [callingStudio, setCallingStudio] = useState(false);
+
+  const reload = async () => {
+    const list = await listUserMeetings(userEmail);
+    setMeetings(list);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    if (firebaseReady && !user) return;
+    reload();
+  }, [userEmail]);
+
+  const upcomingMeetings = meetings.filter((m) => m.status === "scheduled" || m.status === "live");
+  const pastMeetings = meetings.filter((m) => m.status === "completed");
+
+  const handleRsvp = async (meetingId: string, participantId: string, status: "accepted" | "declined") => {
+    await updateParticipant(meetingId, participantId, { status });
+    toast.success(`Meeting invitation ${status}.`);
+    reload();
+  };
+
+  const handleInstantCallStudio = async () => {
+    setCallingStudio(true);
+    try {
+      const now = new Date().toISOString();
+      const end = new Date(Date.now() + 60 * 60000).toISOString();
+      const title = `Live Client Consultation (${userEmail})`;
+
+      const meet = await createMeeting({
+        title,
+        description: "Client initiated instant video consultation.",
+        hostId: "admin",
+        hostName: "Social Kon10 Studio",
+        hostEmail: "admin@socialkon10.pro",
+        type: "instant_video_call",
+        status: "live",
+        scheduledStart: now,
+        scheduledEnd: end,
+        durationMinutes: 60,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        waitingRoomEnabled: false,
+        authenticationRequired: false,
+        meetingLocked: false,
+        allowGuests: true,
+        recordingEnabled: true,
+        transcriptionEnabled: true,
+        aiSummaryEnabled: true,
+        chatEnabled: true,
+        reactionsEnabled: true,
+        screenShareMode: "everyone",
+        allowCamera: true,
+        allowMicrophone: true,
+        participants: [
+          {
+            id: `p_admin_${Date.now()}`,
+            meetingId: "",
+            email: "admin@socialkon10.pro",
+            displayName: "Social Kon10 Studio",
+            role: "host",
+            status: "waiting",
+          },
+          {
+            id: `p_client_${Date.now()}`,
+            meetingId: "",
+            email: userEmail,
+            displayName: userEmail.split("@")[0],
+            role: "participant",
+            status: "joined",
+          },
+        ],
+      });
+
+      // Record call history
+      await recordCallHistory({
+        sessionId: meet.roomId,
+        callerId: userEmail,
+        callerName: userEmail.split("@")[0],
+        callerEmail: userEmail,
+        recipientId: "admin",
+        recipientName: "Social Kon10 Studio",
+        recipientEmail: "admin@socialkon10.pro",
+        type: "video",
+        status: "ringing",
+        startedAt: now,
+        durationSeconds: 0,
+      });
+
+      window.open(`/meet/${meet.roomId}`, "_blank");
+      reload();
+    } catch (err) {
+      console.error("Call error:", err);
+      toast.error("Failed to connect to studio call.");
+    } finally {
+      setCallingStudio(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="font-meta text-[11px] text-[var(--muted)]">Loading your meetings…</p>;
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Action Banner */}
+      <div className="p-6 border border-[var(--dept)] bg-[var(--dept-soft)] rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-sm">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-meta text-[9px] uppercase font-bold text-[var(--dept)] tracking-wider">
+              Studio Video &amp; Voice Communications
+            </span>
+          </div>
+          <h3 className="font-display text-lg font-bold uppercase">Connect with Your Creative Team</h3>
+          <p className="text-xs text-[var(--muted)] mt-0.5">
+            Join scheduled milestone reviews, brief consultations, or place an instant live call to the studio.
+          </p>
+        </div>
+
+        <button
+          onClick={handleInstantCallStudio}
+          disabled={callingStudio}
+          className="btn btn-dept !py-2.5 !px-5 font-display text-xs font-bold uppercase tracking-wider shadow-md"
+        >
+          {callingStudio ? "Connecting…" : "📞 Instant Call Studio"}
+        </button>
+      </div>
+
+      {/* Upcoming & Active Meetings */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h4 className="font-display text-sm font-bold uppercase tracking-wider">
+            Scheduled Sessions ({upcomingMeetings.length})
+          </h4>
+          <span className="font-meta text-[9px] text-[var(--muted)]">
+            Local Time: <strong className="text-[var(--ink)]">{Intl.DateTimeFormat().resolvedOptions().timeZone}</strong>
+          </span>
+        </div>
+
+        {upcomingMeetings.length === 0 ? (
+          <div className="p-10 border border-[var(--line)] rounded-xl text-center bg-[var(--panel)]">
+            <span className="text-3xl block mb-2">📅</span>
+            <p className="font-display text-sm font-bold uppercase">No upcoming meetings scheduled</p>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+              When our design team schedules a creative review or kickoff with you, it will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-4">
+            {upcomingMeetings.map((m) => {
+              const myPart = m.participants.find((p) => p.email.toLowerCase() === userEmail.toLowerCase());
+              const isLive = m.status === "live";
+              const joinCheck = isMeetingJoinable(m);
+              const dateStr = new Date(m.scheduledStart).toLocaleDateString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              });
+              const timeStr = new Date(m.scheduledStart).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              });
+
+              return (
+                <div
+                  key={m.id}
+                  className="p-5 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col justify-between gap-4 shadow-sm hover:border-[var(--dept)] transition-colors"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className={`font-meta text-[8.5px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                        isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse" :
+                        "bg-cyan-500/10 text-cyan-500 border-cyan-500/30"
+                      }`}>
+                        {isLive ? "● LIVE NOW" : m.status}
+                      </span>
+                      <span className="font-meta text-[9px] text-[var(--muted)]">
+                        {m.durationMinutes} mins
+                      </span>
+                    </div>
+
+                    <h4 className="font-display text-base font-bold uppercase line-clamp-1">{m.title}</h4>
+                    {m.description && <p className="text-xs text-[var(--muted)] line-clamp-2 mt-1">{m.description}</p>}
+
+                    <div className="mt-3 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-xs space-y-1">
+                      <p className="font-medium text-[var(--ink)]">
+                        📅 {dateStr} at {timeStr}
+                      </p>
+                      <p className="font-meta text-[9.5px] text-[var(--muted)]">
+                        Host: {m.hostName} · Room #{m.roomId}
+                      </p>
+                      {m.passcode && (
+                        <p className="font-meta text-[9.5px] text-[var(--muted)]">
+                          Passcode: <code className="text-[var(--ink)] font-bold">{m.passcode}</code>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-[var(--line)]">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => downloadCalendarIcs(m)}
+                        className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+                        title="Download Calendar .ICS file"
+                      >
+                        📥 Add to Cal
+                      </button>
+
+                      {/* RSVP Buttons */}
+                      {myPart && myPart.status === "invited" && (
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => handleRsvp(m.id, myPart.id, "accepted")}
+                            className="font-meta text-[9px] px-2 py-1 bg-emerald-600/10 text-emerald-600 border border-emerald-500/30 rounded font-bold"
+                          >
+                            ✓ Accept
+                          </button>
+                          <button
+                            onClick={() => handleRsvp(m.id, myPart.id, "declined")}
+                            className="font-meta text-[9px] px-2 py-1 text-red-500 border border-red-500/20 rounded"
+                          >
+                            ✕ Decline
+                          </button>
+                        </div>
+                      )}
+                      {myPart && myPart.status === "accepted" && (
+                        <span className="font-meta text-[8.5px] text-emerald-600 font-bold">✓ Accepted</span>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => window.open(`/meet/${m.roomId}`, "_blank")}
+                      disabled={!joinCheck.canJoin}
+                      className={`btn btn-dept !py-1.5 !px-4 font-display text-[10px] font-bold uppercase tracking-wider ${
+                        isLive ? "animate-pulse" : ""
+                      }`}
+                    >
+                      {isLive ? "🚀 Join Live Call →" : "Join Room →"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Past Completed Meetings & AI Summaries */}
+      {pastMeetings.length > 0 && (
+        <div className="space-y-4 pt-6 border-t border-[var(--line)]">
+          <h4 className="font-display text-sm font-bold uppercase tracking-wider">
+            Past Meetings &amp; Action Items ({pastMeetings.length})
+          </h4>
+          <div className="space-y-4">
+            {pastMeetings.map((m) => (
+              <div key={m.id} className="p-5 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h5 className="font-display text-sm font-bold uppercase">{m.title}</h5>
+                    <p className="font-meta text-[9px] text-[var(--muted)]">
+                      Completed on {new Date(m.scheduledStart).toLocaleDateString()} · Host: {m.hostName}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => downloadCalendarIcs(m)}
+                    className="font-meta text-[9px] px-2.5 py-1 rounded border border-[var(--line)] hover:border-[var(--dept)]"
+                  >
+                    .ICS
+                  </button>
+                </div>
+
+                {m.intelligence && (
+                  <div className="p-4 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-xs space-y-3">
+                    <div>
+                      <p className="font-display font-bold uppercase dept-accent text-[10.5px]">✨ AI Summary</p>
+                      <p className="text-[var(--muted)] mt-1 leading-relaxed">{m.intelligence.summary}</p>
+                    </div>
+
+                    {m.intelligence.actionItems.length > 0 && (
+                      <div className="pt-2 border-t border-[var(--line)]">
+                        <p className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] mb-1.5">Action Items</p>
+                        <div className="space-y-1">
+                          {m.intelligence.actionItems.map((act, idx) => (
+                            <div key={idx} className="flex items-start gap-2 text-[11px]">
+                              <span className="text-emerald-500">✓</span>
+                              <span className="text-[var(--ink)] font-medium">{act.task}</span>
+                              <span className="font-meta text-[9px] text-[var(--muted)] ml-auto">({act.dueDate})</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean; signOut: () => void }) {
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"Projects" | "Meetings & Calls" | "My Templates" | "My Designs" | "Favorites">("Projects");
+
+  useEffect(() => {
     (async () => {
       if (user) await claimOrders(user);
       setOrders(await listMyOrders(user));
@@ -1123,9 +1436,9 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* account navigation (Templates PRD §55) */}
+      {/* account navigation */}
       <div className="flex flex-wrap gap-2 mb-10" role="tablist" aria-label="Account sections">
-        {(["Projects", "My Templates", "My Designs", "Favorites"] as const).map((t) => (
+        {(["Projects", "Meetings & Calls", "My Templates", "My Designs", "Favorites"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
             className="font-meta text-[10px] px-4 py-2 border transition-colors"
             style={tab === t ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
@@ -1133,6 +1446,10 @@ function Dashboard() {
           </button>
         ))}
       </div>
+
+      {tab === "Meetings & Calls" && (
+        <ClientMeetingsHub userEmail={user?.email || ""} />
+      )}
 
       {tab === "My Templates" && (loading ? (
         <p className="font-meta text-[11px] text-[var(--muted)]">Loading your library…</p>
@@ -1164,6 +1481,11 @@ function Dashboard() {
       </p>
     </div>
   );
+}
+
+function Dashboard() {
+  const { user, signOut, isAdmin } = useAuth();
+  return <AccountPortal user={user} isAdmin={isAdmin} signOut={signOut} />;
 }
 
 export default function ClientPortal() {
