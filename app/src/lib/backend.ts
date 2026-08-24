@@ -663,6 +663,15 @@ export async function saveSettings(s: SiteSettings): Promise<void> {
 
 /* ---------------- project messaging (PRD §66) ---------------- */
 
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  url: string;
+  size: number;
+  type: "image" | "document" | "vector" | "other";
+  mimeType?: string;
+}
+
 export interface MessageRecord {
   id: string;
   orderId: string;
@@ -670,6 +679,49 @@ export interface MessageRecord {
   text: string;
   author: string;        // email or "Social Kon10"
   createdAt: string;
+  attachments?: MessageAttachment[];
+}
+
+/** Upload a project chat attachment (logos, reference photos, copy docs, vectors). */
+export async function uploadChatAttachment(orderId: string, file: File): Promise<MessageAttachment> {
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  const isImg = ["png", "jpg", "jpeg", "webp", "gif", "svg"].includes(ext) || file.type.startsWith("image/");
+  const isVector = ["ai", "eps", "psd", "svg", "cdr"].includes(ext);
+  const isDoc = ["pdf", "doc", "docx", "txt", "rtf"].includes(ext);
+  const type: MessageAttachment["type"] = isImg ? "image" : isVector ? "vector" : isDoc ? "document" : "other";
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `orders/${orderId}/chat/${Date.now()}-${safeName}`;
+
+  let url = "";
+  if (firebaseReady && storage) {
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file, { contentType: file.type || "application/octet-stream" });
+    url = await getDownloadURL(storageRef);
+  } else {
+    // Demo mode: read as arrayBuffer/dataUrl
+    const buffer = await file.arrayBuffer();
+    await storeLocalBinary(path, buffer);
+    if (isImg) {
+      url = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+    } else {
+      const blob = new Blob([buffer], { type: file.type || "application/octet-stream" });
+      url = URL.createObjectURL(blob);
+    }
+  }
+
+  return {
+    id: `ATT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: file.name,
+    url,
+    size: file.size,
+    type,
+    mimeType: file.type,
+  };
 }
 
 export async function listMessages(orderId: string): Promise<MessageRecord[]> {
@@ -683,11 +735,23 @@ export async function listMessages(orderId: string): Promise<MessageRecord[]> {
   return snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as MessageRecord);
 }
 
-export async function postMessage(orderId: string, from: MessageRecord["from"], text: string, author: string): Promise<void> {
-  const msg = { orderId, from, text, author };
+export async function postMessage(
+  orderId: string,
+  from: MessageRecord["from"],
+  text: string,
+  author: string,
+  attachments?: MessageAttachment[]
+): Promise<void> {
+  const msg = {
+    orderId,
+    from,
+    text: text || "",
+    author,
+    ...(attachments && attachments.length ? { attachments } : {}),
+  };
   if (!firebaseReady || !db) {
     const xs = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
-    xs.push({ ...msg, id: `MSG-${Date.now()}`, createdAt: new Date().toISOString() });
+    xs.push({ ...msg, id: `MSG-${Date.now()}`, createdAt: new Date().toISOString() } as MessageRecord);
     await idbSet("sk-demo-messages", xs);
     return;
   }
