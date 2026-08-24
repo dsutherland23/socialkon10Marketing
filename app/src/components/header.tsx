@@ -12,7 +12,7 @@ import { firebaseReady } from "../lib/firebase";
 function Wordmark() {
   return (
     <Link to="/" className="flex items-center gap-2.5 shrink-0" aria-label="Social Kon10 Marketing — home">
-      <img src="/assets/sk-mark.png" alt="" width={34} height={22} className="h-[24px] w-auto" />
+      <img src="/assets/sk-mark.png" alt="Social Kon10" width={32} height={25} className="h-[26px] w-auto object-contain shrink-0" />
       <span className="leading-none">
         <span className="font-display-wide block text-[13px] sm:text-[15px] font-bold tracking-tight">SOCIAL KON10</span>
         <span className="font-meta hidden sm:block mt-1 text-[9px] text-[var(--muted)]">Marketing</span>
