@@ -80,9 +80,32 @@ function VideoTile({
     if (!videoEl) return;
     if (stream) {
       videoEl.srcObject = stream;
-      videoEl.play().catch((err) => {
-        console.warn("Video autoplay notice:", err);
+      const playPromise = videoEl.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("Video autoplay notice:", err);
+        });
+      }
+
+      const handleTrackUpdate = () => {
+        if (videoEl && videoEl.paused) {
+          videoEl.play().catch(() => {});
+        }
+      };
+
+      stream.addEventListener("addtrack", handleTrackUpdate);
+      stream.addEventListener("removetrack", handleTrackUpdate);
+      stream.getVideoTracks().forEach((t) => {
+        t.addEventListener("unmute", handleTrackUpdate);
       });
+
+      return () => {
+        stream.removeEventListener("addtrack", handleTrackUpdate);
+        stream.removeEventListener("removetrack", handleTrackUpdate);
+        stream.getVideoTracks().forEach((t) => {
+          t.removeEventListener("unmute", handleTrackUpdate);
+        });
+      };
     } else {
       videoEl.srcObject = null;
     }
@@ -2505,6 +2528,27 @@ export default function MeetingRoom() {
               🔒 Locked
             </span>
           )}
+          {/* Live Screen / Studio Presentation Indicator in Header */}
+          {(() => {
+            const remoteSharer = meeting?.participants.find(
+              (p) => Boolean(p.isScreenSharing) && p.id !== myParticipantId && p.id !== effectiveMyId
+            );
+            if (!remoteSharer && !isScreenSharing) return null;
+            return (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDrawer("none");
+                  setIsProofingMaximized(false);
+                }}
+                className="font-meta text-[9px] px-2.5 py-1 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-500/50 flex items-center gap-1.5 shadow-md animate-pulse font-bold"
+                title="Click to spotlight live screen presentation"
+              >
+                <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                <span>{isScreenSharing ? "🔴 Broadcasting (1080p)" : `🔴 ${remoteSharer?.displayName} Presenting`}</span>
+              </button>
+            );
+          })()}
         </div>
 
         {/* Top Actions */}
@@ -2533,13 +2577,14 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "proofing" ? "none" : "proofing")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border flex items-center gap-1.5 transition-all ${
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-full font-bold flex items-center gap-1.5 border transition-all ${
               activeDrawer === "proofing"
-                ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold border-[var(--dept)]"
-                : "bg-neutral-800 border-neutral-700 text-neutral-300 hover:text-white"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)]"
+                : "bg-neutral-800 border-neutral-700 text-white hover:border-[var(--dept)]"
             }`}
           >
-            <span>🎨</span> <span className="hidden sm:inline">Live Proofing</span>
+            <span>🎨</span>
+            <span className="hidden sm:inline">Proof Canvas</span>
           </button>
 
           {/* Fullscreen Toggle */}
@@ -2560,6 +2605,34 @@ export default function MeetingRoom() {
           </button>
         </div>
       </div>
+
+      {/* Floating Screen Broadcast Alert for Attendees */}
+      {(() => {
+        const remoteSharer = meeting?.participants.find(
+          (p) => Boolean(p.isScreenSharing) && p.id !== myParticipantId && p.id !== effectiveMyId
+        );
+        if (!remoteSharer) return null;
+        return (
+          <div className="bg-gradient-to-r from-cyan-950 via-neutral-900 to-cyan-950 border-b border-cyan-500/50 px-3 sm:px-6 py-2 flex items-center justify-between text-xs text-white z-20 shadow-lg">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 animate-ping shrink-0" />
+              <p className="font-display text-xs font-bold uppercase text-cyan-300 truncate">
+                🔴 {remoteSharer.displayName} is broadcasting screen / studio live
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveDrawer("none");
+                setIsProofingMaximized(false);
+              }}
+              className="btn btn-dept !py-1 !px-3 font-display text-[9px] font-bold uppercase shrink-0 shadow-md"
+            >
+              ⛶ Focus Stage
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Screen Share Mode Selection Modal */}
       {/* Screen Share & Live Studio Co-Design Selection Modal */}
@@ -4056,6 +4129,20 @@ export default function MeetingRoom() {
           >
             <span className="text-sm sm:text-base">🖥️</span>
             <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">{isScreenSharing ? "Sharing" : "Share"}</span>
+          </button>
+
+          {/* Dedicated Studio Co-Design Button */}
+          <button
+            onClick={() => setShowStudioCoDesignModal(true)}
+            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
+              isStudioBroadcasting
+                ? "bg-purple-500/25 text-purple-300 border-2 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.5)] animate-pulse"
+                : "bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 text-purple-300 hover:text-white"
+            }`}
+            title="Launch Live Studio Co-Design & Broadcast"
+          >
+            <span className="text-sm sm:text-base">🎨</span>
+            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5 font-bold">Co-Design</span>
           </button>
         </div>
 
