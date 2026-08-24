@@ -231,6 +231,10 @@ export default function MeetingRoom() {
   const [dismissedProofBannerKey, setDismissedProofBannerKey] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Live Studio Co-Design & Broadcast State
+  const [showStudioCoDesignModal, setShowStudioCoDesignModal] = useState(false);
+  const [isStudioBroadcasting, setIsStudioBroadcasting] = useState(false);
+
   // Artwork Upload & Management State
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadTitle, setUploadTitle] = useState("");
@@ -803,6 +807,8 @@ export default function MeetingRoom() {
       stopMediaStream(screenStream);
       setScreenStream(null);
       setIsScreenSharing(false);
+      setIsStudioBroadcasting(false);
+      meshRef.current?.setLocalStream(localStream);
       if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: false });
       return;
     }
@@ -812,6 +818,7 @@ export default function MeetingRoom() {
       if (!stream) return;
       setScreenStream(stream);
       setIsScreenSharing(true);
+      meshRef.current?.setLocalStream(stream);
 
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
@@ -820,14 +827,58 @@ export default function MeetingRoom() {
 
       stream.getVideoTracks()[0].onended = () => {
         setIsScreenSharing(false);
+        setIsStudioBroadcasting(false);
         setScreenStream(null);
+        meshRef.current?.setLocalStream(localStream);
         if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: false });
       };
 
       if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: true });
-      toast.success(preferWindow ? "Sharing Software / Window" : "Sharing Screen Presentation");
+      toast.success(preferWindow ? "Sharing Software / Studio Window" : "Broadcasting Screen Presentation");
     } catch (err) {
       console.warn("Screen share cancelled or failed:", err);
+    }
+  };
+
+  const handleStartStudioCoDesign = async (templateSlug?: string) => {
+    setShowStudioCoDesignModal(false);
+    const targetSlug = templateSlug || "new";
+    const editorUrl = `/editor/${targetSlug}`;
+    window.open(editorUrl, "_blank");
+
+    toast.info("Opening KON10 Studio... Select your browser tab/window to broadcast to client!", { duration: 6000 });
+    setIsStudioBroadcasting(true);
+    await handleStartScreenShare(true);
+  };
+
+  const handleSnapScreenToProof = async () => {
+    const video = screenVideoRef.current;
+    if (!video || video.videoWidth === 0) {
+      toast.error("No active studio video stream to capture.");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/png");
+
+    if (!meeting) return;
+    const title = `Live Studio Revision (${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})`;
+    try {
+      await addMeetingProofingArtwork(meeting.id, {
+        title,
+        category: "Live Studio Co-Design",
+        image: dataUrl,
+        uploadedBy: `${displayName} (Live Studio)`,
+        notes: "Live co-design revision snapshot captured directly from meeting broadcast.",
+      });
+      toast.success(`📸 Snapshot saved to Proofing Canvas as "${title}"!`);
+      setActiveDrawer("proofing");
+    } catch (err) {
+      toast.error("Failed to push snapshot to proofing canvas.");
     }
   };
 
@@ -2511,39 +2562,147 @@ export default function MeetingRoom() {
       </div>
 
       {/* Screen Share Mode Selection Modal */}
+      {/* Screen Share & Live Studio Co-Design Selection Modal */}
       {showScreenShareMenu && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-[var(--panel)] border border-[var(--line-strong)] p-5 rounded-2xl shadow-2xl text-[var(--ink)] space-y-4 animate-in zoom-in-95 duration-150">
+          <div className="w-full max-w-md bg-[var(--panel)] border border-[var(--line-strong)] p-5 sm:p-6 rounded-3xl shadow-2xl text-[var(--ink)] space-y-4 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between">
-              <h3 className="font-display text-xs font-bold uppercase tracking-wider">Choose Screen Share Mode</h3>
-              <button onClick={() => setShowScreenShareMenu(false)} className="text-neutral-400 hover:text-white text-sm">✕</button>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🎨</span>
+                <h3 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wider">Live Broadcast &amp; Co-Design</h3>
+              </div>
+              <button onClick={() => setShowScreenShareMenu(false)} className="text-neutral-400 hover:text-white text-sm font-bold">✕</button>
             </div>
-            <p className="text-[11px] text-[var(--muted)]">
-              Select whether you want to present a specific application window or your entire desktop.
+            <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+              Work live on vector graphics, branding, and templates with your client in real time, or broadcast desktop software.
             </p>
-            <div className="space-y-2">
+            <div className="space-y-2.5">
+              {/* Option 1: Live Studio Co-Design */}
+              <button
+                type="button"
+                onClick={() => handleStartStudioCoDesign()}
+                className="w-full p-3.5 rounded-2xl border-2 border-[var(--dept)] bg-[var(--dept)]/10 hover:bg-[var(--dept)]/20 text-left flex items-center gap-3.5 transition-all group shadow-lg"
+              >
+                <div className="w-10 h-10 rounded-xl bg-[var(--dept)] text-black font-extrabold flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
+                  🎨
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-display text-xs font-bold uppercase text-[var(--ink)] group-hover:text-[var(--dept)]">Launch KON10 Studio Co-Design</p>
+                    <span className="font-meta text-[7.5px] px-1.5 py-0.5 rounded bg-[var(--dept)] text-black font-bold uppercase">2026 Pro</span>
+                  </div>
+                  <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5">
+                    Opens built-in editor &amp; starts 1080p 60fps live spotlight stream with 1-click snapshot freeze.
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 2: Software / Application Window */}
               <button
                 type="button"
                 onClick={() => handleStartScreenShare(true)}
-                className="w-full p-3 rounded-xl border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-left flex items-center gap-3 transition-colors group"
+                className="w-full p-3 rounded-2xl border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-left flex items-center gap-3.5 transition-colors group"
               >
-                <span className="text-2xl">🖼️</span>
+                <span className="text-2xl shrink-0">🖼️</span>
                 <div>
                   <p className="font-display text-xs font-bold uppercase group-hover:text-[var(--dept)]">Software / Application Window</p>
-                  <p className="font-meta text-[9.5px] text-[var(--muted)]">Share Figma, Photoshop, Illustrator, Premiere, or browser</p>
+                  <p className="font-meta text-[9.5px] text-[var(--muted)]">Share Figma, Photoshop, Illustrator, Premiere, or Chrome tab</p>
+                </div>
+              </button>
+
+              {/* Option 3: Entire Display */}
+              <button
+                type="button"
+                onClick={() => handleStartScreenShare(false)}
+                className="w-full p-3 rounded-2xl border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-left flex items-center gap-3.5 transition-colors group"
+              >
+                <span className="text-2xl shrink-0">🖥️</span>
+                <div>
+                  <p className="font-display text-xs font-bold uppercase group-hover:text-[var(--dept)]">Entire Screen / Monitor</p>
+                  <p className="font-meta text-[9.5px] text-[var(--muted)]">Present your complete monitor display with system audio</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live Studio Co-Design Template & Workspace Selector Modal */}
+      {showStudioCoDesignModal && (
+        <div className="fixed inset-0 z-[110] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-100 select-none">
+          <div className="w-full max-w-lg bg-[var(--panel)] border border-[var(--line-strong)] rounded-3xl shadow-2xl p-5 sm:p-6 text-[var(--ink)] space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 text-lg font-bold">
+                  🎨
+                </div>
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase tracking-wider text-purple-300">
+                    Live Studio Co-Design
+                  </h3>
+                  <p className="text-[10px] text-[var(--muted)] font-meta">
+                    Choose what to edit live with your client. Starts 1080p 60fps screen broadcast.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStudioCoDesignModal(false)}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => handleStartStudioCoDesign("quick-collab")}
+                className="w-full p-3.5 rounded-2xl border-2 border-purple-500/40 bg-purple-950/20 hover:bg-purple-950/40 text-left flex items-center gap-3.5 transition-all group shadow-md"
+              >
+                <span className="text-2xl">✨</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="font-display text-xs font-bold uppercase text-purple-200 group-hover:text-purple-300">
+                      Blank Live Collaboration Canvas
+                    </p>
+                    <span className="font-meta text-[8px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full font-bold uppercase">
+                      Fast Start
+                    </span>
+                  </div>
+                  <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5">
+                    Start with a fresh 1080x1080 social media canvas and build vector graphics live with the client.
+                  </p>
                 </div>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleStartScreenShare(false)}
-                className="w-full p-3 rounded-xl border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-left flex items-center gap-3 transition-colors group"
+                onClick={() => handleStartStudioCoDesign(activeMockup.id)}
+                className="w-full p-3.5 rounded-2xl border border-[var(--line)] hover:border-cyan-500 bg-[var(--bg)] text-left flex items-center gap-3.5 transition-all group"
               >
-                <span className="text-2xl">🖥️</span>
-                <div>
-                  <p className="font-display text-xs font-bold uppercase group-hover:text-[var(--dept)]">Entire Screen / Display</p>
-                  <p className="font-meta text-[9.5px] text-[var(--muted)]">Present your complete monitor display with audio</p>
+                <span className="text-2xl">🖼️</span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-display text-xs font-bold uppercase group-hover:text-cyan-400 truncate">
+                    Edit Current Deliverable: {activeMockup.title}
+                  </p>
+                  <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5 truncate">
+                    Category: {activeMockup.category} · Open in Fabric.js studio engine
+                  </p>
                 </div>
+              </button>
+            </div>
+
+            <div className="pt-2 flex items-center justify-between border-t border-[var(--line)]">
+              <span className="text-[9.5px] font-meta text-[var(--muted)]">
+                💡 Tip: Use the client reaction HUD during live broadcast for feedback.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowStudioCoDesignModal(false)}
+                className="px-3.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold"
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -2681,21 +2840,99 @@ export default function MeetingRoom() {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Stage & Video Tiles */}
         <div className="flex-1 p-2 sm:p-4 flex flex-col gap-4 overflow-y-auto">
-          {/* Screen Share Stage (if active) */}
+          {/* Screen Share & Live Studio Broadcast Stage (if active) */}
           {isScreenSharing && (
-            <div className="relative w-full aspect-video max-h-[55vh] bg-black rounded-2xl overflow-hidden border border-neutral-700 shadow-2xl flex items-center justify-center">
+            <div className="relative w-full aspect-video max-h-[58vh] bg-black rounded-3xl overflow-hidden border-2 border-cyan-500/50 shadow-2xl flex items-center justify-center group">
               <video ref={screenVideoRef} autoPlay playsInline className="w-full h-full object-contain" />
-              <div className="absolute top-3 left-3 bg-neutral-900/80 px-3 py-1 rounded-full border border-neutral-700 font-meta text-[10px] flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
-                <span>Screen Presentation by {displayName}</span>
+
+              {/* Presenter / Broadcast Status Pill */}
+              <div className="absolute top-3 left-3 bg-neutral-950/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-cyan-500/40 font-meta text-[10px] flex items-center gap-2 shadow-lg text-white">
+                <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="font-bold">
+                  {isStudioBroadcasting ? "🎨 Live Studio Co-Design Broadcast" : `Screen Presentation by ${displayName}`}
+                </span>
+                <span className="font-mono text-[8px] bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                  1080p 60fps
+                </span>
               </div>
-              <button
-                onClick={handleToggleFullscreen}
-                className="absolute top-3 right-3 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-xs"
-                title="Fullscreen presentation"
-              >
-                ⛶
-              </button>
+
+              {/* Presenter Quick Actions: Snap to Proofing, Jump to Editor, Stop */}
+              <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleSnapScreenToProof}
+                  className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-display text-[10px] font-bold uppercase flex items-center gap-1.5 shadow-xl transition-transform hover:scale-105"
+                  title="Capture live design frame and send to Proofing Canvas"
+                >
+                  <span>📸</span>
+                  <span className="hidden sm:inline">Snap to Proof</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => window.open('/editor/quick-collab', '_blank')}
+                  className="px-2.5 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white font-meta text-[10px] font-bold flex items-center gap-1 shadow-md"
+                  title="Open KON10 Studio Editor in new window"
+                >
+                  <span>✏️</span>
+                  <span className="hidden md:inline">Studio</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleToggleFullscreen}
+                  className="p-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white text-xs font-bold shadow-md"
+                  title="Fullscreen presentation"
+                >
+                  ⛶
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleStartScreenShare(false)}
+                  className="px-2.5 py-1.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-meta text-[10px] font-bold shadow-md"
+                  title="Stop broadcasting"
+                >
+                  Stop
+                </button>
+              </div>
+
+              {/* Client Live Co-Pilot Feedback HUD (Bottom Floating Reactions & Quick Talk) */}
+              <div className="absolute bottom-3 inset-x-3 flex items-center justify-between pointer-events-none">
+                <div className="flex items-center gap-1 bg-neutral-950/80 backdrop-blur-md p-1.5 rounded-2xl border border-neutral-800 pointer-events-auto shadow-xl">
+                  <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 px-2 hidden sm:inline">
+                    Live Feedback:
+                  </span>
+                  {[
+                    { id: "heart", icon: "❤️", label: "Love it" },
+                    { id: "celebrate", icon: "🔥", label: "Fire" },
+                    { id: "thumbs_up", icon: "👌", label: "Approved" },
+                    { id: "laugh", icon: "🎨", label: "Color" },
+                    { id: "clap", icon: "📏", label: "Layout" },
+                  ].map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => handleSendReaction(r.id as any)}
+                      className="px-2 py-1 rounded-xl hover:bg-neutral-800 text-xs sm:text-sm transition-transform hover:scale-125"
+                      title={r.label}
+                    >
+                      {r.icon}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 pointer-events-auto">
+                  <button
+                    type="button"
+                    onClick={() => setActiveDrawer("chat")}
+                    className="px-3 py-1.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-white font-meta text-[10px] font-bold shadow-lg flex items-center gap-1.5"
+                  >
+                    <span>💬</span>
+                    <span>Chat Live</span>
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -3095,6 +3332,17 @@ export default function MeetingRoom() {
                     </div>
 
                     <div className="flex items-center gap-1.5">
+                      {isHost && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartStudioCoDesign()}
+                          className="font-meta text-[9px] px-2 py-1 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/30 rounded font-bold flex items-center gap-1 shadow-sm"
+                          title="Open in KON10 Studio Editor and broadcast live to client"
+                        >
+                          <span>✏️</span> Co-Design
+                        </button>
+                      )}
+
                       {isHost && (
                         <button
                           type="button"
@@ -3865,6 +4113,17 @@ export default function MeetingRoom() {
 
             {/* Actions, Navigation, Fullscreen & Zoom */}
             <div className="flex items-center gap-2">
+              {isHost && (
+                <button
+                  type="button"
+                  onClick={() => handleStartStudioCoDesign()}
+                  className="font-meta text-[10px] px-2.5 py-1.5 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/30 rounded-lg font-bold flex items-center gap-1 shadow-sm shrink-0"
+                  title="Open in KON10 Studio and broadcast live to client"
+                >
+                  <span>✏️</span> Live Co-Design
+                </button>
+              )}
+
               {isHost && (
                 <button
                   type="button"
