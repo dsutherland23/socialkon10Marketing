@@ -25,6 +25,7 @@ import {
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
+import { listAllCustomerDesigns, deleteDesign, type CustomerDesign } from "../lib/editor-store";
 
 /* ------------------------------------------------------------------
    ADMIN DASHBOARD (PRD §33, §67, §68, §85)
@@ -2908,9 +2909,200 @@ function AdminCommunications() {
   );
 }
 
+/* ================= CLIENT DESIGNS & CO-WORKING (2026 Studio Operations) ================= */
+
+function ClientDesignsManager() {
+  const [designs, setDesigns] = useState<CustomerDesign[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selectedClient, setSelectedClient] = useState<string>("all");
+
+  const loadData = async () => {
+    setLoading(true);
+    const list = await listAllCustomerDesigns();
+    setDesigns(list);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const uniqueClients = useMemo(() => {
+    const emails = new Set<string>();
+    designs.forEach((d) => {
+      if (d.email) emails.add(d.email.toLowerCase());
+    });
+    return Array.from(emails).sort();
+  }, [designs]);
+
+  const filtered = useMemo(() => {
+    return designs.filter((d) => {
+      const matchSearch =
+        !search.trim() ||
+        (d.title && d.title.toLowerCase().includes(search.toLowerCase())) ||
+        (d.templateSlug && d.templateSlug.toLowerCase().includes(search.toLowerCase())) ||
+        (d.email && d.email.toLowerCase().includes(search.toLowerCase()));
+      const matchClient =
+        selectedClient === "all" || (d.email && d.email.toLowerCase() === selectedClient.toLowerCase());
+      return matchSearch && matchClient;
+    });
+  }, [designs, search, selectedClient]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-[var(--panel)] border border-[var(--line-strong)] rounded-2xl">
+        <div>
+          <h2 className="font-display text-base font-bold uppercase tracking-wider">
+            Client Designs &amp; Live Co-Working Hub
+          </h2>
+          <p className="font-meta text-[11px] text-[var(--muted)] mt-1">
+            Real customer vector graphics &amp; templates created in KON10 Studio. Open any design to edit for the client or launch live co-design.
+          </p>
+        </div>
+        <button
+          onClick={loadData}
+          className="btn btn-ghost !py-1.5 !px-3 font-meta text-[10px] uppercase font-bold shrink-0 flex items-center gap-1.5"
+        >
+          <span>🔄</span> Refresh Designs
+        </button>
+      </div>
+
+      {/* Filter & Search Bar */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by design title, template slug, or client email…"
+          className={`${inputCls} flex-1 rounded-xl`}
+        />
+
+        <select
+          value={selectedClient}
+          onChange={(e) => setSelectedClient(e.target.value)}
+          className="bg-[var(--panel)] border border-[var(--line)] px-3 py-2 text-xs rounded-xl outline-none focus:border-[var(--dept)] font-meta"
+        >
+          <option value="all">All Clients ({uniqueClients.length})</option>
+          {uniqueClients.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <p className="font-meta text-xs text-[var(--muted)] py-8 text-center">Loading real client designs from Firestore…</p>
+      ) : filtered.length === 0 ? (
+        <div className="border border-[var(--line)] p-12 text-center rounded-2xl bg-[var(--panel)]">
+          <span className="text-3xl block mb-2">🎨</span>
+          <p className="font-display text-sm font-bold uppercase">No Client Designs Found</p>
+          <p className="text-xs text-[var(--muted)] mt-1 max-w-md mx-auto">
+            {search || selectedClient !== "all"
+              ? "No designs match your filter criteria."
+              : "When customers open or edit templates in KON10 Studio, their live designs appear here for admin review and co-designing."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filtered.map((d) => (
+            <article
+              key={d.id}
+              className="border border-[var(--line-strong)] rounded-2xl overflow-hidden flex flex-col bg-[var(--panel)] shadow-sm hover:border-[var(--dept)] transition-all group"
+            >
+              {/* Live Canvas Thumbnail */}
+              <div className="aspect-[4/3] relative overflow-hidden bg-neutral-900 flex items-center justify-center border-b border-[var(--line)]">
+                {d.thumbnail && d.thumbnail.length > 50 ? (
+                  <img
+                    src={d.thumbnail}
+                    alt={d.title}
+                    className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-1.5 text-neutral-500 p-4 text-center">
+                    <span className="text-3xl">📐</span>
+                    <span className="font-meta text-[9px] uppercase font-bold">Vector Canvas</span>
+                  </div>
+                )}
+
+                <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-full border border-neutral-700 font-meta text-[8px] font-bold text-white">
+                  <span>v{d.version || 1}</span>
+                </div>
+
+                <div className="absolute top-2 right-2 flex items-center gap-1 bg-[var(--dept)] text-black px-2 py-0.5 rounded-full font-meta text-[8px] font-bold uppercase">
+                  {d.templateSlug || "Custom"}
+                </div>
+              </div>
+
+              {/* Design Details & Client Info */}
+              <div className="p-4 flex flex-col gap-2 flex-1 justify-between">
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase leading-tight truncate text-[var(--ink)]">
+                    {d.title || "Untitled Design"}
+                  </h3>
+                  <div className="mt-1 space-y-0.5">
+                    <p className="font-meta text-[9.5px] text-[var(--dept)] truncate font-bold">
+                      👤 {d.email || "Guest Client"}
+                    </p>
+                    <p className="font-meta text-[8.5px] text-[var(--muted)]">
+                      Updated: {d.updatedAt ? new Date(d.updatedAt).toLocaleString() : "—"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Admin Actions */}
+                <div className="pt-3 border-t border-[var(--line)] flex flex-wrap items-center gap-1.5">
+                  <a
+                    href={`/editor/${d.templateSlug || d.id}?client=${encodeURIComponent(d.email || "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm"
+                    title="Open this exact customer design in KON10 Studio"
+                  >
+                    <span>✏️</span> Open in Studio
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toast.info(`Design ID: ${d.id}`);
+                      navigator.clipboard.writeText(d.id);
+                      toast.success("Design ID copied!");
+                    }}
+                    className="btn btn-ghost !py-1.5 !px-2.5 font-meta text-[9px]"
+                    title="Copy Design ID"
+                  >
+                    📋 ID
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm(`Delete client design "${d.title}"?`)) return;
+                      await deleteDesign(d.id);
+                      toast.success("Design removed");
+                      loadData();
+                    }}
+                    className="btn btn-ghost !py-1.5 !px-2.5 font-meta text-[9px] !text-red-500 hover:!bg-red-500/10 ml-auto"
+                    title="Delete design"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ================= PAGE ================= */
 
-const TABS = ["Orders", "Communications", "Leads", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
+const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
 
 const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
 const labelCls2 = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
@@ -3034,6 +3226,7 @@ export default function Admin() {
             </button>
           </div>
           {tab === "Orders" && <Orders />}
+          {tab === "Client Designs" && <ClientDesignsManager />}
           {tab === "Communications" && <AdminCommunications />}
           {tab === "Leads" && <Leads />}
           {tab === "Products" && <Products />}

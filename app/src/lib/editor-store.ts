@@ -51,6 +51,12 @@ export async function listDesigns(email: string, uid?: string | null): Promise<C
   return uniqueDesigns;
 }
 
+export async function listAllCustomerDesigns(): Promise<CustomerDesign[]> {
+  const rows = await listManaged("customerDesigns");
+  return (rows as unknown as CustomerDesign[])
+    .sort((a, b) => (b.updatedAt ?? b.createdAt ?? "").localeCompare(a.updatedAt ?? a.createdAt ?? ""));
+}
+
 export async function findDesignFor(email: string, templateSlug: string, uid?: string | null): Promise<CustomerDesign | null> {
   const all = await listDesigns(email, uid);
   return all.find((d) => d.templateSlug === templateSlug) ?? null;

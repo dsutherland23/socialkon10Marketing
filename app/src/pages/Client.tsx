@@ -429,6 +429,13 @@ function MyDesigns() {
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
                 <Link to={`/editor/${d.templateSlug}`} className="btn btn-dept !py-1.5 !px-3">Edit</Link>
+                <Link
+                  to={`/meet?topic=${encodeURIComponent(`Live Co-Design: ${d.title}`)}&designId=${d.id}&template=${d.templateSlug}`}
+                  className="btn btn-ghost !py-1.5 !px-3 font-display text-[10px] font-bold uppercase flex items-center gap-1 hover:border-[var(--dept)]"
+                  title="Launch live co-design session with your designer"
+                >
+                  <span>🎨</span> Co-Design
+                </Link>
                 {tpl && <Link to={`/templates/${tpl.slug}`} className="btn btn-ghost !py-1.5 !px-3">Template</Link>}
                 <button className="btn btn-ghost !py-1.5 !px-3 !text-red-600" onClick={async () => {
                   if (!confirm(`Delete "${d.title}"? This can't be undone.`)) return;

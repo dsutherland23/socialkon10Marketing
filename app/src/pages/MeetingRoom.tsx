@@ -57,6 +57,7 @@ import {
   WebRTCMeshSession,
   type MediaDeviceList,
 } from "../lib/webrtc";
+import { listAllCustomerDesigns, type CustomerDesign } from "../lib/editor-store";
 
 /* ------------------------------------------------------------------
    ROBUST VIDEO TILE COMPONENT (Autoplay + Clean SrcObject Binding)
@@ -257,6 +258,18 @@ export default function MeetingRoom() {
   // Live Studio Co-Design & Broadcast State
   const [showStudioCoDesignModal, setShowStudioCoDesignModal] = useState(false);
   const [isStudioBroadcasting, setIsStudioBroadcasting] = useState(false);
+  const [clientDesigns, setClientDesigns] = useState<CustomerDesign[]>([]);
+  const [loadingClientDesigns, setLoadingClientDesigns] = useState(false);
+
+  useEffect(() => {
+    if (showStudioCoDesignModal) {
+      setLoadingClientDesigns(true);
+      listAllCustomerDesigns()
+        .then((designs) => setClientDesigns(designs))
+        .catch(() => {})
+        .finally(() => setLoadingClientDesigns(false));
+    }
+  }, [showStudioCoDesignModal]);
 
   // Artwork Upload & Management State
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -2727,10 +2740,63 @@ export default function MeetingRoom() {
               </button>
             </div>
 
-            <div className="space-y-2.5 pt-1 max-h-[60vh] overflow-y-auto">
-              <div className="space-y-1">
-                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)]">
-                  Session Deliverables &amp; Client Feedback ({proofingMockups.length})
+            <div className="space-y-3 pt-1 max-h-[60vh] overflow-y-auto">
+              {/* 1. Real Client Saved Designs from Studio */}
+              {loadingClientDesigns ? (
+                <p className="font-meta text-[10px] text-[var(--muted)] py-2 text-center">
+                  Loading client designs from Firestore…
+                </p>
+              ) : clientDesigns.length > 0 ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-meta text-[9px] uppercase font-bold text-[var(--dept)] flex items-center gap-1">
+                      <span>🎨</span> Client's Studio Designs ({clientDesigns.length})
+                    </span>
+                    <span className="font-meta text-[8px] text-[var(--muted)]">Live Firestore Work</span>
+                  </div>
+                  {clientDesigns.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => handleStartStudioCoDesign(d.templateSlug || d.id)}
+                      className="w-full p-2.5 rounded-2xl border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-left flex items-center gap-3 transition-all group shadow-sm"
+                    >
+                      {d.thumbnail && d.thumbnail.length > 50 ? (
+                        <img
+                          src={d.thumbnail}
+                          alt={d.title}
+                          className="w-12 h-12 rounded-xl object-contain bg-black border border-neutral-700 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-neutral-800 flex items-center justify-center text-xl shrink-0">
+                          📐
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="font-display text-xs font-bold uppercase text-[var(--ink)] group-hover:text-[var(--dept)] truncate">
+                            {d.title || "Untitled Design"}
+                          </p>
+                          <span className="font-meta text-[7.5px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold uppercase shrink-0">
+                            v{d.version || 1}
+                          </span>
+                        </div>
+                        <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5 truncate">
+                          {d.email ? `Client: ${d.email}` : "Customer Draft"} · {d.templateSlug || "Custom"}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-[var(--dept)] group-hover:translate-x-1 transition-transform">
+                        ✏️ Edit Live →
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* 2. Session Deliverables & Mockups */}
+              <div className="space-y-1.5 pt-2 border-t border-[var(--line)]">
+                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">
+                  Meeting Proofing Deliverables ({proofingMockups.length})
                 </span>
                 {proofingMockups.map((m, idx) => (
                   <button
@@ -2740,7 +2806,7 @@ export default function MeetingRoom() {
                       setProofingIndex(idx);
                       handleStartStudioCoDesign(m.id);
                     }}
-                    className={`w-full p-3 rounded-2xl border text-left flex items-center gap-3 transition-all group ${
+                    className={`w-full p-2.5 rounded-2xl border text-left flex items-center gap-3 transition-all group ${
                       idx === proofingIndex
                         ? "border-[var(--dept)] bg-[var(--dept)]/10 shadow-md"
                         : "border-[var(--line)] hover:border-neutral-500 bg-[var(--bg)]"
@@ -2764,11 +2830,11 @@ export default function MeetingRoom() {
                         </p>
                         {idx === proofingIndex && (
                           <span className="font-meta text-[7.5px] px-1.5 py-0.5 rounded bg-[var(--dept)] text-black font-bold uppercase shrink-0">
-                            Active
+                            Active Proof
                           </span>
                         )}
                       </div>
-                      <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5 truncate">
+                      <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5 truncate">
                         {m.category} {m.uploadedBy ? `· by ${m.uploadedBy}` : ""}
                       </p>
                     </div>
@@ -2779,6 +2845,7 @@ export default function MeetingRoom() {
                 ))}
               </div>
 
+              {/* 3. Blank Collaborative Canvas */}
               <div className="pt-2 border-t border-[var(--line)]">
                 <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
                   Or Start Blank Design Canvas:
