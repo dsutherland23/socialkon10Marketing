@@ -245,17 +245,26 @@ export default function MeetingRoom() {
     return () => unsub();
   }, [roomId]);
 
-  // 2. Refresh available media devices on load
+  // 2. Refresh available media devices on load & probe permissions
+  const prevAudioDev = useRef<string>("");
+  const prevVideoDev = useRef<string>("");
+
   useEffect(() => {
     getMediaDevices().then((devs) => {
       setDevices(devs);
-      if (devs.audioInputs.length > 0) setSelectedAudioInput(devs.audioInputs[0].deviceId);
-      if (devs.videoInputs.length > 0) setSelectedVideoInput(devs.videoInputs[0].deviceId);
+      if (devs.audioInputs.length > 0 && !selectedAudioInput) {
+        prevAudioDev.current = devs.audioInputs[0].deviceId;
+        setSelectedAudioInput(devs.audioInputs[0].deviceId);
+      }
+      if (devs.videoInputs.length > 0 && !selectedVideoInput) {
+        prevVideoDev.current = devs.videoInputs[0].deviceId;
+        setSelectedVideoInput(devs.videoInputs[0].deviceId);
+      }
     });
   }, []);
 
-  // 3. Acquire Local User Media (Persistent across Lobby & Meeting)
-  const requestMediaPermissions = async () => {
+  // 3. Acquire Local User Media (Persistent across Lobby & Meeting with auto-probe)
+  const requestMediaPermissions = async (silentOnMount = false) => {
     setIsRequestingMedia(true);
     try {
       const s = await getLocalUserMedia({
@@ -270,27 +279,76 @@ export default function MeetingRoom() {
       setHardwareError(null);
       setShowPermissionGuide(false);
       meshRef.current?.setLocalStream(s);
-      toast.success("Camera & microphone connected!");
+      localStorage.setItem("sk_media_permission_allowed", "true");
+      if (!silentOnMount) {
+        toast.success("Camera & microphone connected!");
+      }
     } catch (err: any) {
       console.warn("Hardware media notice:", err);
       const errMsg = err?.message || String(err);
-      const isBlocked = errMsg.includes("denied") || errMsg.includes("not allowed") || errMsg.includes("NotAllowedError") || errMsg.includes("Permission");
-      setHardwareError(
-        isBlocked
-          ? "Permission blocked in browser settings. Follow the mobile guide below to enable camera access."
-          : "Camera access notice: Tap 'Guide' to allow permissions in your address bar."
-      );
-      setShowPermissionGuide(true);
-      toast.error("Camera access needed. Follow the on-screen steps.");
+      const isBlocked =
+        errMsg.includes("denied") ||
+        errMsg.includes("not allowed") ||
+        errMsg.includes("NotAllowedError") ||
+        errMsg.includes("Permission");
+      if (isBlocked) {
+        localStorage.removeItem("sk_media_permission_allowed");
+        setHardwareError(
+          "Permission blocked in browser settings. Follow the mobile guide below to enable camera access."
+        );
+        if (!silentOnMount) {
+          setShowPermissionGuide(true);
+          toast.error("Camera & microphone access blocked in browser settings.");
+        }
+      } else if (!silentOnMount) {
+        setHardwareError("Camera access notice: Tap 'Guide' to allow permissions in your address bar.");
+        setShowPermissionGuide(true);
+      }
     } finally {
       setIsRequestingMedia(false);
     }
   };
 
+  // Auto-acquire media on mount if permissions were granted or previously allowed
+  useEffect(() => {
+    let mounted = true;
+    const probeAndAcquire = async () => {
+      if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+      const previouslyAllowed = localStorage.getItem("sk_media_permission_allowed") === "true";
+
+      let permissionGranted = previouslyAllowed;
+      if (navigator.permissions?.query) {
+        try {
+          const camQuery = await navigator.permissions.query({ name: "camera" as any });
+          if (camQuery.state === "granted") permissionGranted = true;
+        } catch {
+          // Ignore unsupported permission names in older/Safari browsers
+        }
+      }
+
+      if (mounted && permissionGranted) {
+        requestMediaPermissions(true);
+      }
+    };
+
+    probeAndAcquire();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Only re-request if user explicitly changed hardware device in the dropdown
   useEffect(() => {
     if (phase === "ended" || !localStream) return;
-    requestMediaPermissions();
-  }, [selectedAudioInput, selectedVideoInput]);
+    if (
+      (selectedAudioInput && selectedAudioInput !== prevAudioDev.current) ||
+      (selectedVideoInput && selectedVideoInput !== prevVideoDev.current)
+    ) {
+      prevAudioDev.current = selectedAudioInput;
+      prevVideoDev.current = selectedVideoInput;
+      requestMediaPermissions();
+    }
+  }, [selectedAudioInput, selectedVideoInput, phase]);
 
   useEffect(() => {
     if (!localStream) return;
@@ -1015,7 +1073,7 @@ export default function MeetingRoom() {
                         <button
                           type="button"
                           disabled={isRequestingMedia}
-                          onClick={requestMediaPermissions}
+                          onClick={() => requestMediaPermissions(false)}
                           className="btn btn-dept w-full !py-2.5 sm:!py-3 font-display text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-2"
                         >
                           {isRequestingMedia ? (
@@ -1230,7 +1288,7 @@ export default function MeetingRoom() {
                 <button
                   type="button"
                   disabled={isRequestingMedia}
-                  onClick={requestMediaPermissions}
+                  onClick={() => requestMediaPermissions(false)}
                   className="btn btn-dept flex-1 !py-2.5 font-display text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md"
                 >
                   {isRequestingMedia ? (
