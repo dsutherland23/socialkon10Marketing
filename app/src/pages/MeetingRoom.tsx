@@ -828,19 +828,26 @@ export default function MeetingRoom() {
   };
 
   const getCanvasCoords = (
-    e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
+    e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>,
     target: HTMLElement
   ): { x: number; y: number } | null => {
     const rect = target.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
-    const clientX = "touches" in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const clientY = "touches" in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    let clientX = 0;
+    let clientY = 0;
+    if ("clientX" in e && typeof e.clientX === "number") {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    } else if ("touches" in e && (e as any).touches?.length > 0) {
+      clientX = (e as any).touches[0].clientX;
+      clientY = (e as any).touches[0].clientY;
+    }
     const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
     const y = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
-    return { x, y };
+    return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)) };
   };
 
-  const handleLaserClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleLaserClick = async (e: React.MouseEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
     const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
@@ -871,8 +878,13 @@ export default function MeetingRoom() {
     });
   };
 
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button === 2) return; // Right-click handled by onContextMenu
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore if not supported
+    }
     const coords = getCanvasCoords(e, e.currentTarget);
     if (!coords) return;
 
@@ -890,23 +902,35 @@ export default function MeetingRoom() {
     setActiveDrawingPoints([coords]);
   };
 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDrawing) return;
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const coords = getCanvasCoords(e, e.currentTarget);
     if (!coords) return;
+
+    if (activeProofTool === "laser" && e.buttons === 1) {
+      handleLaserClick(e);
+      return;
+    }
+
+    if (!isDrawing) return;
 
     setActiveDrawingPoints((prev) => {
       const last = prev[prev.length - 1];
       if (!last) return [coords];
       const dist = Math.hypot(coords.x - last.x, coords.y - last.y);
-      if (dist > 0.3) {
+      if (dist > 0.2) {
         return [...prev, coords];
       }
       return prev;
     });
   };
 
-  const handleCanvasMouseUp = async () => {
+  const handleCanvasPointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {}
+
     if (!isDrawing || activeDrawingPoints.length === 0 || !meeting || !activeMockup) {
       setIsDrawing(false);
       setActiveDrawingPoints([]);
@@ -944,6 +968,182 @@ export default function MeetingRoom() {
         pins: mockupPins,
       });
     }
+  };
+
+  const renderCanvasStroke = (stroke: CanvasStroke) => {
+    if (!stroke.points || stroke.points.length < 2) return null;
+    const p0 = stroke.points[0];
+    const p1 = stroke.points[stroke.points.length - 1];
+
+    if (stroke.tool === "rect") {
+      const x = Math.min(p0.x, p1.x);
+      const y = Math.min(p0.y, p1.y);
+      const w = Math.abs(p1.x - p0.x);
+      const h = Math.abs(p1.y - p0.y);
+      return (
+        <rect
+          key={stroke.id}
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          fill="none"
+          stroke={stroke.color}
+          strokeWidth={stroke.width}
+          strokeDasharray={stroke.width >= 4 ? "3 1.5" : "2 1"}
+          vectorEffect="non-scaling-stroke"
+        />
+      );
+    }
+
+    if (stroke.tool === "circle") {
+      const cx = (p0.x + p1.x) / 2;
+      const cy = (p0.y + p1.y) / 2;
+      const rx = Math.abs(p1.x - p0.x) / 2;
+      const ry = Math.abs(p1.y - p0.y) / 2;
+      return (
+        <ellipse
+          key={stroke.id}
+          cx={cx}
+          cy={cy}
+          rx={rx}
+          ry={ry}
+          fill="none"
+          stroke={stroke.color}
+          strokeWidth={stroke.width}
+          vectorEffect="non-scaling-stroke"
+        />
+      );
+    }
+
+    if (stroke.tool === "arrow") {
+      const angle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+      const headLen = Math.max(2, Math.min(5, Math.hypot(p1.x - p0.x, p1.y - p0.y) * 0.25));
+      const angleSpread = Math.PI / 6;
+      const arrowP1 = `${p1.x},${p1.y}`;
+      const arrowP2 = `${p1.x - headLen * Math.cos(angle - angleSpread)},${p1.y - headLen * Math.sin(angle - angleSpread)}`;
+      const arrowP3 = `${p1.x - headLen * Math.cos(angle + angleSpread)},${p1.y - headLen * Math.sin(angle + angleSpread)}`;
+      return (
+        <g key={stroke.id}>
+          <line
+            x1={p0.x}
+            y1={p0.y}
+            x2={p1.x}
+            y2={p1.y}
+            stroke={stroke.color}
+            strokeWidth={stroke.width}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          <polygon points={`${arrowP1} ${arrowP2} ${arrowP3}`} fill={stroke.color} />
+        </g>
+      );
+    }
+
+    const pathData = stroke.points
+      .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+      .join(" ");
+
+    return (
+      <path
+        key={stroke.id}
+        d={pathData}
+        fill="none"
+        stroke={stroke.color}
+        strokeWidth={stroke.tool === "highlighter" ? stroke.width * 3 : stroke.width}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={stroke.tool === "highlighter" ? 0.4 : 1}
+        vectorEffect="non-scaling-stroke"
+        className={stroke.vanishing ? "animate-pulse" : ""}
+      />
+    );
+  };
+
+  const renderActiveStrokePreview = () => {
+    if (!isDrawing || activeDrawingPoints.length < 2) return null;
+    const p0 = activeDrawingPoints[0];
+    const p1 = activeDrawingPoints[activeDrawingPoints.length - 1];
+
+    if (activeProofTool === "rect") {
+      const x = Math.min(p0.x, p1.x);
+      const y = Math.min(p0.y, p1.y);
+      const w = Math.abs(p1.x - p0.x);
+      const h = Math.abs(p1.y - p0.y);
+      return (
+        <rect
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          fill="none"
+          stroke={proofStrokeColor}
+          strokeWidth={proofStrokeWidth}
+          strokeDasharray="3 1.5"
+          vectorEffect="non-scaling-stroke"
+        />
+      );
+    }
+
+    if (activeProofTool === "circle") {
+      const cx = (p0.x + p1.x) / 2;
+      const cy = (p0.y + p1.y) / 2;
+      const rx = Math.abs(p1.x - p0.x) / 2;
+      const ry = Math.abs(p1.y - p0.y) / 2;
+      return (
+        <ellipse
+          cx={cx}
+          cy={cy}
+          rx={rx}
+          ry={ry}
+          fill="none"
+          stroke={proofStrokeColor}
+          strokeWidth={proofStrokeWidth}
+          vectorEffect="non-scaling-stroke"
+        />
+      );
+    }
+
+    if (activeProofTool === "arrow") {
+      const angle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+      const headLen = Math.max(2, Math.min(5, Math.hypot(p1.x - p0.x, p1.y - p0.y) * 0.25));
+      const angleSpread = Math.PI / 6;
+      const arrowP1 = `${p1.x},${p1.y}`;
+      const arrowP2 = `${p1.x - headLen * Math.cos(angle - angleSpread)},${p1.y - headLen * Math.sin(angle - angleSpread)}`;
+      const arrowP3 = `${p1.x - headLen * Math.cos(angle + angleSpread)},${p1.y - headLen * Math.sin(angle + angleSpread)}`;
+      return (
+        <g>
+          <line
+            x1={p0.x}
+            y1={p0.y}
+            x2={p1.x}
+            y2={p1.y}
+            stroke={proofStrokeColor}
+            strokeWidth={proofStrokeWidth}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          <polygon points={`${arrowP1} ${arrowP2} ${arrowP3}`} fill={proofStrokeColor} />
+        </g>
+      );
+    }
+
+    const pathData = activeDrawingPoints
+      .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+      .join(" ");
+
+    return (
+      <path
+        d={pathData}
+        fill="none"
+        stroke={proofStrokeColor}
+        strokeWidth={activeProofTool === "highlighter" ? proofStrokeWidth * 3 : proofStrokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={activeProofTool === "highlighter" ? 0.4 : 1}
+        vectorEffect="non-scaling-stroke"
+      />
+    );
   };
 
   const handleSaveNewPin = async (e: React.FormEvent) => {
@@ -2817,29 +3017,11 @@ export default function MeetingRoom() {
                   {/* Interactive Proofing Canvas with Markup SVG Overlay & Right-Click */}
                   <div
                     onContextMenu={handleCanvasContextMenu}
-                    onMouseDown={handleCanvasMouseDown}
-                    onMouseMove={handleCanvasMouseMove}
-                    onMouseUp={handleCanvasMouseUp}
-                    onTouchStart={(e) => {
-                      const coords = getCanvasCoords(e, e.currentTarget);
-                      if (!coords) return;
-                      if (activeProofTool === "pin") {
-                        setPendingPinCoord(coords);
-                        return;
-                      }
-                      if (activeProofTool !== "laser") {
-                        setIsDrawing(true);
-                        setActiveDrawingPoints([coords]);
-                      }
-                    }}
-                    onTouchMove={(e) => {
-                      if (!isDrawing) return;
-                      const coords = getCanvasCoords(e, e.currentTarget);
-                      if (!coords) return;
-                      setActiveDrawingPoints((prev) => [...prev, coords]);
-                    }}
-                    onTouchEnd={handleCanvasMouseUp}
-                    className={`relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 select-none shadow-lg ${
+                    onPointerDown={handleCanvasPointerDown}
+                    onPointerMove={handleCanvasPointerMove}
+                    onPointerUp={handleCanvasPointerUp}
+                    onPointerCancel={handleCanvasPointerUp}
+                    className={`relative aspect-video rounded-xl overflow-hidden border-2 border-neutral-700 select-none shadow-lg touch-none ${
                       canvasBackdrop === "black"
                         ? "bg-black"
                         : canvasBackdrop === "white"
@@ -2862,124 +3044,10 @@ export default function MeetingRoom() {
                     />
 
                     {/* SVG Vector Drawing Layer */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                      {mockupStrokes.map((stroke) => {
-                        if (!stroke.points || stroke.points.length < 2) return null;
-                        if (stroke.tool === "rect") {
-                          const p0 = stroke.points[0];
-                          const p1 = stroke.points[stroke.points.length - 1];
-                          const x = Math.min(p0.x, p1.x);
-                          const y = Math.min(p0.y, p1.y);
-                          const w = Math.abs(p1.x - p0.x);
-                          const h = Math.abs(p1.y - p0.y);
-                          return (
-                            <rect
-                              key={stroke.id}
-                              x={`${x}%`}
-                              y={`${y}%`}
-                              width={`${w}%`}
-                              height={`${h}%`}
-                              fill="none"
-                              stroke={stroke.color}
-                              strokeWidth={stroke.width}
-                              strokeDasharray="4 2"
-                            />
-                          );
-                        }
-                        if (stroke.tool === "circle") {
-                          const p0 = stroke.points[0];
-                          const p1 = stroke.points[stroke.points.length - 1];
-                          const cx = (p0.x + p1.x) / 2;
-                          const cy = (p0.y + p1.y) / 2;
-                          const rx = Math.abs(p1.x - p0.x) / 2;
-                          const ry = Math.abs(p1.y - p0.y) / 2;
-                          return (
-                            <ellipse
-                              key={stroke.id}
-                              cx={`${cx}%`}
-                              cy={`${cy}%`}
-                              rx={`${rx}%`}
-                              ry={`${ry}%`}
-                              fill="none"
-                              stroke={stroke.color}
-                              strokeWidth={stroke.width}
-                            />
-                          );
-                        }
-                        const pathData = stroke.points
-                          .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
-                          .join(" ");
-                        return (
-                          <path
-                            key={stroke.id}
-                            d={pathData}
-                            fill="none"
-                            stroke={stroke.color}
-                            strokeWidth={stroke.width}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            opacity={stroke.tool === "highlighter" ? 0.45 : 1}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        );
-                      })}
-
-                      {/* Active Drawing Stroke Preview */}
-                      {isDrawing && activeDrawingPoints.length >= 2 && (
-                        activeProofTool === "rect" ? (
-                          <rect
-                            x={`${Math.min(activeDrawingPoints[0].x, activeDrawingPoints[activeDrawingPoints.length - 1].x)}%`}
-                            y={`${Math.min(activeDrawingPoints[0].y, activeDrawingPoints[activeDrawingPoints.length - 1].y)}%`}
-                            width={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x)}%`}
-                            height={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y)}%`}
-                            fill="none"
-                            stroke={proofStrokeColor}
-                            strokeWidth={proofStrokeWidth}
-                            strokeDasharray="4 2"
-                          />
-                        ) : activeProofTool === "circle" ? (
-                          <ellipse
-                            cx={`${(activeDrawingPoints[0].x + activeDrawingPoints[activeDrawingPoints.length - 1].x) / 2}%`}
-                            cy={`${(activeDrawingPoints[0].y + activeDrawingPoints[activeDrawingPoints.length - 1].y) / 2}%`}
-                            rx={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x) / 2}%`}
-                            ry={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y) / 2}%`}
-                            fill="none"
-                            stroke={proofStrokeColor}
-                            strokeWidth={proofStrokeWidth}
-                          />
-                        ) : (
-                          <path
-                            d={activeDrawingPoints.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ")}
-                            fill="none"
-                            stroke={proofStrokeColor}
-                            strokeWidth={proofStrokeWidth}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            opacity={activeProofTool === "highlighter" ? 0.45 : 1}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        )
-                      )}
-
-                      {/* Vanishing Ink Live Strokes */}
-                      {vanishingStrokes.map((stroke) => {
-                        if (!stroke.points || stroke.points.length < 2) return null;
-                        const pathData = stroke.points
-                          .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
-                          .join(" ");
-                        return (
-                          <path
-                            key={stroke.id}
-                            d={pathData}
-                            fill="none"
-                            stroke={stroke.color}
-                            strokeWidth={stroke.width + 1}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="animate-pulse"
-                          />
-                        );
-                      })}
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                      {mockupStrokes.map((stroke) => renderCanvasStroke(stroke))}
+                      {renderActiveStrokePreview()}
+                      {vanishingStrokes.map((stroke) => renderCanvasStroke(stroke))}
                     </svg>
 
                     {/* Numbered Pins */}
@@ -3675,29 +3743,11 @@ export default function MeetingRoom() {
           <div className="flex-1 flex items-center justify-center overflow-auto p-2 sm:p-4 relative">
             <div
               onContextMenu={handleCanvasContextMenu}
-              onMouseDown={handleCanvasMouseDown}
-              onMouseMove={handleCanvasMouseMove}
-              onMouseUp={handleCanvasMouseUp}
-              onTouchStart={(e) => {
-                const coords = getCanvasCoords(e, e.currentTarget);
-                if (!coords) return;
-                if (activeProofTool === "pin") {
-                  setPendingPinCoord(coords);
-                  return;
-                }
-                if (activeProofTool !== "laser") {
-                  setIsDrawing(true);
-                  setActiveDrawingPoints([coords]);
-                }
-              }}
-              onTouchMove={(e) => {
-                if (!isDrawing) return;
-                const coords = getCanvasCoords(e, e.currentTarget);
-                if (!coords) return;
-                setActiveDrawingPoints((prev) => [...prev, coords]);
-              }}
-              onTouchEnd={handleCanvasMouseUp}
-              className={`relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 transition-transform duration-200 select-none ${
+              onPointerDown={handleCanvasPointerDown}
+              onPointerMove={handleCanvasPointerMove}
+              onPointerUp={handleCanvasPointerUp}
+              onPointerCancel={handleCanvasPointerUp}
+              className={`relative max-h-full max-w-full rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 transition-transform duration-200 select-none touch-none ${
                 canvasBackdrop === "black"
                   ? "bg-black"
                   : canvasBackdrop === "white"
@@ -3721,124 +3771,10 @@ export default function MeetingRoom() {
               />
 
               {/* SVG Vector Drawing Layer */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                {mockupStrokes.map((stroke) => {
-                  if (!stroke.points || stroke.points.length < 2) return null;
-                  if (stroke.tool === "rect") {
-                    const p0 = stroke.points[0];
-                    const p1 = stroke.points[stroke.points.length - 1];
-                    const x = Math.min(p0.x, p1.x);
-                    const y = Math.min(p0.y, p1.y);
-                    const w = Math.abs(p1.x - p0.x);
-                    const h = Math.abs(p1.y - p0.y);
-                    return (
-                      <rect
-                        key={stroke.id}
-                        x={`${x}%`}
-                        y={`${y}%`}
-                        width={`${w}%`}
-                        height={`${h}%`}
-                        fill="none"
-                        stroke={stroke.color}
-                        strokeWidth={stroke.width}
-                        strokeDasharray="4 2"
-                      />
-                    );
-                  }
-                  if (stroke.tool === "circle") {
-                    const p0 = stroke.points[0];
-                    const p1 = stroke.points[stroke.points.length - 1];
-                    const cx = (p0.x + p1.x) / 2;
-                    const cy = (p0.y + p1.y) / 2;
-                    const rx = Math.abs(p1.x - p0.x) / 2;
-                    const ry = Math.abs(p1.y - p0.y) / 2;
-                    return (
-                      <ellipse
-                        key={stroke.id}
-                        cx={`${cx}%`}
-                        cy={`${cy}%`}
-                        rx={`${rx}%`}
-                        ry={`${ry}%`}
-                        fill="none"
-                        stroke={stroke.color}
-                        strokeWidth={stroke.width}
-                      />
-                    );
-                  }
-                  const pathData = stroke.points
-                    .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
-                    .join(" ");
-                  return (
-                    <path
-                      key={stroke.id}
-                      d={pathData}
-                      fill="none"
-                      stroke={stroke.color}
-                      strokeWidth={stroke.width}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      opacity={stroke.tool === "highlighter" ? 0.45 : 1}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  );
-                })}
-
-                {/* Active Drawing Stroke Preview */}
-                {isDrawing && activeDrawingPoints.length >= 2 && (
-                  activeProofTool === "rect" ? (
-                    <rect
-                      x={`${Math.min(activeDrawingPoints[0].x, activeDrawingPoints[activeDrawingPoints.length - 1].x)}%`}
-                      y={`${Math.min(activeDrawingPoints[0].y, activeDrawingPoints[activeDrawingPoints.length - 1].y)}%`}
-                      width={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x)}%`}
-                      height={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y)}%`}
-                      fill="none"
-                      stroke={proofStrokeColor}
-                      strokeWidth={proofStrokeWidth}
-                      strokeDasharray="4 2"
-                    />
-                  ) : activeProofTool === "circle" ? (
-                    <ellipse
-                      cx={`${(activeDrawingPoints[0].x + activeDrawingPoints[activeDrawingPoints.length - 1].x) / 2}%`}
-                      cy={`${(activeDrawingPoints[0].y + activeDrawingPoints[activeDrawingPoints.length - 1].y) / 2}%`}
-                      rx={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].x - activeDrawingPoints[0].x) / 2}%`}
-                      ry={`${Math.abs(activeDrawingPoints[activeDrawingPoints.length - 1].y - activeDrawingPoints[0].y) / 2}%`}
-                      fill="none"
-                      stroke={proofStrokeColor}
-                      strokeWidth={proofStrokeWidth}
-                    />
-                  ) : (
-                    <path
-                      d={activeDrawingPoints.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ")}
-                      fill="none"
-                      stroke={proofStrokeColor}
-                      strokeWidth={proofStrokeWidth}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      opacity={activeProofTool === "highlighter" ? 0.45 : 1}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  )
-                )}
-
-                {/* Vanishing Ink Live Strokes */}
-                {vanishingStrokes.map((stroke) => {
-                  if (!stroke.points || stroke.points.length < 2) return null;
-                  const pathData = stroke.points
-                    .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
-                    .join(" ");
-                  return (
-                    <path
-                      key={stroke.id}
-                      d={pathData}
-                      fill="none"
-                      stroke={stroke.color}
-                      strokeWidth={stroke.width + 1}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="animate-pulse"
-                    />
-                  );
-                })}
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                {mockupStrokes.map((stroke) => renderCanvasStroke(stroke))}
+                {renderActiveStrokePreview()}
+                {vanishingStrokes.map((stroke) => renderCanvasStroke(stroke))}
               </svg>
 
               {/* Numbered Pins */}
