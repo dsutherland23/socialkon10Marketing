@@ -8,6 +8,7 @@ import {
   type MessageAttachment,
   type MessageRecord,
 } from "../lib/backend";
+import { playMessageNotificationSound, triggerHapticFeedback } from "../lib/webrtc";
 
 /* ------------------------------------------------------------------
    PROJECT MESSAGING & ASSET COLLABORATION (2026 Best Practices)
@@ -55,7 +56,15 @@ export function MessageThread({
   const bottomRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  const reload = () => listMessages(orderId).then(setMessages);
+  const prevCount = useRef(0);
+  const reload = () => listMessages(orderId).then((msgs) => {
+    if (msgs.length > prevCount.current && prevCount.current > 0) {
+      playMessageNotificationSound();
+      triggerHapticFeedback(50);
+    }
+    prevCount.current = msgs.length;
+    setMessages(msgs);
+  });
   useEffect(() => { reload(); }, [orderId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "nearest" }); }, [messages.length, pendingFiles.length]);
 

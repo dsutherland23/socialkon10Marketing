@@ -63,6 +63,7 @@ const TemplateDetail = lazyWithRetry(() => import("./pages/TemplateDetail"));
 const Editor = lazyWithRetry(() => import("./pages/Editor"));
 const MeetingRoom = lazyWithRetry(() => import("./pages/MeetingRoom"));
 import { IncomingCallModal } from "./components/IncomingCallModal";
+import { MeetingProximityAlert } from "./components/MeetingProximityAlert";
 
 
 function ScrollAndTrack() {
@@ -160,6 +161,7 @@ function Shell() {
       </main>
       <SiteFooter />
       <IncomingCallModal />
+      <MeetingProximityAlert />
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
       <HandEgg />
       <LogoEgg />

@@ -32,6 +32,8 @@ import {
   stopMediaStream,
   createAudioLevelMeter,
   playSpeakerTestSound,
+  playMessageNotificationSound,
+  triggerHapticFeedback,
   WebRTCMeshSession,
   type MediaDeviceList,
 } from "../lib/webrtc";
@@ -131,6 +133,8 @@ export default function MeetingRoom() {
   // In-Meeting Drawers & Controls
   const [activeDrawer, setActiveDrawer] = useState<"none" | "chat" | "participants" | "intelligence" | "breakouts">("none");
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const prevChatCount = useRef(0);
   const [chatDraft, setChatDraft] = useState("");
   const [chatRecipient] = useState<string>(""); // "" = everyone
   const [isHandRaised, setIsHandRaised] = useState(false);
@@ -271,12 +275,25 @@ export default function MeetingRoom() {
     };
   }, [meeting?.id, phase]);
 
-  // 5. Subscribe to In-Meeting Chat
+  // 5. Subscribe to In-Meeting Chat with Audio Chime & Haptics
   useEffect(() => {
     if (!meeting || phase !== "in_meeting") return;
-    const unsubChat = subscribeToMeetingChat(meeting.id, setChatMessages);
+    const unsubChat = subscribeToMeetingChat(meeting.id, (msgs) => {
+      if (msgs.length > prevChatCount.current && prevChatCount.current > 0) {
+        const latest = msgs[msgs.length - 1];
+        if (latest.senderId !== myParticipantId) {
+          playMessageNotificationSound();
+          triggerHapticFeedback(50);
+          if (activeDrawer !== "chat") {
+            setUnreadChatCount((c) => c + (msgs.length - prevChatCount.current));
+          }
+        }
+      }
+      prevChatCount.current = msgs.length;
+      setChatMessages(msgs);
+    });
     return () => unsubChat();
-  }, [meeting?.id, phase]);
+  }, [meeting?.id, phase, activeDrawer, myParticipantId]);
 
   // 6. Watch Participant Status changes (e.g. host admits or removes participant)
   useEffect(() => {
@@ -1508,12 +1525,21 @@ export default function MeetingRoom() {
           </button>
 
           <button
-            onClick={() => setActiveDrawer(activeDrawer === "chat" ? "none" : "chat")}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            onClick={() => {
+              const next = activeDrawer === "chat" ? "none" : "chat";
+              setActiveDrawer(next);
+              if (next === "chat") setUnreadChatCount(0);
+            }}
+            className={`relative flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "chat" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="Toggle Chat"
           >
+            {unreadChatCount > 0 && activeDrawer !== "chat" && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+                {unreadChatCount}
+              </span>
+            )}
             <span className="text-sm sm:text-base">💬</span>
             <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">Chat</span>
           </button>

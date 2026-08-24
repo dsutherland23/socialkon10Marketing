@@ -455,3 +455,76 @@ export function playIncomingCallRingtone(): () => void {
     } catch {}
   };
 }
+
+/** Trigger device haptic / tactile vibration feedback on supported devices */
+export function triggerHapticFeedback(pattern: number | number[] = 50): void {
+  if (typeof window !== "undefined" && "vibrate" in navigator) {
+    try {
+      navigator.vibrate(pattern);
+    } catch {}
+  }
+}
+
+/** Play a soft, pleasant chat message incoming sound */
+export function playMessageNotificationSound(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, now); // A5
+    osc.frequency.exponentialRampToValueAtTime(1174.66, now + 0.08); // D6
+
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.15, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.2);
+
+    setTimeout(() => {
+      ctx.close();
+    }, 250);
+  } catch {}
+}
+
+/** Play a distinctive 3-tone meeting starting reminder chime */
+export function playMeetingReminderChime(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const notes = [523.25, 659.25, 880.0]; // C5, E5, A5
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const start = now + i * 0.12;
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.2, start + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.45);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(start + 0.5);
+    });
+
+    setTimeout(() => {
+      ctx.close();
+    }, 1000);
+  } catch {}
+}
