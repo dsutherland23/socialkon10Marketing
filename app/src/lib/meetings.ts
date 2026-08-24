@@ -248,9 +248,10 @@ export function isMeetingJoinable(meeting: MeetingRecord): { canJoin: boolean; r
 export async function createMeeting(
   data: Omit<MeetingRecord, "id" | "roomId" | "createdAt" | "updatedAt">
 ): Promise<MeetingRecord> {
-  const roomId = generateRoomId();
+  const roomId = generateRoomId().toUpperCase();
   const now = new Date().toISOString();
-  const id = `meet_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  // Using roomId as document ID ensures direct 1-step O(1) resolution and perfect realtime subscriptions!
+  const id = roomId;
 
   const meeting: MeetingRecord = {
     ...data,
@@ -292,7 +293,7 @@ export async function updateMeeting(
   }
 
   const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
-  const target = items.find((m) => m.id === id);
+  const target = items.find((m) => m.id === id || m.roomId === id);
   if (target) {
     await setIdbItem(STORE_MEETINGS, { ...target, ...payload });
   }
@@ -309,32 +310,70 @@ export async function deleteMeeting(id: string): Promise<void> {
   await removeIdbItem(STORE_MEETINGS, id);
 }
 
+/** Robust, case-insensitive, hyphen-tolerant meeting lookup */
 export async function getMeetingById(idOrRoomId: string): Promise<MeetingRecord | null> {
+  if (!idOrRoomId) return null;
+  const raw = idOrRoomId.trim();
+  const clean = raw.toUpperCase();
+  const digitsOnly = raw.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+
   if (firebaseReady && db) {
     try {
-      // Check direct ID doc
-      const snap = await getDoc(doc(db, "meetings", idOrRoomId));
-      if (snap.exists()) return snap.data() as MeetingRecord;
+      // 1. Direct doc by uppercase ID
+      const snap1 = await getDoc(doc(db, "meetings", clean));
+      if (snap1.exists()) return snap1.data() as MeetingRecord;
 
-      // Query by roomId
-      const q = query(collection(db, "meetings"), where("roomId", "==", idOrRoomId));
-      const qSnap = await getDocs(q);
-      if (!qSnap.empty) return qSnap.docs[0].data() as MeetingRecord;
+      // 2. Direct doc by raw ID
+      const snap2 = await getDoc(doc(db, "meetings", raw));
+      if (snap2.exists()) return snap2.data() as MeetingRecord;
+
+      // 3. Scan all meetings in collection (handles legacy docs & format variations)
+      const allSnap = await getDocs(collection(db, "meetings"));
+      const found = allSnap.docs
+        .map((d) => d.data() as MeetingRecord)
+        .find((m) => {
+          const mRoom = m.roomId?.toUpperCase() || "";
+          const mId = m.id?.toUpperCase() || "";
+          const mDigits = mRoom.replace(/[^A-Z0-9]/gi, "");
+          return (
+            mRoom === clean ||
+            mId === clean ||
+            mRoom === raw ||
+            mId === raw ||
+            (digitsOnly.length >= 4 && mDigits === digitsOnly)
+          );
+        });
+      if (found) return found;
     } catch (err) {
       console.warn("Firestore getMeetingById error:", err);
     }
   }
 
   const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
-  return items.find((m) => m.id === idOrRoomId || m.roomId === idOrRoomId) || null;
+  return (
+    items.find((m) => {
+      const mRoom = m.roomId?.toUpperCase() || "";
+      const mId = m.id?.toUpperCase() || "";
+      const mDigits = mRoom.replace(/[^A-Z0-9]/gi, "");
+      return (
+        mRoom === clean ||
+        mId === clean ||
+        mRoom === raw ||
+        mId === raw ||
+        (digitsOnly.length >= 4 && mDigits === digitsOnly)
+      );
+    }) || null
+  );
 }
 
 export async function listAllMeetings(): Promise<MeetingRecord[]> {
   if (firebaseReady && db) {
     try {
-      const q = query(collection(db, "meetings"), orderBy("scheduledStart", "desc"));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => d.data() as MeetingRecord);
+      const snap = await getDocs(collection(db, "meetings"));
+      const list = snap.docs.map((d) => d.data() as MeetingRecord);
+      if (list.length > 0) {
+        return list.sort((a, b) => new Date(b.scheduledStart).getTime() - new Date(a.scheduledStart).getTime());
+      }
     } catch (err) {
       console.warn("Firestore listAllMeetings error:", err);
     }
@@ -347,40 +386,60 @@ export async function listAllMeetings(): Promise<MeetingRecord[]> {
 export async function listUserMeetings(userEmail: string): Promise<MeetingRecord[]> {
   const all = await listAllMeetings();
   const emailNorm = userEmail.toLowerCase().trim();
-  return all.filter(
-    (m) =>
-      m.hostEmail.toLowerCase() === emailNorm ||
-      m.participants.some((p) => p.email.toLowerCase() === emailNorm)
-  );
+  return all.filter((m) => {
+    const hostMatch = m.hostEmail?.toLowerCase().trim() === emailNorm;
+    const partMatch = m.participants?.some(
+      (p) => p.email?.toLowerCase().trim() === emailNorm || p.displayName?.toLowerCase().trim() === emailNorm
+    );
+    return hostMatch || partMatch;
+  });
 }
 
-/** Subscribe to live meeting document updates */
+/** Subscribe to live meeting document updates with multi-tier fallback */
 export function subscribeToMeeting(
   idOrRoomId: string,
   onUpdate: (meeting: MeetingRecord | null) => void
 ): Unsubscribe {
+  if (!idOrRoomId) {
+    onUpdate(null);
+    return () => {};
+  }
+
+  const raw = idOrRoomId.trim();
+  const clean = raw.toUpperCase();
+
   if (firebaseReady && db) {
-    // If it looks like a direct ID:
-    const docRef = doc(db, "meetings", idOrRoomId);
-    return onSnapshot(
+    // 1. First attach real-time snapshot to direct doc (clean uppercase)
+    const docRef = doc(db, "meetings", clean);
+    let resolved = false;
+
+    const unsub = onSnapshot(
       docRef,
       (snap) => {
         if (snap.exists()) {
+          resolved = true;
           onUpdate(snap.data() as MeetingRecord);
         } else {
-          // Check by roomId
-          const q = query(collection(db!, "meetings"), where("roomId", "==", idOrRoomId));
-          getDocs(q).then((qSnap) => {
-            if (!qSnap.empty) onUpdate(qSnap.docs[0].data() as MeetingRecord);
-            else onUpdate(null);
+          // Check collection for legacy IDs / variations
+          getMeetingById(idOrRoomId).then((m) => {
+            if (m) {
+              resolved = true;
+              onUpdate(m);
+            } else if (!resolved) {
+              onUpdate(null);
+            }
+          }).catch(() => {
+            if (!resolved) onUpdate(null);
           });
         }
       },
       (err) => {
-        console.warn("Meeting subscribe error:", err);
+        console.warn("Meeting subscribe notice:", err);
         getMeetingById(idOrRoomId).then(onUpdate);
       }
     );
+
+    return () => unsub();
   }
 
   // Fallback polling for offline/IDB mode
@@ -391,7 +450,7 @@ export function subscribeToMeeting(
     onUpdate(m);
   };
   poll();
-  const interval = setInterval(poll, 2500);
+  const interval = setInterval(poll, 2000);
 
   return () => {
     active = false;
@@ -700,8 +759,12 @@ export function downloadCalendarIcs(meeting: MeetingRecord): void {
 
 export interface MeetingShareInfo {
   inviteUrl: string;
+  roomId: string;
+  passcode?: string;
   shortSummary: string;
   copyInviteLink: () => Promise<void>;
+  copyRoomId: () => Promise<void>;
+  copyPasscode: () => Promise<void>;
   copyFullInvitation: () => Promise<void>;
   shareWhatsApp: () => void;
   shareEmail: () => void;
@@ -728,9 +791,10 @@ export function getMeetingShareDetails(meeting: MeetingRecord): MeetingShareInfo
     `When: ${dateStr} at ${timeStr} (${meeting.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone})`,
     `Duration: ${meeting.durationMinutes} minutes`,
     ``,
-    `🚀 Join Meeting Link:`,
+    `🚀 Direct Join Link:`,
     `${inviteUrl}`,
-    meeting.passcode ? `🔑 Meeting Passcode: ${meeting.passcode}` : "",
+    `🔑 Meeting Code: ${meeting.roomId}`,
+    meeting.passcode ? `🔒 PIN: ${meeting.passcode}` : "",
     ``,
     `Host: ${meeting.hostName}`,
   ]
@@ -739,10 +803,22 @@ export function getMeetingShareDetails(meeting: MeetingRecord): MeetingShareInfo
 
   return {
     inviteUrl,
+    roomId: meeting.roomId,
+    passcode: meeting.passcode,
     shortSummary: fullText,
     copyInviteLink: async () => {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(inviteUrl);
+      }
+    },
+    copyRoomId: async () => {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(meeting.roomId);
+      }
+    },
+    copyPasscode: async () => {
+      if (navigator.clipboard && meeting.passcode) {
+        await navigator.clipboard.writeText(meeting.passcode);
       }
     },
     copyFullInvitation: async () => {

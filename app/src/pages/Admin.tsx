@@ -1969,6 +1969,7 @@ function AdminCommunications() {
   const [instantName, setInstantName] = useState("");
   const [instantEmail, setInstantEmail] = useState("");
   const [instantType, setInstantType] = useState<"video" | "voice">("video");
+  const [ordersList, setOrdersList] = useState<OrderRecord[]>([]);
   const [startingCall, setStartingCall] = useState(false);
 
   const reloadData = async () => {
@@ -1980,6 +1981,7 @@ function AdminCommunications() {
     ]);
     setMeetings(m);
     setCalls(c);
+    setOrdersList(ords);
 
     // Build directory of clients from orders & leads
     const clientMap = new Map<string, { email: string; name: string; info: string }>();
@@ -2079,7 +2081,24 @@ function AdminCommunications() {
         participants: parsedParticipants,
       });
 
-      toast.success(`Meeting "${newM.title}" scheduled successfully.`);
+      // Automatically post invitation into any matching client project threads
+      for (const p of parsedParticipants) {
+        const matchingOrders = ordersList.filter((o) => o.email?.toLowerCase() === p.email.toLowerCase());
+        for (const o of matchingOrders) {
+          try {
+            await postMessage(
+              o.id,
+              "studio",
+              `📅 Studio scheduled a meeting: "${newM.title}" for ${new Date(startIso).toLocaleDateString()} at ${new Date(startIso).toLocaleTimeString()}.\n\n🔑 Meeting Code: ${newM.roomId}\n🚀 Join Link: ${window.location.origin}/meet/${newM.roomId}${newM.passcode ? `\n🔒 Passcode PIN: ${newM.passcode}` : ""}`,
+              "Social Kon10 Studio"
+            );
+          } catch {
+            // non-blocking
+          }
+        }
+      }
+
+      toast.success(`Meeting "${newM.title}" scheduled and invites prepared.`);
       setScheduleModalOpen(false);
       setFormTitle("");
       setFormDesc("");
@@ -2334,17 +2353,44 @@ function AdminCommunications() {
                       <h3 className="font-display text-base font-bold uppercase line-clamp-1">{m.title}</h3>
                       {m.description && <p className="text-xs text-[var(--muted)] line-clamp-2 mt-1">{m.description}</p>}
 
-                      <div className="mt-3 p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-[11px] space-y-1">
-                        <p className="font-medium text-[var(--ink)]">
-                          📅 {dateStr} at {timeStr}
-                        </p>
+                      <div className="mt-3 p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-[11px] space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <p className="font-medium text-[var(--ink)]">
+                            📅 {dateStr} at {timeStr}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const share = getMeetingShareDetails(m);
+                              await share.copyRoomId();
+                              toast.success(`Meeting code "${m.roomId}" copied!`);
+                            }}
+                            className="font-mono text-[9px] font-bold px-2 py-0.5 rounded bg-[var(--dept-soft)] border border-[var(--dept)] text-[var(--dept)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
+                            title="Click to copy meeting code"
+                          >
+                            📋 {m.roomId}
+                          </button>
+                        </div>
                         <p className="font-meta text-[9.5px] text-[var(--muted)] truncate">
                           👥 {m.participants.length > 0 ? m.participants.map((p) => p.displayName).join(", ") : "Open invitation"}
                         </p>
                         {m.passcode && (
-                          <p className="font-meta text-[9.5px] text-[var(--muted)]">
-                            🔑 Passcode: <code className="text-[var(--ink)] font-bold">{m.passcode}</code>
-                          </p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-meta text-[9.5px] text-[var(--muted)]">
+                              🔑 Passcode: <code className="text-[var(--ink)] font-bold">{m.passcode}</code>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const share = getMeetingShareDetails(m);
+                                await share.copyPasscode();
+                                toast.success("Passcode copied!");
+                              }}
+                              className="font-meta text-[8.5px] text-[var(--muted)] hover:text-[var(--ink)]"
+                            >
+                              Copy PIN
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -2360,7 +2406,7 @@ function AdminCommunications() {
                           className="font-meta text-[9px] px-2.5 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] bg-[var(--bg)] transition-colors font-bold"
                           title="Copy direct meeting join link"
                         >
-                          📋 Copy Link
+                          🔗 Copy Link
                         </button>
                         <button
                           onClick={async () => {
@@ -2382,15 +2428,16 @@ function AdminCommunications() {
                         </button>
                         <button
                           onClick={async () => {
-                            if (window.confirm("Delete this meeting?")) {
+                            if (window.confirm(`Are you sure you want to permanently delete the meeting "${m.title}" (Code: ${m.roomId})? This will cancel the meeting for all participants.`)) {
                               await deleteMeeting(m.id);
-                              toast.success("Meeting deleted.");
+                              toast.success(`Meeting "${m.title}" deleted.`);
                               reloadData();
                             }
                           }}
-                          className="font-meta text-[9px] text-[var(--muted)] hover:text-red-500 px-2 py-1"
+                          className="font-meta text-[9px] text-red-500 hover:bg-red-500/10 px-2 py-1 rounded border border-red-500/20 transition-colors"
+                          title="Permanently Delete Meeting"
                         >
-                          Delete
+                          🗑️ Delete
                         </button>
                       </div>
 

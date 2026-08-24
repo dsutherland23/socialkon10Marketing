@@ -1426,23 +1426,50 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
                     <h4 className="font-display text-base font-bold uppercase line-clamp-1">{m.title}</h4>
                     {m.description && <p className="text-xs text-[var(--muted)] line-clamp-2 mt-1">{m.description}</p>}
 
-                    <div className="mt-3 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-xs space-y-1">
-                      <p className="font-medium text-[var(--ink)]">
-                        📅 {dateStr} at {timeStr}
-                      </p>
+                    <div className="mt-3 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-xs space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium text-[var(--ink)]">
+                          📅 {dateStr} at {timeStr}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const share = getMeetingShareDetails(m);
+                            await share.copyRoomId();
+                            toast.success(`Meeting code "${m.roomId}" copied!`);
+                          }}
+                          className="font-mono text-[9px] font-bold px-2 py-0.5 rounded bg-[var(--dept-soft)] border border-[var(--dept)] text-[var(--dept)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
+                          title="Click to copy meeting code"
+                        >
+                          📋 {m.roomId}
+                        </button>
+                      </div>
                       <p className="font-meta text-[9.5px] text-[var(--muted)]">
                         Host: {m.hostName} · Room #{m.roomId}
                       </p>
                       {m.passcode && (
-                        <p className="font-meta text-[9.5px] text-[var(--muted)]">
-                          Passcode: <code className="text-[var(--ink)] font-bold">{m.passcode}</code>
-                        </p>
+                        <div className="flex items-center justify-between">
+                          <span className="font-meta text-[9.5px] text-[var(--muted)]">
+                            Passcode: <code className="text-[var(--ink)] font-bold">{m.passcode}</code>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const share = getMeetingShareDetails(m);
+                              await share.copyPasscode();
+                              toast.success("Passcode copied!");
+                            }}
+                            className="font-meta text-[8.5px] text-[var(--muted)] hover:text-[var(--ink)]"
+                          >
+                            Copy PIN
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-[var(--line)]">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         onClick={async () => {
                           const share = getMeetingShareDetails(m);
@@ -1452,7 +1479,7 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
                         className="font-meta text-[9px] px-2 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] bg-[var(--bg)] transition-colors font-bold"
                         title="Copy direct meeting join link"
                       >
-                        📋 Copy Link
+                        🔗 Copy Link
                       </button>
                       <button
                         onClick={() => downloadCalendarIcs(m)}
@@ -1472,7 +1499,11 @@ function ClientMeetingsHub({ userEmail }: { userEmail: string }) {
                             ✓ Accept
                           </button>
                           <button
-                            onClick={() => handleRsvp(m.id, myPart.id, "declined")}
+                            onClick={() => {
+                              if (window.confirm("Decline this meeting invitation?")) {
+                                handleRsvp(m.id, myPart.id, "declined");
+                              }
+                            }}
                             className="font-meta text-[9px] px-2 py-1 text-red-500 border border-red-500/20 rounded"
                           >
                             ✕ Decline

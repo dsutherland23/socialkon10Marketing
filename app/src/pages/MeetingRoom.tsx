@@ -545,7 +545,12 @@ export default function MeetingRoom() {
             const form = e.currentTarget as HTMLFormElement;
             const codeInput = (form.elements.namedItem("meetingCode") as HTMLInputElement).value.trim();
             const passInput = (form.elements.namedItem("passcode") as HTMLInputElement).value.trim();
-            const cleanCode = codeInput.replace(/^https?:\/\/[^\/]+\/meet\//, "");
+            const cleanCode = codeInput
+              .replace(/^https?:\/\/[^\/]+\/meet\//i, "")
+              .replace(/^socialkon10\.pro\/meet\//i, "")
+              .replace(/^www\.socialkon10\.pro\/meet\//i, "")
+              .replace(/^\/meet\//i, "")
+              .trim();
             if (!cleanCode) {
               toast.error("Please enter a meeting code or link.");
               return;
@@ -1067,13 +1072,41 @@ export default function MeetingRoom() {
             </div>
 
             <div className="grid grid-cols-2 gap-2 p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl">
-              <div>
-                <span className="font-meta text-[8.5px] uppercase font-bold text-[var(--muted)] block">Meeting Code</span>
-                <span className="font-mono font-bold text-sm text-[var(--dept)] tracking-wider">{meeting.roomId}</span>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-meta text-[8.5px] uppercase font-bold text-[var(--muted)] block">Meeting Code</span>
+                  <span className="font-mono font-bold text-sm text-[var(--dept)] tracking-wider">{meeting.roomId}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const share = getMeetingShareDetails(meeting);
+                    await share.copyRoomId();
+                    toast.success(`Meeting code "${meeting.roomId}" copied!`);
+                  }}
+                  className="font-meta text-[9px] px-2 py-1 bg-[var(--panel)] border border-[var(--line)] rounded hover:border-[var(--dept)]"
+                >
+                  📋 Copy
+                </button>
               </div>
-              <div>
-                <span className="font-meta text-[8.5px] uppercase font-bold text-[var(--muted)] block">Passcode PIN</span>
-                <span className="font-mono font-bold text-sm tracking-wider">{meeting.passcode || "None Required"}</span>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-meta text-[8.5px] uppercase font-bold text-[var(--muted)] block">Passcode PIN</span>
+                  <span className="font-mono font-bold text-sm tracking-wider">{meeting.passcode || "None Required"}</span>
+                </div>
+                {meeting.passcode && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const share = getMeetingShareDetails(meeting);
+                      await share.copyPasscode();
+                      toast.success("PIN copied!");
+                    }}
+                    className="font-meta text-[9px] px-2 py-1 bg-[var(--panel)] border border-[var(--line)] rounded hover:border-[var(--dept)]"
+                  >
+                    📋 Copy
+                  </button>
+                )}
               </div>
             </div>
 
