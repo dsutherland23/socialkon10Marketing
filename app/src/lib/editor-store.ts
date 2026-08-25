@@ -46,7 +46,9 @@ export async function listDesigns(email: string, uid?: string | null): Promise<C
   }
 
   if (duplicatesToDelete.length > 0) {
-    void Promise.allSettled(duplicatesToDelete.map((id) => removeManaged("customerDesigns", id)));
+    Promise.allSettled(duplicatesToDelete.map((id) => removeManaged("customerDesigns", id))).catch((err) => {
+      console.warn("Auto-pruning stale design duplicates notice:", err);
+    });
   }
 
   return uniqueDesigns;

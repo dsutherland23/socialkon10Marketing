@@ -104,8 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (displayName?.trim()) {
           await updateProfile(cred.user, { displayName: displayName.trim() });
         }
-        // Send verification email (non-blocking — user can still use app)
-        await sendEmailVerification(cred.user).catch(() => {/* ignore if email fails */});
+        // Send verification email (non-blocking)
+        sendEmailVerification(cred.user).catch((vErr) => {
+          console.warn("Verification email notice:", vErr);
+        });
         return null;
       } catch (e) { return errMsg(e); }
     },

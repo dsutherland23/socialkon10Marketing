@@ -193,13 +193,28 @@ export async function createOrder(
 }
 
 /** Link any orders placed with this email (before sign-up) to the account. */
-export async function claimOrders(user: User): Promise<void> {
-  if (!firebaseReady || !db || !user.email) return;
+export async function claimOrders(user: User): Promise<{ claimed: number; error?: string }> {
+  if (!firebaseReady || !db || !user.email) return { claimed: 0 };
   try {
-    const q = query(collection(db, "orders"), where("email", "==", user.email), where("uid", "==", null));
-    const snap = await getDocs(q);
-    await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { uid: user.uid })));
-  } catch { /* ignore permission errors */ }
+    const emailLower = user.email.toLowerCase();
+    const q1 = query(collection(db, "orders"), where("email", "==", user.email), where("uid", "==", null));
+    const snap1 = await getDocs(q1);
+    const docsToUpdate = new Map<string, typeof snap1.docs[0]>();
+    snap1.docs.forEach((d) => docsToUpdate.set(d.id, d));
+
+    if (user.email !== emailLower) {
+      const q2 = query(collection(db, "orders"), where("email", "==", emailLower), where("uid", "==", null));
+      const snap2 = await getDocs(q2);
+      snap2.docs.forEach((d) => docsToUpdate.set(d.id, d));
+    }
+
+    const updates = Array.from(docsToUpdate.values()).map((d) => updateDoc(d.ref, { uid: user.uid }));
+    await Promise.all(updates);
+    return { claimed: updates.length };
+  } catch (err) {
+    console.warn("claimOrders failed:", err);
+    return { claimed: 0, error: err instanceof Error ? err.message : "Failed to claim past orders" };
+  }
 }
 
 export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
