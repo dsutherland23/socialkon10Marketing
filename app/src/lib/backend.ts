@@ -2,7 +2,7 @@ import {
   addDoc, collection, doc, getDocs, getDoc, orderBy, query,
   serverTimestamp, setDoc, updateDoc, where, deleteDoc,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, getBytes } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, getBytes, deleteObject } from "firebase/storage";
 import type { User } from "firebase/auth";
 import { db, storage, firebaseReady } from "./firebase";
 import type { CartItem } from "./shop";
@@ -275,6 +275,13 @@ export async function deleteOrderFile(orderId: string, filePathOrName: string): 
         const existing = (snap.data().files || []) as { name: string; size: number; path?: string }[];
         const updated = existing.filter((f) => f.path !== filePathOrName && f.name !== filePathOrName);
         await updateDoc(doc(db, "orders", orderId), { files: updated });
+      }
+      if (storage && filePathOrName && !filePathOrName.startsWith("local://") && !filePathOrName.startsWith("data:")) {
+        try {
+          await deleteObject(ref(storage, filePathOrName));
+        } catch {
+          // ignore if already deleted or path mismatch
+        }
       }
     } catch (err) {
       console.warn("Error deleting order file in Firestore:", err);

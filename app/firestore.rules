@@ -1,9 +1,9 @@
 rules_version = '2';
 
 // ─────────────────────────────────────────────────────────────
-// Social Kon10 — Firestore Security Rules
+// Social Kon10 — Firestore Security Rules (2026 Hardened RLS)
 // Public reads for CMS & catalog data.
-// Client data isolated per authenticated user (orders, designs, uploads).
+// Client data isolated strictly per authenticated user (orders, designs, uploads).
 // Admins (socialkon10@gmail.com) have full management access.
 // ─────────────────────────────────────────────────────────────
 
@@ -24,15 +24,21 @@ service cloud.firestore {
         && request.resource.data.items is list
         && (request.resource.data.uid == null
             || (signedIn() && request.resource.data.uid == request.auth.uid));
+      
       allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      
       allow update: if isAdmin()
         || (signedIn()
             && resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes'])
+            && (request.resource.data.status == resource.data.status
+                || request.resource.data.status in ['REVISION', 'FINAL APPROVAL', 'CLIENT REVIEW']))
         || (signedIn()
             && resource.data.uid == null
+            && resource.data.email.lower() == request.auth.token.email.lower()
             && request.resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid']));
+            
       allow delete: if isAdmin();
 
       // Project messaging
@@ -147,28 +153,46 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Customer saved designs: Read/write for all users (guests and signed in) so auto-save never fails
+    // Customer saved designs: Isolated per user/guest, protected against unauthorized access
     match /customerDesigns/{id} {
-      allow read, write: if true;
+      allow read: if isAdmin()
+        || resource.data.uid == null
+        || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if true
+        && (request.resource.data.uid == null || (signedIn() && request.resource.data.uid == request.auth.uid));
+      allow update: if isAdmin()
+        || (resource.data.uid == null && (request.resource.data.uid == null || (signedIn() && request.resource.data.uid == request.auth.uid)))
+        || (signedIn() && resource.data.uid == request.auth.uid);
+      allow delete: if isAdmin()
+        || resource.data.uid == null
+        || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
-    // Customer asset uploads: Read/write own or admin
+    // Customer asset uploads: Read/write own, guest, or admin
     match /userUploads/{id} {
       allow create: if true;
-      allow read, update, delete: if isAdmin()
+      allow read: if isAdmin()
+        || resource.data.uid == null
+        || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update, delete: if isAdmin()
+        || resource.data.uid == null
         || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
     // Studio Meetings & Live Video Communications
     match /meetings/{meetingId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if isAdmin();
 
       match /chat/{chatId} {
-        allow read, write: if true;
+        allow read, create, update: if true;
+        allow delete: if isAdmin();
       }
 
       match /signals/{signalId} {
-        allow read, write: if true;
+        allow read, create, update, delete: if true;
       }
 
       match /{sub=**} {
@@ -178,7 +202,9 @@ service cloud.firestore {
 
     // Live Calls & Consultation Records
     match /call_history/{callId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if isAdmin();
     }
 
     // Fallback block
