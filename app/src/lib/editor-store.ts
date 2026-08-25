@@ -83,6 +83,25 @@ export async function linkDesignToOrder(designId: string, orderId: string): Prom
   await updateManaged("customerDesigns", designId, { orderId });
 }
 
+/** Link any guest customer designs to the newly authenticated account. */
+export async function claimCustomerDesigns(user: { uid: string; email?: string | null }): Promise<void> {
+  if (!firebaseReady || !user.email) return;
+  try {
+    const emailLower = user.email.toLowerCase();
+    const rows = (await listManaged("customerDesigns")) as unknown as CustomerDesign[];
+    const guestRows = rows.filter(
+      (d) => (!d.uid || d.uid === null) && d.email && d.email.toLowerCase() === emailLower
+    );
+    if (guestRows.length > 0) {
+      await Promise.all(
+        guestRows.map((d) => updateManaged("customerDesigns", d.id, { uid: user.uid }))
+      );
+    }
+  } catch (err) {
+    console.warn("claimCustomerDesigns notice:", err);
+  }
+}
+
 export async function deliverProofToOrder({
   orderId,
   designId,

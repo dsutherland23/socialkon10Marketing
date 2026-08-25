@@ -3059,6 +3059,18 @@ export default function Editor() {
     c.renderAll();
     pushHistory();
     setSel((s) => ({ ...s }));
+
+    // Ensure async web font finishes loading and re-calculates exact dimensions
+    const primaryFont = stack.split(",")[0]?.replace(/['"]/g, "").trim();
+    if (primaryFont && document.fonts && typeof document.fonts.load === "function") {
+      document.fonts.load(`32px "${primaryFont}"`).then(() => {
+        if (fc.current && sel.obj) {
+          (sel.obj as unknown as { initDimensions?: () => void }).initDimensions?.();
+          sel.obj.setCoords();
+          fc.current.requestRenderAll();
+        }
+      }).catch(() => {});
+    }
   };
 
   const reorder = (action: "front" | "back" | "forward" | "backward", obj: FabricObject) => {

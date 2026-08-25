@@ -36,7 +36,7 @@ import {
   currentVersion, downloadTemplate, entitlementsFromOrders, useTemplateFavorites, useTemplates,
   type Entitlement, type Template,
 } from "../lib/templates";
-import { deleteDesign, findDesignFor, findDesignForOrder, listDesigns, type CustomerDesign } from "../lib/editor-store";
+import { deleteDesign, findDesignFor, findDesignForOrder, listDesigns, claimCustomerDesigns, type CustomerDesign } from "../lib/editor-store";
 import { exportJsonDocToPsdBlob, exportImageToPsdBlob, triggerPsdDownload } from "../lib/psd-export";
 import { TemplateCard, TemplatePreview } from "../components/Watermark";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
@@ -1980,7 +1980,10 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
 
   useEffect(() => {
     (async () => {
-      if (user) await claimOrders(user);
+      if (user) {
+        await claimOrders(user);
+        await claimCustomerDesigns(user);
+      }
       setOrders(await listMyOrders(user));
       setLoading(false);
     })();
@@ -2065,10 +2068,13 @@ export default function ClientPortal() {
     if (!firebaseReady) return;
     completeMagicLink().then(async (err: string | null) => {
       if (!err && firebaseReady) {
-        // Give Firebase auth state a moment to update, then claim any guest orders
+        // Give Firebase auth state a moment to update, then claim any guest orders and designs
         setTimeout(async () => {
           const { auth } = await import("../lib/firebase");
-          if (auth?.currentUser) await claimOrders(auth.currentUser);
+          if (auth?.currentUser) {
+            await claimOrders(auth.currentUser);
+            await claimCustomerDesigns(auth.currentUser);
+          }
         }, 800);
       }
     });
