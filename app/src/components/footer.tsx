@@ -47,7 +47,7 @@ export function SiteFooter() {
           <nav className="lg:col-span-2" aria-label="Footer site">
             <p className="font-meta text-[10px] opacity-60 mb-4">Studio</p>
             <ul className="flex flex-col gap-2.5 text-sm">
-              {[["/work", "Work"], ["/packages", "Packages"], ["/about", "About"], ["/insights", "Insights"], ["/start", "Contact"], ["/checkout", "Checkout"]].map(([to, l]) => (
+              {[["/work", "Work"], ["/packages", "Packages"], ["/about", "About"], ["/insights", "Insights"], ["/privacy", "Privacy Policy"], ["/terms", "Terms of Service"], ["/start", "Contact"]].map(([to, l]) => (
                 <li key={to}><Link className="u-line" to={to}>{l}</Link></li>
               ))}
             </ul>
@@ -61,9 +61,13 @@ export function SiteFooter() {
           </div>
         </div>
 
-        <div className="mt-16 pt-6 flex flex-col sm:flex-row justify-between gap-3 font-meta text-[10px] opacity-50" style={{ borderTop: "1px solid rgba(128,128,128,0.3)" }}>
-          <span>© {new Date().getFullYear()} Social Kon10 Marketing</span>
-          <span>Design that connects · Marketing that moves · Digital that grows</span>
+        <div className="mt-16 pt-6 flex flex-col sm:flex-row justify-between items-center gap-4 font-meta text-[11px] opacity-70" style={{ borderTop: "1px solid rgba(128,128,128,0.3)" }}>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <span>© {new Date().getFullYear()} Social Kon10 Marketing</span>
+            <Link to="/privacy" className="u-line hover:opacity-100">Privacy Policy</Link>
+            <Link to="/terms" className="u-line hover:opacity-100">Terms of Service</Link>
+          </div>
+          <span className="opacity-60 text-[10px]">Design that connects · Marketing that moves · Digital that grows</span>
         </div>
       </div>
     </footer>

@@ -62,6 +62,8 @@ const Templates = lazyWithRetry(() => import("./pages/Templates"));
 const TemplateDetail = lazyWithRetry(() => import("./pages/TemplateDetail"));
 const Editor = lazyWithRetry(() => import("./pages/Editor"));
 const MeetingRoom = lazyWithRetry(() => import("./pages/MeetingRoom"));
+const Privacy = lazyWithRetry(() => import("./pages/Privacy"));
+const Terms = lazyWithRetry(() => import("./pages/Terms"));
 import { IncomingCallModal } from "./components/IncomingCallModal";
 import { MeetingProximityAlert } from "./components/MeetingProximityAlert";
 
@@ -153,6 +155,8 @@ function Shell() {
               <Route path="/admin" element={<Admin />} />
               <Route path="/meet/:roomId" element={<MeetingRoom />} />
               <Route path="/meet" element={<MeetingRoom />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
             </div>
