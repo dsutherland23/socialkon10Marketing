@@ -63,17 +63,32 @@ firebase deploy             # hosting + firestore rules + storage rules
 
 ## 5. Email automation (PRD §65)
 
-Transactional email (order received, payment received, review ready, etc.)
-requires server-side sending. The recommended Firebase-native path:
+**Status: client-side wired — one manual step left to go live.**
 
-1. Install the **Trigger Email** extension (or a Cloud Function + SendGrid/Resend)
-2. Trigger on Firestore writes: new `orders` doc → "project received";
-   `orders.status` change → the matching status email;
-   new `leads` doc → notify the studio inbox
-3. Templates live in a `mail` collection the extension watches
+The site now queues five transactional emails into a Firestore `mail`
+collection (Trigger Email extension format) at these moments:
 
-This is deliberately not faked client-side — email must come from a trusted
-server environment.
+| Email | Trigger | Recipient |
+| --- | --- | --- |
+| Order confirmation | Checkout payment succeeds | Client |
+| New-order alert | Checkout payment succeeds | Studio inbox |
+| Brief received | Intake form signed & submitted | Client |
+| New-intake alert (with lead score) | Intake form signed & submitted | Studio inbox |
+| Proposal ready | Admin sends proposal from Intakes tab | Client |
+
+Every queued email is also mirrored to a local audit log (`sk-email-log`,
+last 100 entries) so sends can be inspected in the browser.
+
+**To activate real delivery** (one-time, ~5 min):
+
+```bash
+firebase ext:install firebase/firestore-send-email --project=gen-lang-client-0882288265
+```
+
+When prompted, point it at the `mail` collection and supply SMTP credentials
+(SendGrid / Postmark / Gmail workspace relay). The `mail` security rules
+(write-only, never readable) are already deployed. Until the extension is
+installed, emails are safely logged locally and nothing is lost silently.
 
 ## 6. Roles (PRD §64)
 

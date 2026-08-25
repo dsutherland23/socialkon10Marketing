@@ -15,12 +15,19 @@ import {
   attachFiles,
   postMessage,
   ORDER_STATUSES,
+  isOrderHistory,
   type OrderRecord,
   type OrderStatus,
 } from "../lib/backend";
 import { activeProviders } from "../lib/payments";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
+import { IntakeWizard } from "../components/IntakeWizard";
+import {
+  claimIntakes, listMyIntakes, getProfile, saveProfile,
+  isIntakePackage, intakePackageFor, EMPTY_PROFILE,
+  type IntakeRecord, type IntakePackage, type ClientProfile,
+} from "../lib/intake";
 import {
   listUserMeetings,
   updateParticipant,
@@ -931,7 +938,7 @@ function DeliverableFileItem({ file }: { file: { name: string; size: number; pat
 function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onReload: () => void }) {
   const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<string>(orders[0]?.id ?? "");
-  const [filter, setFilter] = useState<"all" | "active" | "review" | "completed">("all");
+  const [filter, setFilter] = useState<"all" | "active" | "review" | "history">("all");
   const [search, setSearch] = useState("");
   const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
   const [receiptOrder, setReceiptOrder] = useState<OrderRecord | null>(null);
@@ -950,14 +957,16 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     }
   }, [orders, selectedId]);
 
-  const activeOrders = orders.filter((o) => !["DELIVERED", "COMPLETED"].includes(o.status));
+  // Active = everything not yet COMPLETED. History = auto-archive of completed projects.
+  const activeOrders = orders.filter((o) => !isOrderHistory(o));
   const reviewOrders = orders.filter((o) => ["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status));
-  const completedOrders = orders.filter((o) => ["DELIVERED", "COMPLETED"].includes(o.status));
+  const historyOrders = orders
+    .filter(isOrderHistory)
+    .sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt));
 
-  const filteredOrders = orders.filter((o) => {
-    if (filter === "active" && ["DELIVERED", "COMPLETED"].includes(o.status)) return false;
+  const filteredOrders = (filter === "history" ? historyOrders : orders).filter((o) => {
+    if (filter === "active" && isOrderHistory(o)) return false;
     if (filter === "review" && !["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status)) return false;
-    if (filter === "completed" && !["DELIVERED", "COMPLETED"].includes(o.status)) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       const matchId = o.id.toLowerCase().includes(q);
@@ -1112,12 +1121,12 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
             Action Needed ({reviewOrders.length})
           </button>
           <button
-            onClick={() => setFilter("completed")}
+            onClick={() => setFilter("history")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
-              filter === "completed" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              filter === "history" ? "bg-emerald-600 text-white border-emerald-600" : "border-[var(--line)] text-[var(--muted)] hover:border-emerald-600"
             }`}
           >
-            Delivered ({completedOrders.length})
+            History ({historyOrders.length})
           </button>
         </div>
 
@@ -1165,6 +1174,12 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                 <h4 className="font-display text-sm font-bold uppercase line-clamp-1 leading-snug">
                   {o.items.map((i) => i.name).join(" · ")}
                 </h4>
+
+                {isOrderHistory(o) && (
+                  <p className="font-meta text-[9px] text-emerald-600 mt-1">
+                    ✓ Completed {o.completedAt ? new Date(o.completedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : ""} · kept in your history
+                  </p>
+                )}
 
                 <div className="mt-3 flex items-center justify-between text-[11px] font-meta text-[var(--muted)]">
                   <span>Step {sIdx + 1}/8 · {pct}%</span>
@@ -1973,21 +1988,145 @@ function ClientMeetingsHub({ userEmail, userAliases }: { userEmail: string; user
   );
 }
 
-function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean; signOut: () => void }) {
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"Projects" | "Meetings & Calls" | "My Templates" | "My Designs" | "Favorites">("Projects");
+/* ------------------------------------------------------------------
+   SAVED ACCOUNT DETAILS (2026 best practice)
+   One saved profile → prefills checkout, project forms and briefs.
+------------------------------------------------------------------- */
+const PROFILE_FIELDS: { key: keyof Omit<ClientProfile, "updatedAt">; label: string; type?: string; span?: boolean; placeholder?: string }[] = [
+  { key: "name", label: "Full name" },
+  { key: "company", label: "Company / brand" },
+  { key: "email", label: "Email", type: "email" },
+  { key: "phone", label: "Phone / WhatsApp", type: "tel" },
+  { key: "website", label: "Website", type: "url", placeholder: "https://" },
+  { key: "industry", label: "Industry" },
+  { key: "address", label: "Street address", span: true },
+  { key: "city", label: "City / Town" },
+  { key: "country", label: "Country" },
+];
+
+function SavedDetailsForm({ user }: { user: any }) {
+  const [profile, setProfile] = useState<Omit<ClientProfile, "updatedAt">>(EMPTY_PROFILE);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
-      if (user) {
-        await claimOrders(user);
-        await claimCustomerDesigns(user);
+    if (!user?.uid) return;
+    getProfile(user.uid).then((p) => {
+      if (p) {
+        const { updatedAt, ...rest } = p;
+        setProfile({ ...EMPTY_PROFILE, ...rest, email: rest.email || user.email || "" });
+        setSavedAt(updatedAt);
+      } else {
+        // first visit — seed from the account itself
+        setProfile({ ...EMPTY_PROFILE, name: user.displayName ?? "", email: user.email ?? "" });
       }
-      setOrders(await listMyOrders(user));
-      setLoading(false);
-    })();
+      setLoaded(true);
+    });
   }, [user]);
+
+  const set = (k: keyof typeof profile) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setProfile((p) => ({ ...p, [k]: e.target.value }));
+
+  const save = async () => {
+    if (!user?.uid) return;
+    setSaving(true);
+    await saveProfile(user.uid, profile);
+    setSaving(false);
+    setSavedAt(new Date().toISOString());
+    toast.success("Account details saved — checkout will prefill from now on.");
+  };
+
+  if (!loaded) return <p className="font-meta text-[11px] text-[var(--muted)]">Loading your details…</p>;
+
+  return (
+    <div className="max-w-3xl">
+      <div className="border border-[var(--line)] p-6 md:p-8" style={{ background: "var(--panel)" }}>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <span className="idx">/account-details</span>
+            <p className="text-sm text-[var(--muted)] mt-2 max-w-md">
+              Saved once, used everywhere — these details prefill your checkout, project briefs and meeting bookings.
+            </p>
+          </div>
+          {savedAt && <span className="font-meta text-[9px] text-[var(--muted)]">Last saved {new Date(savedAt).toLocaleDateString()}</span>}
+        </div>
+        <div className="grid sm:grid-cols-2 gap-5 mt-8">
+          {PROFILE_FIELDS.map((f) => (
+            <div key={f.key} className={f.span ? "sm:col-span-2" : ""}>
+              <label className={labelCls} htmlFor={`pf-${f.key}`}>{f.label}</label>
+              <input
+                id={`pf-${f.key}`}
+                type={f.type ?? "text"}
+                className={inputCls}
+                value={profile[f.key]}
+                placeholder={f.placeholder}
+                autoComplete={f.key === "email" ? "email" : f.key === "phone" ? "tel" : f.key === "name" ? "name" : "off"}
+                onChange={set(f.key)}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mt-8 flex items-center gap-4">
+          <button className="btn btn-dept !py-2.5" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving…" : "Save details"} <span className="btn-arrow" aria-hidden>→</span>
+          </button>
+          <span className="font-meta text-[9px] text-[var(--muted)]">Stored securely · only used for your orders</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean; signOut: () => void }) {
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [intakes, setIntakes] = useState<IntakeRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"Projects" | "Meetings & Calls" | "My Templates" | "My Designs" | "Favorites" | "Account">("Projects");
+  const [wizardFor, setWizardFor] = useState<{ pkg: IntakePackage; orderId: string | null; existing: IntakeRecord | null } | null>(null);
+
+  const reload = async () => {
+    if (user) {
+      await claimOrders(user);
+      await claimCustomerDesigns(user);
+      await claimIntakes(user);
+    }
+    const [o, i] = await Promise.all([listMyOrders(user), listMyIntakes(user)]);
+    setOrders(o);
+    setIntakes(i);
+    setLoading(false);
+  };
+
+  useEffect(() => { void reload(); }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ----- website intake: pending detection + one-time popup per order ----- */
+  const webOrders = orders.filter((o) => o.items.some((i) => isIntakePackage(i.serviceSlug)));
+  const webSlug = (o: OrderRecord) => o.items.find((i) => isIntakePackage(i.serviceSlug))?.serviceSlug ?? null;
+  // A brief covers an order when linked by orderId — OR, as a fallback, when it's
+  // an unlinked brief for the same package (guest/legacy records). This is what
+  // stops the "you already submitted" form from re-prompting.
+  const coversOrder = (x: IntakeRecord, o: OrderRecord) =>
+    x.orderId === o.id || (!x.orderId && x.packageSlug === webSlug(o));
+  const submittedForOrder = (o: OrderRecord) =>
+    intakes.find((x) => x.status !== "draft" && coversOrder(x, o));
+  const draftForOrder = (o: OrderRecord) =>
+    intakes.find((x) => x.status === "draft" && coversOrder(x, o));
+  const pendingIntakes = webOrders.filter((o) => !submittedForOrder(o));
+  const looseIntakes = intakes.filter((x) => !webOrders.some((o) => coversOrder(x, o)));
+
+  const openWizard = (order: OrderRecord | null, existing?: IntakeRecord | null) => {
+    const slug = existing?.packageSlug ?? order?.items.find((i) => isIntakePackage(i.serviceSlug))?.serviceSlug;
+    setWizardFor({ pkg: intakePackageFor(slug), orderId: order?.id ?? existing?.orderId ?? null, existing: existing ?? null });
+  };
+
+  useEffect(() => {
+    if (loading || pendingIntakes.length === 0 || wizardFor) return;
+    const target = pendingIntakes[0];
+    const nagKey = `sk_intake_nag_${target.id}`;
+    if (sessionStorage.getItem(nagKey)) return;
+    sessionStorage.setItem(nagKey, "1");
+    openWizard(target, draftForOrder(target));
+  }, [loading, pendingIntakes, wizardFor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const userAliases = Array.from(
     new Set([user?.email, user?.displayName, ...orders.map((o) => o.email), ...orders.map((o) => o.name)].filter(Boolean) as string[])
@@ -2008,14 +2147,74 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
 
       {/* account navigation */}
       <div className="flex flex-wrap gap-2 mb-10" role="tablist" aria-label="Account sections">
-        {(["Projects", "Meetings & Calls", "My Templates", "My Designs", "Favorites"] as const).map((t) => (
+        {(["Projects", "Meetings & Calls", "My Templates", "My Designs", "Favorites", "Account"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
             className="font-meta text-[10px] px-4 py-2 border transition-colors"
             style={tab === t ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
             {t}
+            {t === "Projects" && pendingIntakes.length > 0 && (
+              <span className="ml-2 dept-bg font-meta text-[8px] px-1.5 py-0.5" aria-label={`${pendingIntakes.length} briefs pending`}>
+                {pendingIntakes.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {tab === "Account" && <SavedDetailsForm user={user} />}
+
+      {/* website project briefs — pending banners + submitted agreements */}
+      {tab === "Projects" && !loading && (pendingIntakes.length > 0 || intakes.length > 0) && (
+        <div className="mb-10 flex flex-col gap-3">
+          {pendingIntakes.map((o) => {
+            const draft = draftForOrder(o);
+            const answered = draft ? Object.keys(draft.answers).filter((k) => {
+              const v = draft.answers[k];
+              return Array.isArray(v) ? v.length : String(v ?? "").trim();
+            }).length : 0;
+            return (
+              <div key={o.id} className="border border-[var(--dept)] p-5 md:p-6 flex flex-wrap items-center justify-between gap-4"
+                style={{ background: "var(--dept-soft)" }}>
+                <div>
+                  <span className="font-meta text-[10px] dept-accent">ACTION NEEDED — WEBSITE BRIEF {draft ? "IN PROGRESS" : "PENDING"}</span>
+                  <p className="font-display text-base font-bold uppercase mt-1">
+                    {o.items.find((i) => isIntakePackage(i.serviceSlug))?.name ?? "Website package"}
+                  </p>
+                  <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
+                    {draft
+                      ? `Draft autosaved · ${answered} answers so far · pick up where you left off`
+                      : "5 minutes now = a faster, sharper build. This brief is also your project agreement."}
+                  </p>
+                </div>
+                <button className="btn btn-dept !py-2.5" onClick={() => openWizard(o, draft)}>
+                  {draft ? "Resume brief" : "Start brief"} <span className="btn-arrow" aria-hidden>→</span>
+                </button>
+              </div>
+            );
+          })}
+          {intakes.filter((x) => x.status !== "draft").map((x) => (
+            <button key={x.id} onClick={() => openWizard(null, x)}
+              className="border border-[var(--line)] px-5 py-4 flex flex-wrap items-center justify-between gap-3 text-left hover:border-[var(--dept)] transition-colors">
+              <span>
+                <span className="font-display text-sm font-bold uppercase">{x.packageName}</span>
+                <span className="font-meta text-[9px] text-[var(--muted)] block mt-0.5">
+                  Signed by {x.contract?.signedName ?? "—"} · {x.submittedAt ? new Date(x.submittedAt).toLocaleDateString() : ""}
+                </span>
+              </span>
+              <span className="font-meta text-[9px] px-2.5 py-1 border" style={{ borderColor: "var(--dept)", color: "var(--dept)" }}>
+                {x.status.replace("_", " ").toUpperCase()}
+              </span>
+            </button>
+          ))}
+          {looseIntakes.filter((x) => x.status === "draft").map((x) => (
+            <button key={x.id} onClick={() => openWizard(null, x)}
+              className="border border-dashed border-[var(--line-strong)] px-5 py-4 flex items-center justify-between gap-3 text-left hover:border-[var(--dept)] transition-colors">
+              <span className="font-display text-sm font-bold uppercase">{x.packageName} — draft</span>
+              <span className="font-meta text-[9px] dept-accent">RESUME →</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {tab === "Meetings & Calls" && (
         <ClientMeetingsHub userEmail={user?.email || ""} userAliases={userAliases} />
@@ -2049,6 +2248,19 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
       <p className="font-meta text-[10px] text-[var(--muted)] mt-10">
         Need help? {CONTACT.phone} · {CONTACT.email} — reference your order number.
       </p>
+
+      {/* website intake wizard (popup on pending brief, banner, or signed-brief view) */}
+      {wizardFor && (
+        <IntakeWizard
+          user={user}
+          pkg={wizardFor.pkg}
+          orderId={wizardFor.orderId}
+          existing={wizardFor.existing}
+          prefill={{ name: user?.displayName ?? "", email: user?.email ?? "" }}
+          onClose={() => { setWizardFor(null); void reload(); }}
+          onSubmitted={() => void reload()}
+        />
+      )}
     </div>
   );
 }
@@ -2074,6 +2286,7 @@ export default function ClientPortal() {
           if (auth?.currentUser) {
             await claimOrders(auth.currentUser);
             await claimCustomerDesigns(auth.currentUser);
+            await claimIntakes(auth.currentUser);
           }
         }, 800);
       }

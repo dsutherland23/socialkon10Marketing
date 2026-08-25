@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "qa:editor": "node scripts/qa-editor.mjs"
+    "qa:editor": "node scripts/qa-editor.mjs",
+    "qa:customer": "node scripts/qa-customer.mjs",
+    "qa:studio": "node scripts/qa-studio.mjs",
+    "qa:intake": "node scripts/qa-intake.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

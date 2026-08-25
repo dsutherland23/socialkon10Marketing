@@ -10,6 +10,9 @@ import { useAuth } from "../lib/auth";
 import { attachFiles, cartToOrderItems, claimOrders, createOrder } from "../lib/backend";
 import { auth as fbAuth, firebaseReady } from "../lib/firebase";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
+import { IntakeWizard } from "../components/IntakeWizard";
+import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type IntakePackage } from "../lib/intake";
+import { sendEmail, orderConfirmationEmail, adminNewOrderEmail } from "../lib/email";
 
 /* ------------------------------------------------------------------
    CHECKOUT (PRD §29–31)
@@ -44,6 +47,7 @@ export default function Checkout() {
   const [errors, setErrors] = useState<Partial<Record<keyof Details, string>>>({});
   const [files, setFiles] = useState<{ file: File; name: string; size: number }[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
@@ -53,14 +57,39 @@ export default function Checkout() {
   const [acctDone, setAcctDone] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [magicSent, setMagicSent] = useState(false);
+  const [saveDetails, setSaveDetails] = useState(true);
+  const [intakePkg, setIntakePkg] = useState<IntakePackage | null>(null);
+  const [intakeOrderId, setIntakeOrderId] = useState<string | null>(null);
+  const [intakeOpen, setIntakeOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const { user, signUp, signInGoogle, sendMagicLink } = useAuth();
 
-  // Enhancement 3: quick-checkout — set by "Buy Now" on template detail pages
+  // 2026 best practice: signed-in customers never retype saved details —
+  // prefill from their account profile, only into fields still empty.
+  useEffect(() => {
+    if (!user) return;
+    setDetails((d) => (d.email ? d : { ...d, email: user.email ?? d.email }));
+    getProfile(user.uid).then((p) => {
+      if (!p) return;
+      setDetails((d) => ({
+        ...d,
+        name: d.name || p.name,
+        company: d.company || p.company,
+        email: d.email || p.email,
+        phone: d.phone || p.phone,
+        website: d.website || p.website,
+        industry: d.industry || p.industry,
+      }));
+    });
+  }, [user]);
+
+  // Enhancement 3: quick-checkout — set by "Buy Now" on template detail pages.
+  // Skip the summary step, but NEVER skip contact details — an order without
+  // name/email is anonymous and unfulfillable, and breaks guest order claiming.
   useEffect(() => {
     if (sessionStorage.getItem("sk_quick_checkout") === "1" && items.length > 0) {
       sessionStorage.removeItem("sk_quick_checkout");
-      setStep(3); // skip straight to Payment
+      setStep(1); // straight to Your details
     }
   }, [items.length]);
 
@@ -95,6 +124,12 @@ export default function Checkout() {
   };
 
   const pay = async () => {
+    // hard guard: never charge without a reachable customer identity
+    if (!details.name.trim() || !/.+@.+\..+/.test(details.email)) {
+      setPayError("We need your name and a valid email before payment — so we can deliver your order and receipt.");
+      setStep(1);
+      return;
+    }
     setPaying(true);
     setPayError(null);
     track("payment_start", { value: dueToday, mode: payMode });
@@ -112,6 +147,7 @@ export default function Checkout() {
       return;
     }
     // persist the order (Firestore when configured, local demo otherwise)
+    let finalOid = `SK-${String(Date.now()).slice(-6)}`;
     try {
       const oid = await createOrder(
         {
@@ -132,12 +168,46 @@ export default function Checkout() {
         user
       );
       if (firebaseReady && files.length > 0) await attachFiles(oid, files.map((f) => f.file));
+      finalOid = oid;
       setOrderId(oid);
       window.dispatchEvent(new CustomEvent("sk-order-complete"));
     } catch {
       // order persistence must not block a paid confirmation
-      setOrderId(`SK-${String(Date.now()).slice(-6)}`);
+      setOrderId(finalOid);
     }
+
+    // save details to the account for one-tap future checkouts (opt-out checkbox)
+    if (user && saveDetails) {
+      void saveProfile(user.uid, {
+        name: details.name, company: details.company, email: details.email,
+        phone: details.phone, website: details.website, industry: details.industry,
+        address: "", city: "", country: "",
+      });
+    }
+
+    // website packages → the intake brief doubles as the project agreement;
+    // pop it immediately post-purchase (highest-intent moment)
+    const webItem = items.find((i) => isIntakePackage(i.serviceSlug));
+    if (webItem) {
+      setIntakePkg(intakePackageFor(webItem.serviceSlug));
+      setIntakeOrderId(finalOid);
+    }
+
+    // transactional email: client receipt + studio alert (fire-and-forget, never blocks)
+    const portalUrl = `${window.location.origin}/client`;
+    const lineItems = items.map((i) => ({
+      name: i.name,
+      price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
+    }));
+    void sendEmail(orderConfirmationEmail({
+      to: details.email, name: details.name, orderId: finalOid,
+      items: lineItems, total: dueToday, portalUrl,
+    }));
+    void sendEmail(adminNewOrderEmail({
+      name: details.name, email: details.email, orderId: finalOid,
+      items: lineItems, total: dueToday,
+      adminUrl: `${window.location.origin}/admin`,
+    }));
 
     // Enhancement 4: Send magic access link so guest can log in from email
     if (firebaseReady && !user && details.email) {
@@ -148,6 +218,7 @@ export default function Checkout() {
     setPaying(false);
     track("purchase", { value: dueToday, transaction_id: res.transactionId });
     setStep(4);
+    if (webItem) setIntakeOpen(true);
     clear();
   };
 
@@ -285,6 +356,12 @@ export default function Checkout() {
                 <textarea id="f-extra" rows={3} className={inputCls} value={details.extra} onChange={set("extra")} />
               </div>
             </div>
+            {user && (
+              <label className="mt-5 flex items-center gap-3 cursor-pointer text-[13px]">
+                <input type="checkbox" className="w-4 h-4 accent-[var(--dept)]" checked={saveDetails} onChange={(e) => setSaveDetails(e.target.checked)} />
+                Save these details to my account — prefill checkout and project forms next time
+              </label>
+            )}
             <div className="mt-8 flex justify-between">
               <button type="button" className="btn btn-ghost" onClick={() => setStep(0)}>← Back</button>
               <button type="submit" className="btn btn-fill">Files <span className="btn-arrow" aria-hidden>→</span></button>
@@ -299,10 +376,25 @@ export default function Checkout() {
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="mt-6 w-full border border-dashed border-[var(--line-strong)] px-6 py-14 text-center hover:border-[var(--dept)] hover:bg-[var(--dept-soft)] transition-colors"
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+              onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+              onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(false); }}
+              onDrop={(e) => {
+                e.preventDefault(); e.stopPropagation();
+                setDragActive(false);
+                onFiles(e.dataTransfer.files);
+              }}
+              className={`mt-6 w-full border border-dashed px-6 py-14 text-center transition-colors ${
+                dragActive
+                  ? "border-[var(--dept)] bg-[var(--dept-soft)] shadow-[inset_0_0_0_1px_var(--dept)]"
+                  : "border-[var(--line-strong)] hover:border-[var(--dept)] hover:bg-[var(--dept-soft)]"
+              }`}
+              aria-label="Drop files here or browse"
             >
-              <span className="font-display text-lg font-bold uppercase block">Drop files or browse</span>
-              <span className="font-meta text-[10px] text-[var(--muted)]">Stored securely · linked to your project</span>
+              <span className="font-display text-lg font-bold uppercase block">
+                {dragActive ? "Release to add files" : "Drop files or browse"}
+              </span>
+              <span className="font-meta text-[10px] text-[var(--muted)]">Drag &amp; drop works here · Stored securely · linked to your project</span>
             </button>
             <input ref={fileRef} type="file" multiple accept={ACCEPTED.join(",")} className="sr-only" onChange={(e) => onFiles(e.target.files)} aria-label="Upload project files" />
             {fileError && <p className="font-meta text-[10px] text-red-600 mt-3" role="alert">{fileError}</p>}
@@ -357,6 +449,14 @@ export default function Checkout() {
                   <span className="font-display text-3xl font-bold">{formatMoney(dueToday, currency)}</span>
                 </div>
                 <div className="mt-6 flex flex-col gap-2">
+                  {(!details.name.trim() || !/.+@.+\..+/.test(details.email)) && (
+                    <button
+                      onClick={() => setStep(1)}
+                      className="border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 px-4 py-3 text-left text-[12px] font-medium"
+                    >
+                      ⚠ Add your name &amp; email first — we need them to deliver your order and receipt. <span className="underline font-bold">Fill in details →</span>
+                    </button>
+                  )}
                   {activeProviders().map((p) => (
                     <button key={p.id} disabled={paying} onClick={pay} className="btn btn-dept justify-center disabled:opacity-60">
                       {paying ? "Processing…" : `Pay with ${p.name}`} <span className="btn-arrow" aria-hidden>→</span>
@@ -389,6 +489,21 @@ export default function Checkout() {
                 </div>
               ))}
             </div>
+            {/* website packages: the project brief is the next step (also the agreement) */}
+            {intakePkg && (
+              <div className="mt-8 max-w-sm mx-auto border border-[var(--dept)] p-5 text-left" style={{ background: "var(--dept-soft)" }}>
+                <p className="font-meta text-[9px] dept-accent">NEXT STEP — WEBSITE PROJECT BRIEF</p>
+                <p className="text-sm mt-1">
+                  Tell the studio about your {intakePkg.name.toLowerCase()} — goals, pages, colours and files.
+                  It doubles as your signed project agreement.
+                </p>
+                <button className="btn btn-dept w-full justify-center mt-4" onClick={() => setIntakeOpen(true)}>
+                  Complete your brief <span className="btn-arrow" aria-hidden>→</span>
+                </button>
+                <p className="font-meta text-[8.5px] text-[var(--muted)] mt-2">Autosaves · about 5 minutes · also waiting in your client portal</p>
+              </div>
+            )}
+
             <p className="font-meta text-[10px] text-[var(--muted)] mt-8">Questions? {CONTACT.phone} · {CONTACT.email}</p>
 
             {/* Enhancement 4: Magic link notice */}
@@ -456,6 +571,17 @@ export default function Checkout() {
           </div>
         )}
       </div>
+
+      {/* website intake brief — pops automatically after a website purchase */}
+      {intakeOpen && intakePkg && (
+        <IntakeWizard
+          user={user}
+          pkg={intakePkg}
+          orderId={intakeOrderId}
+          prefill={{ name: details.name, email: details.email, business: details.company }}
+          onClose={() => setIntakeOpen(false)}
+        />
+      )}
     </section>
   );
 }

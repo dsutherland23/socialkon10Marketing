@@ -40,9 +40,16 @@ try {
   await page.setViewport({ width: 1600, height: 950 });
   page.on('pageerror', e => pageErrors.push(e.message));
 
-  await page.goto(URL, { waitUntil: 'networkidle0' });
+  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForFunction(() => window.__fc?.getObjects?.().length > 0, { timeout: 30000 });
   await new Promise(r => setTimeout(r, 2500));
   await page.evaluate(() => { [...document.querySelectorAll('button')].find(x => /skip/i.test(x.textContent))?.click(); });
+  await new Promise(r => setTimeout(r, 500));
+  // crash-recovery modal appears whenever a previous session left an autosaved draft — discard it for a clean baseline
+  await page.evaluate(() => {
+    const d = document.querySelector('[role="dialog"][aria-label="Unsaved version found"]');
+    if (d) [...d.querySelectorAll('button')].find(x => x.textContent.trim() === 'Discard')?.click();
+  });
   await new Promise(r => setTimeout(r, 500));
 
   const count = () => page.evaluate(() => window.__fc?.getObjects().length ?? -1);
@@ -218,7 +225,7 @@ try {
   await new Promise(r => setTimeout(r, 300));
   ok('Esc exits retouch mode', await page.evaluate(() => !document.body.textContent.includes('SPOT HEAL — PAINT')));
 
-  /* 9 — right-click context menu stays open + quick actions work */
+  /* 9 — right-click context menu: current item set, actions fire, menu closes */
   console.log('\ncontext menu');
   const textPos = await page.evaluate(() => {
     const c = window.__fc;
@@ -231,14 +238,17 @@ try {
   await page.mouse.click(textPos.x, textPos.y, { button: 'right' });
   await new Promise(r => setTimeout(r, 600));
   ok('right-click menu opens and STAYS open', await page.evaluate(() => !!document.querySelector('.s-menu')));
-  ok('text quick actions listed', await page.evaluate(() => /Warp — arc up/.test(document.querySelector('.s-menu')?.textContent ?? '')));
-  await page.evaluate(() => { [...document.querySelectorAll('.s-menu-item')].find(x => /arc down/i.test(x.textContent))?.click(); });
-  await new Promise(r => setTimeout(r, 500));
-  ok('menu item action fires (arc down warp)', await page.evaluate(() => {
-    const t = window.__fc.getObjects().find(o => /SUMMER/i.test(o.text ?? ''));
-    return t?.kWarp?.mode === 'arcDown';
+  ok('menu lists core actions', await page.evaluate(() => {
+    const t = document.querySelector('.s-menu')?.textContent ?? '';
+    return /Copy/.test(t) && /Duplicate/.test(t) && /Delete/.test(t);
   }));
+  const nCtx = await count();
+  await page.evaluate(() => { [...document.querySelectorAll('.s-menu-item')].find(x => /^Duplicate/.test(x.textContent.trim()))?.click(); });
+  await new Promise(r => setTimeout(r, 500));
+  ok('menu Duplicate adds exactly one object', (await count()) === nCtx + 1, `got ${await count()} want ${nCtx + 1}`);
   ok('menu closed after action', await page.evaluate(() => !document.querySelector('.s-menu')));
+  await key('Meta', 'z');
+  ok('undo restores count after menu duplicate', (await count()) === nCtx);
 
   /* 10 — layers panel integrity */
   console.log('\nlayers panel');
@@ -326,34 +336,32 @@ try {
   await new Promise(r => setTimeout(r, 400));
   ok('back to solid restores a plain fill', await page.evaluate(() => typeof window.__fc.getActiveObject()?.fill === 'string'));
 
-  /* 14 — floating toolbar: auto-flip below + drag away */
-  console.log('\nfloating toolbar');
-  const flip = await page.evaluate(async () => {
-    const c = window.__fc;
-    const t = c.getObjects().find(o => /textbox|itext/i.test(o.type));
-    t.set({ top: 4 }); t.setCoords(); c.renderAll();
-    c.setActiveObject(t); c.fire('selection:created', { selected: [t] });
-    await new Promise(r => setTimeout(r, 500));
-    const tb = document.querySelector('.s-toolbar')?.getBoundingClientRect();
-    if (!tb) return null;
-    const cr = c.upperCanvasEl.getBoundingClientRect();
-    const r2 = t.getBoundingRect(true, true);
-    return { tbTop: tb.top, objTop: cr.top + r2.top, objBottom: cr.top + r2.top + r2.height };
+  /* 14 — contextual selection dock: appears on selection, hides on deselect, controls work */
+  console.log('\ncontextual dock');
+  const dock = () => page.evaluate(() => {
+    const d = [...document.querySelectorAll('div')].find(x => x.className.includes('bottom-3') && x.className.includes('-translate-x-1/2') && x.className.includes('z-40'));
+    if (!d) return null;
+    return { on: d.className.includes('opacity-100'), off: d.className.includes('opacity-0') };
   });
-  ok('toolbar flips below objects at the top edge', !!flip && flip.tbTop >= flip.objBottom - 2, JSON.stringify(flip));
-  const tbBefore = await page.evaluate(() => { const r = document.querySelector('.s-toolbar').getBoundingClientRect(); return { x: r.left, y: r.top }; });
-  const gripBox = await (await page.evaluateHandle(() => document.querySelector('.s-grip'))).boundingBox();
-  if (gripBox) {
-    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(gripBox.x + 150, gripBox.y + 100, { steps: 5 });
-    await page.mouse.up();
-    await new Promise(r => setTimeout(r, 300));
-  }
-  const tbAfter = await page.evaluate(() => { const r = document.querySelector('.s-toolbar').getBoundingClientRect(); return { x: r.left, y: r.top }; });
-  ok('grip drags the toolbar out of the way',
-    !!gripBox && Math.abs(tbAfter.x - tbBefore.x) > 100 && Math.abs(tbAfter.y - tbBefore.y) > 60,
-    JSON.stringify({ tbBefore, tbAfter }));
+  await selectText('SUMMER');
+  await new Promise(r => setTimeout(r, 600));
+  const dockSel = await dock();
+  ok('dock appears when an object is selected', !!dockSel && dockSel.on, JSON.stringify(dockSel));
+  const fsDock0 = await page.evaluate(() => window.__fc.getActiveObject()?.fontSize);
+  await page.evaluate((v) => {
+    const d = [...document.querySelectorAll('div')].find(x => x.className.includes('bottom-3') && x.className.includes('-translate-x-1/2'));
+    const inp = d?.querySelector('input[aria-label="Font size"]');
+    if (!inp) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, String(v));
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  }, Math.round(fsDock0) + 6);
+  await new Promise(r => setTimeout(r, 400));
+  const fsDock1 = await page.evaluate(() => window.__fc.getActiveObject()?.fontSize);
+  ok('dock font-size input changes fontSize', fsDock1 === Math.round(fsDock0) + 6, `${fsDock0} → ${fsDock1}`);
+  await key('Escape');
+  const dockOff = await dock();
+  ok('dock hides after deselect', !!dockOff && dockOff.off, JSON.stringify(dockOff));
 
   /* 15 — magic resize: reflow, text-aware scaling, author editability */
   console.log('\nmagic resize');
@@ -376,6 +384,298 @@ try {
   ok('text bakes a real, scaled font size', postResize.fs < preResize.fs && postResize.fs >= 10 && postResize.sx === 1,
     JSON.stringify({ preResize, postResize }));
   ok('author keeps full control of locked layers after resize', postResize.lockedSelectable !== false, JSON.stringify(postResize));
+
+  /* helpers for the extended sweep */
+  const clickBtn = (re) => page.evaluate((src) => {
+    const b = [...document.querySelectorAll('button')].find(x => new RegExp(src, 'i').test(x.textContent) && !x.disabled);
+    if (b) { b.click(); return true; }
+    return false;
+  }, re);
+  const clickTip = (tip) => page.evaluate((t) => {
+    const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-label') ?? '') === t);
+    if (b && !b.disabled) { b.click(); return true; }
+    return false;
+  }, tip);
+  const dialogOpen = (label) => page.evaluate((l) => !!document.querySelector(`[role="dialog"][aria-label="${l}"]`), label);
+
+  /* 16 — top bar toggles & modals */
+  console.log('\ntop bar');
+  const snapBefore = await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /Snapping/.test(b.getAttribute('aria-label') ?? ''))?.className.includes('s-btn-on'));
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => /Snapping/.test(b.getAttribute('aria-label') ?? ''))?.click(); });
+  await new Promise(r => setTimeout(r, 300));
+  const snapAfter = await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /Snapping/.test(b.getAttribute('aria-label') ?? ''))?.className.includes('s-btn-on'));
+  ok('snap toggle flips active state', snapBefore !== snapAfter, `${snapBefore} → ${snapAfter}`);
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => /Snapping/.test(b.getAttribute('aria-label') ?? ''))?.click(); });
+
+  await clickTip('Rulers');
+  await new Promise(r => setTimeout(r, 400));
+  ok('rulers toggle renders ruler bars', await page.evaluate(() => !!document.querySelector('[title^="Ruler Unit"]')));
+  await clickTip('Rulers');
+  await new Promise(r => setTimeout(r, 300));
+  ok('rulers toggle hides ruler bars', await page.evaluate(() => !document.querySelector('[title^="Ruler Unit"]')));
+
+  await clickTip('Keyboard shortcuts · ?');
+  await new Promise(r => setTimeout(r, 300));
+  ok('shortcuts modal opens', await dialogOpen('Keyboard shortcuts'));
+  await clickBtn('^Close$');
+  await new Promise(r => setTimeout(r, 300));
+  ok('shortcuts modal closes', !(await dialogOpen('Keyboard shortcuts')));
+
+  await clickTip('Version history');
+  await new Promise(r => setTimeout(r, 400));
+  ok('version history modal opens', await dialogOpen('Version history'));
+  await clickBtn('^Close$');
+  await new Promise(r => setTimeout(r, 300));
+  ok('version history modal closes', !(await dialogOpen('Version history')));
+
+  await clickBtn('^Preview$');
+  await new Promise(r => setTimeout(r, 800));
+  const previewOpen = await dialogOpen('Design preview');
+  ok('preview overlay opens', previewOpen);
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 400));
+  ok('Escape closes preview', !(await dialogOpen('Design preview')));
+
+  /* zoom controls */
+  const z0 = await page.evaluate(() => window.__fc.getZoom());
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'Zoom in')?.click(); });
+  await new Promise(r => setTimeout(r, 300));
+  const z1 = await page.evaluate(() => window.__fc.getZoom());
+  ok('zoom-in raises canvas zoom', z1 > z0, `${z0} → ${z1}`);
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'Zoom out')?.click(); });
+  await new Promise(r => setTimeout(r, 300));
+  const z2 = await page.evaluate(() => window.__fc.getZoom());
+  ok('zoom-out restores canvas zoom', Math.abs(z2 - z0) < 0.001, `${z1} → ${z2}`);
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Fit')?.click(); });
+  await new Promise(r => setTimeout(r, 400));
+  const zFit = await page.evaluate(() => window.__fc.getZoom());
+  ok('fit zoom within bounds', zFit >= 0.15 && zFit <= 2, `got ${zFit}`);
+
+  /* 17 — text formatting panel */
+  console.log('\ntext formatting');
+  await selectText('SUMMER');
+  await new Promise(r => setTimeout(r, 500));
+  const alignBefore = await page.evaluate(() => window.__fc.getActiveObject()?.textAlign);
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === 'Align right');
+    b?.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+  const alignAfter = await page.evaluate(() => window.__fc.getActiveObject()?.textAlign);
+  ok('align button sets textAlign', alignAfter === 'right' && alignBefore !== 'right', `${alignBefore} → ${alignAfter}`);
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === 'Align center')?.click(); });
+  await new Promise(r => setTimeout(r, 300));
+
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === 'Lowercase')?.click(); });
+  await new Promise(r => setTimeout(r, 400));
+  const lower = await page.evaluate(() => window.__fc.getActiveObject()?.text);
+  ok('lowercase case button transforms text', lower === lower.toLowerCase() && /[a-z]/.test(lower), JSON.stringify(lower));
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === 'Uppercase')?.click(); });
+  await new Promise(r => setTimeout(r, 400));
+  const upper = await page.evaluate(() => window.__fc.getActiveObject()?.text);
+  ok('uppercase case button restores text', upper === upper.toUpperCase(), JSON.stringify(upper));
+
+  const fs0 = await page.evaluate(() => window.__fc.getActiveObject()?.fontSize);
+  await page.evaluate(() => {
+    const panel = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === '+');
+    panel[panel.length - 1]?.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+  const fs1 = await page.evaluate(() => window.__fc.getActiveObject()?.fontSize);
+  ok('font size + increases fontSize', fs1 === fs0 + 2, `${fs0} → ${fs1}`);
+
+  /* 18 — image panel: flip, mask, filters */
+  console.log('\nimage panel');
+  await page.evaluate(() => {
+    const c = window.__fc;
+    const img = c.getObjects().find(o => /image/i.test(o.type));
+    c.setActiveObject(img); c.renderAll();
+    c.fire('selection:created', { selected: [img] });
+  });
+  await new Promise(r => setTimeout(r, 500));
+  const flipBefore = await page.evaluate(() => window.__fc.getActiveObject()?.flipX);
+  await clickBtn('^Flip H$');
+  await new Promise(r => setTimeout(r, 300));
+  const flipAfter = await page.evaluate(() => window.__fc.getActiveObject()?.flipX);
+  ok('Flip H toggles flipX', flipAfter === !flipBefore, `${flipBefore} → ${flipAfter}`);
+  await clickBtn('^Flip H$');
+  await new Promise(r => setTimeout(r, 300));
+
+  await clickBtn('^Circle$');
+  await new Promise(r => setTimeout(r, 400));
+  const maskType = await page.evaluate(() => window.__fc.getActiveObject()?.clipPath?.type ?? 'none');
+  ok('circle mask sets a circle clipPath', maskType === 'circle', `got ${maskType}`);
+  await clickBtn('^None$');
+  await new Promise(r => setTimeout(r, 300));
+  ok('mask None clears clipPath', await page.evaluate(() => !window.__fc.getActiveObject()?.clipPath));
+
+  const gray = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('[role="switch"]')].find(x => x.textContent.trim() === 'Grayscale');
+    if (!t) return null;
+    t.click();
+    return true;
+  });
+  await new Promise(r => setTimeout(r, 500));
+  const grayOn = await page.evaluate(() => (window.__fc.getActiveObject()?.filters ?? []).some(f => /grayscale/i.test(f.type)));
+  ok('grayscale toggle adds a Grayscale filter', gray === true && grayOn, `clicked=${gray} on=${grayOn}`);
+  await page.evaluate(() => {
+    [...document.querySelectorAll('[role="switch"]')].find(x => x.textContent.trim() === 'Grayscale')?.click();
+  });
+  await new Promise(r => setTimeout(r, 400));
+  ok('grayscale toggle off removes the filter', await page.evaluate(() => !(window.__fc.getActiveObject()?.filters ?? []).some(f => /grayscale/i.test(f.type))));
+
+  /* 19 — position / blend / shadow */
+  console.log('\nposition & effects');
+  const w0 = await page.evaluate(() => Math.round(window.__fc.getActiveObject().getScaledWidth()));
+  await page.evaluate((target) => {
+    const inp = document.querySelector('input[aria-label="Width"]');
+    if (!inp) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, String(target));
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  }, w0 + 40);
+  await new Promise(r => setTimeout(r, 400));
+  const w1 = await page.evaluate(() => Math.round(window.__fc.getActiveObject().getScaledWidth()));
+  ok('width input resizes the object', w1 === w0 + 40, `${w0} → ${w1}`);
+
+  await page.select('select[aria-label="Blend mode"]', 'multiply');
+  await new Promise(r => setTimeout(r, 300));
+  ok('blend mode select applies', await page.evaluate(() => window.__fc.getActiveObject()?.globalCompositeOperation === 'multiply'));
+  await page.select('select[aria-label="Blend mode"]', 'source-over');
+  await new Promise(r => setTimeout(r, 300));
+
+  const shadow = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('[role="switch"]')].find(x => x.textContent.trim() === 'Drop shadow');
+    if (!t) return null;
+    t.click();
+    return true;
+  });
+  await new Promise(r => setTimeout(r, 400));
+  ok('drop shadow toggle adds a shadow', shadow === true && await page.evaluate(() => !!window.__fc.getActiveObject()?.shadow), `clicked=${shadow}`);
+  await page.evaluate(() => {
+    [...document.querySelectorAll('[role="switch"]')].find(x => x.textContent.trim() === 'Drop shadow')?.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+
+  /* template permission checkboxes (author mode) */
+  const perm = await page.evaluate(() => {
+    const lbl = [...document.querySelectorAll('label')].find(x => x.textContent.trim() === 'Movable');
+    const box = lbl?.querySelector('input[type="checkbox"]');
+    if (!box) return null;
+    const before = box.checked;
+    box.click();
+    return { before, after: box.checked };
+  });
+  ok('template permission checkbox toggles', !!perm && perm.before !== perm.after, JSON.stringify(perm));
+  if (perm) {
+    ok('kMovable written to the object', await page.evaluate(() => window.__fc.getActiveObject()?.kMovable === false));
+    await page.evaluate(() => { [...document.querySelectorAll('label')].find(x => x.textContent.trim() === 'Movable')?.querySelector('input')?.click(); });
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  /* 20 — layers panel: visibility eye + folder create */
+  console.log('\nlayers panel extras');
+  await page.evaluate(() => {
+    if (!document.querySelector('.s-layer')) {
+      [...document.querySelectorAll('button')].find(x => x.textContent.trim().toUpperCase() === 'LAYERS')?.click();
+    }
+  });
+  await new Promise(r => setTimeout(r, 500));
+  const eye = await page.evaluate(() => {
+    const c = window.__fc;
+    const target = c.getObjects().find(o => /textbox/i.test(o.type) && /SUMMER/i.test(o.text ?? ''));
+    const row = [...document.querySelectorAll('.s-layer')].find(r => r.textContent.includes(target.kName));
+    const btn = row && [...row.querySelectorAll('button')].find(b => /hide|show|visibility|visible/i.test((b.title ?? '') + (b.getAttribute('aria-label') ?? '')));
+    if (!btn) return null;
+    const wasVisible = target.visible;
+    btn.click();
+    return { wasVisible, name: target.kName };
+  });
+  await new Promise(r => setTimeout(r, 400));
+  const visNow = await page.evaluate(() => {
+    const t = window.__fc.getObjects().find(o => /textbox/i.test(o.type) && /SUMMER/i.test(o.text ?? ''));
+    return t?.visible;
+  });
+  ok('layers eye toggles object visibility', !!eye && visNow === !eye.wasVisible, JSON.stringify({ eye, visNow }));
+  await page.evaluate(() => {
+    const t = window.__fc.getObjects().find(o => /textbox/i.test(o.type) && /SUMMER/i.test(o.text ?? ''));
+    const row = [...document.querySelectorAll('.s-layer')].find(r => r.textContent.includes(t.kName));
+    const btn = row && [...row.querySelectorAll('button')].find(b => /hide|show|visibility|visible/i.test((b.title ?? '') + (b.getAttribute('aria-label') ?? '')));
+    btn?.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+
+  /* 21 — pages: add / duplicate / delete / switch-back */
+  console.log('\npages');
+  const openPages = () => page.evaluate(() => {
+    if (![...document.querySelectorAll('button')].some(b => b.title === 'Open page · double-click to rename')) {
+      [...document.querySelectorAll('button')].find(x => x.textContent.trim().toUpperCase() === 'PAGES')?.click();
+    }
+  });
+  await openPages();
+  await new Promise(r => setTimeout(r, 500));
+  const pageCount = () => page.evaluate(() => [...document.querySelectorAll('button')].filter(b => b.title === 'Open page · double-click to rename').length);
+  const pages0 = await pageCount();
+  await clickBtn('^\\+ New page$');
+  await new Promise(r => setTimeout(r, 900));
+  ok('new page adds a row', (await pageCount()) === pages0 + 1, `got ${await pageCount()} want ${pages0 + 1}`);
+  const onBlank = await page.evaluate(() => window.__fc.getObjects().length);
+  ok('new page switches to a blank canvas', onBlank === 0, `got ${onBlank}`);
+  const dupeBtn = await page.evaluate(() => {
+    const row = document.querySelector('.s-layer.s-layer-active');
+    const b = row && [...row.querySelectorAll('button')].find(x => x.title === 'Duplicate page');
+    if (b) { b.click(); return true; }
+    return false;
+  });
+  await new Promise(r => setTimeout(r, 900));
+  ok('duplicate page button adds a row', dupeBtn === true && (await pageCount()) === pages0 + 2, `got ${await pageCount()}`);
+  const delBtn = await page.evaluate(() => {
+    const row = document.querySelector('.s-layer.s-layer-active');
+    const b = row && [...row.querySelectorAll('button')].find(x => x.title === 'Delete page');
+    if (b) { b.click(); return true; }
+    return false;
+  });
+  await new Promise(r => setTimeout(r, 900));
+  ok('delete page button removes a row', delBtn === true && (await pageCount()) === pages0 + 1, `got ${await pageCount()}`);
+  /* switch back to page 1 and confirm objects restore */
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => b.title === 'Open page · double-click to rename')?.click(); });
+  await new Promise(r => setTimeout(r, 900));
+  const backHome = await page.evaluate(() => window.__fc.getObjects().length);
+  ok('switching back to page 1 restores its objects', backHome >= 5, `got ${backHome}`);
+  /* cleanup: remove the extra blank page so later sections see the template */
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.s-layer')].filter(r => r.querySelector('button[title="Open page · double-click to rename"]'));
+    rows[rows.length - 1]?.querySelector('button[title="Open page · double-click to rename"]')?.click();
+  });
+  await new Promise(r => setTimeout(r, 700));
+  await page.evaluate(() => {
+    const row = document.querySelector('.s-layer.s-layer-active');
+    [...(row?.querySelectorAll('button') ?? [])].find(x => x.title === 'Delete page')?.click();
+  });
+  await new Promise(r => setTimeout(r, 900));
+  await page.evaluate(() => { [...document.querySelectorAll('button')].find(b => b.title === 'Open page · double-click to rename')?.click(); });
+  await new Promise(r => setTimeout(r, 900));
+
+  /* 22 — export dialog controls */
+  console.log('\nexport dialog');
+  await clickBtn('^Download$');
+  await new Promise(r => setTimeout(r, 900));
+  ok('export dialog opens', await dialogOpen('Download design'));
+  const fmtBtns = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Download design"] button')]
+    .map(b => b.textContent.trim()).filter(t => /^(png|jpg|svg|pdf|psd)/i.test(t)));
+  ok('export dialog lists format options', fmtBtns.length >= 2, JSON.stringify(fmtBtns));
+  await page.evaluate(() => {
+    [...document.querySelectorAll('[role="dialog"][aria-label="Download design"] button')]
+      .find(b => /^jpg/i.test(b.textContent.trim()))?.click();
+  });
+  await new Promise(r => setTimeout(r, 500));
+  ok('JPG format reveals quality slider', await page.evaluate(() => /JPG Quality/i.test(document.body.textContent)));
+  await page.evaluate(() => {
+    [...document.querySelectorAll('[role="dialog"][aria-label="Download design"] button')]
+      .find(b => b.textContent.trim() === 'Cancel')?.click();
+  });
+  await new Promise(r => setTimeout(r, 400));
+  ok('export dialog cancels cleanly', !(await dialogOpen('Download design')));
 
   /* summary */
   console.log('\n—'.repeat(20));

@@ -4747,11 +4747,10 @@ export default function Editor() {
             </svg>
             Share
           </button>
-          {isAuthor ? (
+          {isAuthor && (
             <button className="s-btn s-btn-acc" onClick={publish}>Publish</button>
-          ) : (
-            <button className="s-btn s-btn-acc" onClick={openExport}>Download</button>
           )}
+          <button className="s-btn s-btn-line" onClick={openExport}>Download</button>
           <button className="s-btn" onClick={() => {
             const d = designRef.current;
             if (d && navigator.onLine) void persistNow(d.id);

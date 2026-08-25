@@ -30,7 +30,7 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (signedIn()
             && resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes', 'lastClientMessageAt', 'lastClientMessageBy', 'completedAt'])
             && (request.resource.data.status == resource.data.status
                 || request.resource.data.status in ['REVISION', 'FINAL APPROVAL', 'CLIENT REVIEW']))
         || (signedIn()
@@ -64,6 +64,37 @@ service cloud.firestore {
         && request.resource.data.email is string
         && request.resource.data.message is string;
       allow read, update, delete: if isAdmin();
+    }
+
+    // Website client intakes (project briefs + signed agreements)
+    // Guests can start a brief right after checkout (uid null, id is unguessable);
+    // once claimed by an account, only that client + admin can touch it.
+    match /intakes/{intakeId} {
+      allow create: if true
+        && request.resource.data.email is string
+        && (request.resource.data.uid == null
+            || (signedIn() && request.resource.data.uid == request.auth.uid));
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid)
+        || resource.data.uid == null;
+      allow delete: if isAdmin();
+    }
+
+    // Saved client profiles (account details → faster checkout prefill)
+    match /profiles/{uid} {
+      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    // Transactional email queue (Trigger Email extension) — write-only, never readable
+    match /mail/{id} {
+      allow create: if true
+        && request.resource.data.to is string
+        && request.resource.data.message.subject is string
+        && request.resource.data.message.html is string
+        && request.resource.data.message.subject.size() <= 200
+        && request.resource.data.message.html.size() <= 100000;
+      allow read, update, delete: if false;
     }
 
     // Site settings: Public reads, admin writes

@@ -25,7 +25,7 @@ export interface OrderRecord {
   email: string;
   name: string;
   company: string;
-  items: { name: string; tierLabel?: string; unitPrice: number; addons: { name: string; price: number }[]; rush: boolean; billing: string; templateSlug?: string; license?: string; version?: string }[];
+  items: { name: string; serviceSlug?: string; tierLabel?: string; unitPrice: number; addons: { name: string; price: number }[]; rush: boolean; billing: string; templateSlug?: string; license?: string; version?: string }[];
   subtotal: number;
   discount: number;
   total: number;
@@ -37,6 +37,12 @@ export interface OrderRecord {
   files: { name: string; size: number; path?: string }[];
   status: OrderStatus;
   createdAt: string;
+  /** set automatically when status → COMPLETED (history archive); cleared if the order is reopened */
+  completedAt?: string | null;
+  /** chat read-tracking: set when the client posts; studioReadAt when the studio views the thread */
+  lastClientMessageAt?: string;
+  lastClientMessageBy?: string;
+  studioReadAt?: string;
 }
 
 export interface LeadRecord {
@@ -174,6 +180,36 @@ function notifyContentChanged() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("sk-content-changed"));
 }
 
+/** Firestore Timestamp | ISO string → ISO string (undefined when absent). */
+const tsToIso = (v: unknown): string | undefined => {
+  const t = (v as { toDate?: () => Date } | null | undefined)?.toDate?.()?.toISOString?.();
+  if (t) return t;
+  return typeof v === "string" && v ? v : undefined;
+};
+
+/** True when the client has posted in the project chat since the studio last viewed it. */
+export const orderHasUnreadClientMessage = (o: OrderRecord): boolean =>
+  !!o.lastClientMessageAt && (!o.studioReadAt || o.lastClientMessageAt > o.studioReadAt);
+
+function normalizeOrder(id: string, data: Record<string, unknown>): OrderRecord {
+  const rec: OrderRecord = {
+    ...(data as unknown as OrderRecord),
+    id,
+    files: Array.isArray(data.files) ? (data.files as OrderRecord["files"]) : [],
+    createdAt: tsToIso(data.createdAt) ?? "",
+  };
+  const lc = tsToIso(data.lastClientMessageAt);
+  const sr = tsToIso(data.studioReadAt);
+  if (lc) rec.lastClientMessageAt = lc; else delete rec.lastClientMessageAt;
+  if (sr) rec.studioReadAt = sr; else delete rec.studioReadAt;
+  const ca = tsToIso(data.completedAt);
+  if (ca) rec.completedAt = ca; else delete rec.completedAt;
+  return rec;
+}
+
+/** History membership: an order auto-archives the moment it's tagged COMPLETED. */
+export const isOrderHistory = (o: OrderRecord): boolean => o.status === "COMPLETED";
+
 /* ---------------- orders ---------------- */
 
 export async function createOrder(
@@ -226,15 +262,7 @@ export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
     const q = query(collection(db, "orders"), where("uid", "==", user.uid));
     const snap = await getDocs(q);
     return snap.docs
-      .map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          ...data,
-          files: Array.isArray(data.files) ? data.files : [],
-          createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? (typeof data.createdAt === "string" ? data.createdAt : "")
-        } as OrderRecord;
-      })
+      .map((d) => normalizeOrder(d.id, d.data()))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } catch {
     return [];
@@ -248,15 +276,7 @@ export async function listAllOrders(): Promise<OrderRecord[]> {
   }
   try {
     const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc")));
-    return snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        id: d.id,
-        ...data,
-        files: Array.isArray(data.files) ? data.files : [],
-        createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? (typeof data.createdAt === "string" ? data.createdAt : "")
-      } as OrderRecord;
-    });
+    return snap.docs.map((d) => normalizeOrder(d.id, d.data()));
   } catch {
     return [];
   }
@@ -273,12 +293,15 @@ export async function deleteOrder(id: string): Promise<void> {
 }
 
 export async function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
+  // Auto-archive: entering COMPLETED stamps the completion date (history record);
+  // reopening (any other status) clears it so the order returns to active lists.
+  const completedAt = status === "COMPLETED" ? new Date().toISOString() : null;
   if (!firebaseReady || !db) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
-    await idbSet("sk-demo-orders", orders.map((o) => (o.id === id ? { ...o, status } : o)));
+    await idbSet("sk-demo-orders", orders.map((o) => (o.id === id ? { ...o, status, completedAt: completedAt ?? undefined } : o)));
     return;
   }
-  await updateDoc(doc(db, "orders", id), { status });
+  await updateDoc(doc(db, "orders", id), { status, completedAt });
 }
 
 /** Delete a specific file from an order's deliverables vault. */
@@ -930,20 +953,58 @@ export async function postMessage(
     createdAt: new Date().toISOString(),
   };
 
+  // stamp the order so the studio alert center can see unread client messages
+  const touchLocalOrder = async () => {
+    if (from !== "client") return;
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet(
+      "sk-demo-orders",
+      orders.map((o) =>
+        o.id === orderId ? { ...o, lastClientMessageAt: new Date().toISOString(), lastClientMessageBy: author } : o
+      )
+    );
+  };
+
   if (!firebaseReady || !db) {
     const xs = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
     xs.push(localEntry);
     await idbSet("sk-demo-messages", xs);
+    await touchLocalOrder();
     return;
   }
 
   try {
     await addDoc(collection(db, "orders", orderId, "messages"), { ...msg, createdAt: serverTimestamp() });
+    if (from === "client") {
+      try {
+        await updateDoc(doc(db, "orders", orderId), { lastClientMessageAt: serverTimestamp(), lastClientMessageBy: author });
+      } catch (touchErr) {
+        console.warn("Order unread-stamp failed (message was posted):", touchErr);
+      }
+    }
   } catch (err) {
     console.warn("Firestore addDoc error, saving locally:", err);
     const xs = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
     xs.push(localEntry);
     await idbSet("sk-demo-messages", xs);
+    await touchLocalOrder();
+  }
+}
+
+/** Mark a project thread as read by the studio (clears the unread-message alert). */
+export async function markThreadReadForStudio(orderId: string): Promise<void> {
+  if (!firebaseReady || !db) {
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet(
+      "sk-demo-orders",
+      orders.map((o) => (o.id === orderId ? { ...o, studioReadAt: new Date().toISOString() } : o))
+    );
+    return;
+  }
+  try {
+    await updateDoc(doc(db, "orders", orderId), { studioReadAt: serverTimestamp() });
+  } catch (err) {
+    console.warn("markThreadReadForStudio failed:", err);
   }
 }
 
@@ -1016,6 +1077,7 @@ export async function recordPayment(orderId: string, amountUsd: number): Promise
 export function cartToOrderItems(items: CartItem[]) {
   return items.map((i) => ({
     name: i.name,
+    serviceSlug: i.serviceSlug,
     tierLabel: i.tierLabel,
     unitPrice: i.unitPrice,
     addons: i.addons.map((a) => ({ name: a.name, price: a.price })),

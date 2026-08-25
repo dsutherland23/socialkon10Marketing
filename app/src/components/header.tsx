@@ -263,10 +263,38 @@ function ServicesMenu({ open, onClose }: { open: boolean; onClose: () => void })
   );
 }
 
+type MenuId = "services" | "store" | "company";
+
+/** 2026 hover-intent: small delay before open, grace period before close —
+ *  prevents accidental triggers and lets the pointer travel diagonally into panels. */
+function useMenuIntent() {
+  const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  const openNow = (m: MenuId | null) => { clear(); setOpenMenu(m); };
+  const openIntent = (m: MenuId) => { clear(); timer.current = setTimeout(() => setOpenMenu(m), 120); };
+  const closeIntent = () => { clear(); timer.current = setTimeout(() => setOpenMenu(null), 220); };
+  const toggle = (m: MenuId) => { clear(); setOpenMenu((cur) => (cur === m ? null : m)); };
+  useEffect(() => clear, []);
+  return { openMenu, openNow, openIntent, closeIntent, toggle };
+}
+
+/** Unified dropdown indicator — one rotating chevron everywhere. */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-block text-[9px] opacity-70 transition-transform duration-200"
+      style={{ transform: open ? "rotate(180deg)" : "none" }}
+    >▾</span>
+  );
+}
+
 export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
-  const [servicesOpen, setServicesOpen] = useState(false);
-  const [storeOpen, setStoreOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const { openMenu, openNow, openIntent, closeIntent, toggle } = useMenuIntent();
+  const servicesOpen = openMenu === "services";
+  const storeOpen = openMenu === "store";
+  const companyOpen = openMenu === "company";
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [shuffleDept, setShuffleDept] = useState<string | null>(null);
@@ -278,11 +306,12 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
 
   // close menus on route change / escape
   useEffect(() => {
-    const close = () => { setServicesOpen(false); setStoreOpen(false); setMobileOpen(false); setMoreOpen(false); };
+    const close = () => { openNow(null); setMobileOpen(false); };
     window.addEventListener("popstate", close);
     const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", esc);
     return () => { window.removeEventListener("popstate", close); window.removeEventListener("keydown", esc); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // subtle elevation once the page scrolls
@@ -293,19 +322,18 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // click-outside for services + store + more menus
+  // click-outside for the mega menus
   useEffect(() => {
-    if (!servicesOpen && !storeOpen && !moreOpen) return;
+    if (!openMenu) return;
     const fn = (e: MouseEvent) => {
       if (headerRef.current && !headerRef.current.contains(e.target as Node)) {
-        setServicesOpen(false);
-        setStoreOpen(false);
-        setMoreOpen(false);
+        openNow(null);
       }
     };
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
-  }, [servicesOpen, storeOpen, moreOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openMenu]);
 
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? "hidden" : "";
@@ -326,13 +354,15 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
           {/* desktop nav — only at xl+; below that the drawer takes over (no overflow, no wrap) */}
           <nav className="hidden xl:flex items-center gap-6" aria-label="Primary">
             <button
-              className={`font-meta text-[11px] u-line whitespace-nowrap ${servicesOpen || routeDept ? "text-[var(--dept)]" : ""}`}
+              className={`font-meta text-[11px] u-line whitespace-nowrap flex items-center gap-1 ${servicesOpen || routeDept ? "text-[var(--dept)]" : ""}`}
               aria-expanded={servicesOpen}
               aria-haspopup="menu"
-              onClick={() => { setServicesOpen((v) => !v); setStoreOpen(false); setMoreOpen(false); }}
-              onMouseEnter={() => { setServicesOpen(true); setStoreOpen(false); setMoreOpen(false); }}
+              aria-controls="menu-services"
+              onClick={() => toggle("services")}
+              onMouseEnter={() => openIntent("services")}
+              onMouseLeave={closeIntent}
             >
-              Services {servicesOpen ? "—" : "+"}
+              Services <Chevron open={servicesOpen} />
             </button>
 
             <NavLink to="/work" className={navCls}>Work</NavLink>
@@ -342,27 +372,32 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
               className={`font-meta text-[11px] u-line whitespace-nowrap flex items-center gap-1 ${storeOpen ? "text-[var(--dept)]" : ""}`}
               aria-expanded={storeOpen}
               aria-haspopup="menu"
-              onClick={() => { setStoreOpen((v) => !v); setServicesOpen(false); setMoreOpen(false); }}
-              onMouseEnter={() => { setStoreOpen(true); setServicesOpen(false); setMoreOpen(false); }}
+              aria-controls="menu-store"
+              onClick={() => toggle("store")}
+              onMouseEnter={() => openIntent("store")}
+              onMouseLeave={closeIntent}
             >
-              <span>Store</span>
-              <span className="text-[9px] opacity-70">{storeOpen ? "—" : "▾"}</span>
+              Store <Chevron open={storeOpen} />
             </button>
 
             <div className="relative">
               <button
-                className={`font-meta text-[11px] u-line whitespace-nowrap ${moreOpen ? "text-[var(--dept)]" : ""}`}
-                aria-expanded={moreOpen}
+                className={`font-meta text-[11px] u-line whitespace-nowrap flex items-center gap-1 ${companyOpen ? "text-[var(--dept)]" : ""}`}
+                aria-expanded={companyOpen}
                 aria-haspopup="menu"
-                onClick={() => { setMoreOpen((v) => !v); setServicesOpen(false); setStoreOpen(false); }}
+                aria-controls="menu-company"
+                onClick={() => toggle("company")}
+                onMouseEnter={() => openIntent("company")}
+                onMouseLeave={closeIntent}
               >
-                More {moreOpen ? "—" : "+"}
+                Company <Chevron open={companyOpen} />
               </button>
-              {moreOpen && (
-                <div className="absolute right-0 top-full mt-3 border border-[var(--line)] min-w-[168px] py-1.5 z-50"
-                  style={{ background: "var(--bg)", boxShadow: "0 18px 44px rgb(0 0 0 / 0.10)" }} role="menu">
+              {companyOpen && (
+                <div id="menu-company" className="absolute right-0 top-full mt-3 border border-[var(--line)] min-w-[168px] py-1.5 z-50"
+                  style={{ background: "var(--bg)", boxShadow: "0 18px 44px rgb(0 0 0 / 0.10)" }} role="menu" aria-label="Company menu"
+                  onMouseEnter={() => openNow("company")} onMouseLeave={closeIntent}>
                   {[["/about", "About"], ["/insights", "Insights"], ["/client", "Client portal"]].map(([to, label]) => (
-                    <NavLink key={to} to={to} role="menuitem" onClick={() => setMoreOpen(false)}
+                    <NavLink key={to} to={to} role="menuitem" onClick={() => openNow(null)}
                       className="block px-4 py-2.5 font-meta text-[11px] hover:text-[var(--dept)] hover:bg-[var(--dept-soft)] transition-colors">
                       {label}
                     </NavLink>
@@ -420,12 +455,12 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
           </div>
         </div>
 
-        <div onMouseLeave={() => setServicesOpen(false)}>
-          <ServicesMenu open={servicesOpen} onClose={() => setServicesOpen(false)} />
+        <div id="menu-services" onMouseEnter={() => servicesOpen && openNow("services")} onMouseLeave={closeIntent}>
+          <ServicesMenu open={servicesOpen} onClose={() => openNow(null)} />
         </div>
 
-        <div onMouseLeave={() => setStoreOpen(false)}>
-          <StoreMenu open={storeOpen} onClose={() => setStoreOpen(false)} />
+        <div id="menu-store" onMouseEnter={() => storeOpen && openNow("store")} onMouseLeave={closeIntent}>
+          <StoreMenu open={storeOpen} onClose={() => openNow(null)} />
         </div>
       </div>
 
@@ -502,6 +537,33 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
                   {label}
                 </Link>
               ))}
+            </div>
+
+            {/* Account + utility — mobile users otherwise have no auth or cart entry point */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {firebaseReady && (
+                <Link
+                  to={user ? (isAdmin ? "/admin" : "/client") : "/auth"}
+                  onClick={() => setMobileOpen(false)}
+                  className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
+                >
+                  {user ? (isAdmin ? "Studio admin" : "My account") : "Sign in"}
+                </Link>
+              )}
+              <Link
+                to="/checkout"
+                onClick={() => setMobileOpen(false)}
+                className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
+              >
+                Cart · {String(count).padStart(2, "0")}
+              </Link>
+              <button
+                onClick={onOpenCommand}
+                className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
+                aria-label="Open command menu"
+              >
+                ⌘K Command
+              </button>
             </div>
 
             <Link to="/start" onClick={() => setMobileOpen(false)} className="btn btn-dept mt-4 justify-center">

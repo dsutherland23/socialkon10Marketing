@@ -6,11 +6,12 @@ import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
 import { useAuth } from "../lib/auth";
 import {
-  ORDER_STATUSES, listAllOrders, listLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile,
+  ORDER_STATUSES, listAllOrders, listLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile, isOrderHistory,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
-  getSettings, saveSettings, convertLeadToOrder, recordPayment,
+  getSettings, saveSettings, convertLeadToOrder, recordPayment, createOrder,
   uploadImage, getFileUrl, attachFiles, postMessage,
+  markThreadReadForStudio, orderHasUnreadClientMessage,
   type LeadRecord, type ManagedItem, type OrderRecord, type ServiceOverride, type SiteSettings,
 } from "../lib/backend";
 import { HOME_SECTIONS } from "../lib/content";
@@ -27,6 +28,13 @@ import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
 import { listAllCustomerDesigns, deleteDesign, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
 import { useTemplates } from "../lib/templates";
+import {
+  listAllIntakes, setIntakeStatus, INTAKE_STATUSES,
+  intakePackageFor, intakeSteps, fieldVisible,
+  INTAKE_ADDONS, RECURRING_SERVICES,
+  type IntakeRecord,
+} from "../lib/intake";
+import { sendEmail, proposalEmail } from "../lib/email";
 
 /* ------------------------------------------------------------------
    ADMIN DASHBOARD (PRD §33, §67, §68, §85)
@@ -415,7 +423,7 @@ function OrderStudioWorkspace({ order, onReload }: { order: OrderRecord; onReloa
 function Orders() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
-  const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "COMPLETED">("ALL");
+  const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ALL");
   const [search, setSearch] = useState("");
   const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
   const [uploadingVault, setUploadingVault] = useState(false);
@@ -437,14 +445,17 @@ function Orders() {
     }
   }, [orders, selectedId]);
 
-  const activeOrders = orders.filter((o) => !["DELIVERED", "COMPLETED"].includes(o.status));
+  // Active = everything not yet COMPLETED (DELIVERED still needs final sign-off).
+  // History = auto-archive — the moment an order is tagged COMPLETED it lands here.
+  const activeOrders = orders.filter((o) => !isOrderHistory(o));
   const reviewOrders = orders.filter((o) => ["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status));
-  const completedOrders = orders.filter((o) => ["DELIVERED", "COMPLETED"].includes(o.status));
+  const historyOrders = orders
+    .filter(isOrderHistory)
+    .sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt));
 
-  const filteredOrders = orders.filter((o) => {
-    if (filter === "ACTIVE" && ["DELIVERED", "COMPLETED"].includes(o.status)) return false;
+  const filteredOrders = (filter === "HISTORY" ? historyOrders : orders).filter((o) => {
+    if (filter === "ACTIVE" && isOrderHistory(o)) return false;
     if (filter === "REVIEW" && !["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status)) return false;
-    if (filter === "COMPLETED" && !["DELIVERED", "COMPLETED"].includes(o.status)) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       const matchId = o.id.toLowerCase().includes(q);
@@ -457,6 +468,12 @@ function Orders() {
   });
 
   const current = orders.find((o) => o.id === selectedId) ?? filteredOrders[0] ?? orders[0];
+  const currentId = current?.id;
+
+  // opening a chat thread marks it read for the studio (clears alert badges)
+  useEffect(() => {
+    if (cockpitTab === "chat" && currentId) void markThreadReadForStudio(currentId);
+  }, [cockpitTab, currentId]);
 
   const getStatusColor = (status: OrderRecord["status"]) => {
     if (["DELIVERED", "COMPLETED"].includes(status)) return "bg-emerald-500/10 text-emerald-500 border-emerald-500/30";
@@ -538,6 +555,21 @@ function Orders() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* volume + revenue summary — every recorded order accounted for */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
+        {[
+          { label: "All orders recorded", value: String(orders.length), warn: false },
+          { label: "Revenue collected", value: formatMoney(orders.reduce((s, o) => s + (o.amountPaid || 0), 0)), warn: false },
+          { label: "Balances outstanding", value: formatMoney(orders.reduce((s, o) => s + (o.balanceDue || 0), 0)), warn: orders.some((o) => o.balanceDue > 0) },
+          { label: "Needs studio action", value: String(orders.filter((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length), warn: orders.some((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)) },
+        ].map((s) => (
+          <div key={s.label} className="p-4" style={{ background: "var(--panel)" }}>
+            <span className="font-meta text-[9px] text-[var(--muted)] uppercase">{s.label}</span>
+            <p className={`font-display text-xl font-bold mt-1 ${s.warn ? "text-amber-600" : ""}`}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
       {/* Search & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter orders">
@@ -566,12 +598,12 @@ function Orders() {
             Action / Review ({reviewOrders.length})
           </button>
           <button
-            onClick={() => setFilter("COMPLETED")}
+            onClick={() => setFilter("HISTORY")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
-              filter === "COMPLETED" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              filter === "HISTORY" ? "bg-emerald-600 text-white border-emerald-600" : "border-[var(--line)] text-[var(--muted)] hover:border-emerald-600"
             }`}
           >
-            Delivered ({completedOrders.length})
+            History · Completed ({historyOrders.length})
           </button>
         </div>
 
@@ -583,6 +615,9 @@ function Orders() {
           className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-72"
         />
       </div>
+
+      {/* Closed-business report — visible in the History archive */}
+      {filter === "HISTORY" && <HistoryReport orders={historyOrders} />}
 
       {orders.length === 0 ? (
         <div className="border border-[var(--line)] p-12 text-center" style={{ background: "var(--panel)" }}>
@@ -627,9 +662,18 @@ function Orders() {
                     {o.items.map((i) => i.name).join(" · ")}
                   </h4>
 
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 truncate">
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 truncate flex items-center gap-1.5">
+                    {orderHasUnreadClientMessage(o) && (
+                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" role="img" aria-label="Unread client message" title="Unread client message" />
+                    )}
                     {o.name} {o.company ? `(${o.company})` : ""} · {o.email}
                   </p>
+
+                  {isOrderHistory(o) && (
+                    <p className="font-meta text-[9px] text-emerald-600 mt-1">
+                      ✓ Archived {o.completedAt ? new Date(o.completedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"}
+                    </p>
+                  )}
 
                   <div className="mt-3 flex items-center justify-between text-[11px] font-meta text-[var(--muted)]">
                     <span>Step {sIdx + 1}/8 · {pct}%</span>
@@ -748,6 +792,9 @@ function Orders() {
                   }`}
                 >
                   💬 Client Chat Thread
+                  {current && orderHasUnreadClientMessage(current) && (
+                    <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse ml-1.5 align-middle" role="img" aria-label="Unread client message" title="Unread client message" />
+                  )}
                 </button>
                 <button
                   onClick={() => setCockpitTab("vault")}
@@ -1049,6 +1096,402 @@ function Leads() {
             </select>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ================= CLIENT INTAKES (website briefs + signed agreements) ================= */
+
+const LEAD_BADGE: Record<string, string> = {
+  "Enterprise / Priority": "#7c3aed",
+  "High Value": "#059669",
+  "Standard": "#2563eb",
+  "Low Priority": "#6b7280",
+};
+
+function IntakeAssetLink({ asset }: { asset: IntakeRecord["assets"][number] }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => { if (asset.path) getFileUrl(asset.path).then(setUrl); }, [asset.path]);
+  return url ? (
+    <a href={url} target="_blank" rel="noreferrer" className="font-meta text-[10px] dept-accent u-line">{asset.name} ({(asset.size / 1024 / 1024).toFixed(1)}MB)</a>
+  ) : (
+    <span className="font-meta text-[10px] text-[var(--muted)]">{asset.name} ({(asset.size / 1024 / 1024).toFixed(1)}MB)</span>
+  );
+}
+
+/** Convert a signed brief into a payable proposal order (spec: final quote requires admin approval). */
+/** Closed-business report for the History archive — totals + per-month breakdown. */
+function HistoryReport({ orders }: { orders: OrderRecord[] }) {
+  const revenue = orders.reduce((s, o) => s + (o.amountPaid || 0), 0);
+  const outstanding = orders.reduce((s, o) => s + Math.max(0, o.balanceDue || 0), 0);
+  const avg = orders.length ? revenue / orders.length : 0;
+
+  // Last 6 calendar months (including empty ones) — grouped by completion date
+  const months: { key: string; label: string; count: number; revenue: number }[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: d.toLocaleDateString(undefined, { month: "short" }),
+      count: 0,
+      revenue: 0,
+    });
+  }
+  for (const o of orders) {
+    const d = new Date(o.completedAt ?? o.createdAt);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const bucket = months.find((m) => m.key === key);
+    if (bucket) { bucket.count++; bucket.revenue += o.amountPaid || 0; }
+  }
+  const maxRev = Math.max(...months.map((m) => m.revenue), 1);
+
+  return (
+    <div className="mb-6 border border-emerald-600/30 bg-emerald-500/5 rounded-xl p-5 md:p-6" aria-label="Closed business report">
+      <div className="flex flex-wrap items-end justify-between gap-6">
+        <div>
+          <span className="idx">/closed-business</span>
+          <p className="font-display text-2xl font-bold mt-1">{formatMoney(revenue)}</p>
+          <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
+            collected across {orders.length} completed order{orders.length === 1 ? "" : "s"} · avg {formatMoney(Math.round(avg))}
+            {outstanding > 0 && <span className="text-amber-600"> · {formatMoney(outstanding)} still outstanding</span>}
+          </p>
+        </div>
+        <div className="flex items-end gap-3" role="img" aria-label="Monthly completed revenue, last 6 months">
+          {months.map((m) => (
+            <div key={m.key} className="flex flex-col items-center gap-1 w-12" title={`${m.label}: ${formatMoney(m.revenue)} across ${m.count} order(s)`}>
+              <span className="font-meta text-[8px] text-[var(--muted)]">{m.revenue > 0 ? formatMoney(m.revenue) : ""}</span>
+              <div className="w-6 bg-emerald-600/15 rounded-sm flex items-end" style={{ height: 56 }}>
+                <div className="w-full bg-emerald-600 rounded-sm transition-all" style={{ height: `${Math.max(m.revenue > 0 ? 6 : 0, (m.revenue / maxRev) * 100)}%` }} />
+              </div>
+              <span className="font-meta text-[9px] text-[var(--muted)]">{m.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () => void }) {
+  const addonsTotal = intake.selectedAddons.reduce((s, id) => s + (INTAKE_ADDONS.find((a) => a.id === id)?.price ?? 0), 0);
+  const isAddonOnly = !!intake.orderId; // package already paid → bill only the extras
+  const defaultAmount = isAddonOnly ? addonsTotal : (intake.estimate?.oneTime ?? 0);
+  const monthly = intake.estimate?.monthly ?? 0;
+  const [amount, setAmount] = useState(String(defaultAmount));
+  const [busy, setBusy] = useState(false);
+  const [sentId, setSentId] = useState<string | null>(null);
+
+  if (sentId) {
+    return (
+      <p className="mt-4 border border-emerald-500/40 bg-emerald-500/10 text-emerald-600 px-4 py-3 font-meta text-[10px]">
+        ✓ PROPOSAL SENT — order #ORD-{sentId.slice(0, 7).toUpperCase()} is now payable in the client's portal. Status → QUOTED.
+      </p>
+    );
+  }
+  if (isAddonOnly && addonsTotal === 0 && intake.status !== "quoted") {
+    return (
+      <p className="mt-4 font-meta text-[9px] text-[var(--muted)]">
+        Package already paid via linked order — no add-ons selected, nothing further to bill.
+      </p>
+    );
+  }
+
+  const send = async () => {
+    const amt = Math.round(Number(amount) || 0);
+    if (amt <= 0) { toast.error("Enter a valid proposal amount."); return; }
+    setBusy(true);
+    try {
+      const desc = isAddonOnly
+        ? `Add-ons per signed brief — ${intake.packageName}`
+        : `Website project per signed brief — ${intake.packageName}`;
+      const oid = await createOrder({
+        email: intake.email,
+        name: String(intake.answers?.contact_name ?? ""),
+        company: String(intake.answers?.business_name ?? ""),
+        items: [{ name: desc, serviceSlug: intake.packageSlug, unitPrice: amt, addons: [], rush: false, billing: "one_time" }],
+        subtotal: amt, discount: 0, total: amt,
+        payMode: "deposit", amountPaid: 0, balanceDue: amt,
+        promo: null,
+        details: {
+          source: `intake:${intake.id}`,
+          ...(intake.orderId ? { linkedOrder: intake.orderId } : {}),
+          ...(monthly > 0 ? { recurring: `${formatMoney(monthly)}/mo recurring services selected — set up at kickoff` } : {}),
+        },
+        files: [],
+      }, null);
+      await setIntakeStatus(intake.id, "quoted");
+      void sendEmail(proposalEmail({
+        to: intake.email,
+        name: String(intake.answers?.contact_name ?? ""),
+        description: desc,
+        amount: amt,
+        orderId: oid,
+        portalUrl: `${window.location.origin}/client`,
+      }));
+      toast.success("Proposal sent — now payable in the client's portal.");
+      setSentId(oid);
+      onDone();
+    } catch (err) {
+      console.warn("Proposal order failed:", err);
+      toast.error("Failed to create the proposal order.");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="mt-4 border border-[var(--line)] p-4">
+      <span className={labelCls}>FINAL PROPOSAL — admin-approved quote</span>
+      <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
+        {isAddonOnly
+          ? "Client already paid the package — this bills the selected add-ons only."
+          : "No payment linked yet — this bills the full project estimate."}
+        {monthly > 0 && ` Recurring (${formatMoney(monthly)}/mo) is noted on the order, not charged here.`}
+      </p>
+      <div className="flex items-end gap-3 mt-3">
+        <div className="grow">
+          <label className={labelCls} htmlFor={`prop-amt-${intake.id}`}>Amount (USD)</label>
+          <input id={`prop-amt-${intake.id}`} type="number" min="0" className={inputCls}
+            value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </div>
+        <button className="btn btn-dept !py-2.5 whitespace-nowrap" disabled={busy} onClick={() => void send()}>
+          {busy ? "Sending…" : "Send proposal"} <span className="btn-arrow" aria-hidden>→</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => void }) {
+  const pkg = intakePackageFor(intake.packageSlug);
+  const a = intake.answers ?? {};
+  const colors = Array.isArray(a.brand_colors_hex) ? (a.brand_colors_hex as string[]) : [];
+
+  // internal brief: required-but-empty answers = missing info flags
+  const missing = intakeSteps(pkg)
+    .flatMap((s) => s.fields)
+    .filter((f) => f.required && fieldVisible(f, a))
+    .filter((f) => {
+      const v = a[f.id];
+      return Array.isArray(v) ? v.length === 0 : !String(v ?? "").trim();
+    })
+    .map((f) => f.label);
+
+  const answerRow = (label: string, key: string) => {
+    const v = a[key];
+    const text = Array.isArray(v) ? v.join(", ") : String(v ?? "").trim();
+    if (!text) return null;
+    return (
+      <div className="grid sm:grid-cols-[180px_1fr] gap-1 py-1.5 border-b border-[var(--line)] last:border-0">
+        <span className="font-meta text-[9px] text-[var(--muted)] uppercase">{label}</span>
+        <span className="text-[13px]">{text}</span>
+      </div>
+    );
+  };
+
+  const pickedAddons = intake.selectedAddons.map((id) => INTAKE_ADDONS.find((x) => x.id === id)).filter(Boolean);
+  const pickedRecurring = intake.selectedRecurring.map((id) => RECURRING_SERVICES.find((x) => x.id === id)).filter(Boolean);
+
+  return (
+    <div className="grid lg:grid-cols-2 gap-6 mt-4 pt-4 border-t border-[var(--line)]">
+      <div>
+        <span className={labelCls}>CONTACT &amp; BUSINESS</span>
+        <div className="border border-[var(--line)] px-4 py-2 mt-1">
+          {answerRow("Business", "business_name")}
+          {answerRow("Contact", "contact_name")}
+          {answerRow("Email", "email")}
+          {answerRow("Phone / WhatsApp", "phone")}
+          {answerRow("Industry", "industry")}
+          {answerRow("About", "business_description")}
+          {answerRow("Current site", "existing_website")}
+          {answerRow("Socials", "socials")}
+        </div>
+
+        <span className={`${labelCls} mt-5`}>PROJECT</span>
+        <div className="border border-[var(--line)] px-4 py-2 mt-1">
+          {answerRow("Type", "website_type")}
+          {answerRow("Main goal", "primary_goal")}
+          {answerRow("#1 visitor action", "visitor_action")}
+          {answerRow("Target audience", "target_audience")}
+          {answerRow("Pages", "pages_needed")}
+          {answerRow("Products", "product_count")}
+          {answerRow("Selling", "product_options")}
+          {answerRow("Shipping", "shipping")}
+          {answerRow("Payment methods", "payment_methods")}
+          {answerRow("Booking", "booking_type")}
+          {answerRow("User roles", "user_roles")}
+          {answerRow("Integrations", "integrations")}
+          {answerRow("Timeline", "timeline")}
+          {answerRow("Budget", "budget")}
+        </div>
+
+        <span className={`${labelCls} mt-5`}>DESIGN DIRECTION</span>
+        <div className="border border-[var(--line)] px-4 py-2 mt-1">
+          {answerRow("Style", "style_direction")}
+          {answerRow("Brand colours", "brand_colors")}
+          {colors.length > 0 && (
+            <div className="grid sm:grid-cols-[180px_1fr] gap-1 py-1.5 border-b border-[var(--line)]">
+              <span className="font-meta text-[9px] text-[var(--muted)] uppercase">Picked palette</span>
+              <span className="flex items-center gap-2 flex-wrap">
+                {colors.map((c) => (
+                  <span key={c} className="flex items-center gap-1">
+                    <span className="w-4 h-4 inline-block border border-black/10" style={{ background: c }} />
+                    <span className="font-meta text-[9px]">{c}</span>
+                  </span>
+                ))}
+              </span>
+            </div>
+          )}
+          {answerRow("Inspiration", "inspiration_sites")}
+          {answerRow("Avoid", "dislikes")}
+          {answerRow("Logo status", "logo_status")}
+          {answerRow("Content readiness", "content_ready")}
+        </div>
+      </div>
+
+      <div>
+        <span className={labelCls}>SCOPE &amp; COMMERCIAL</span>
+        <div className="border border-[var(--line)] p-4 mt-1" style={{ background: "var(--panel)" }}>
+          <div className="flex justify-between text-sm"><span className="text-[var(--muted)]">Estimated one-time</span><span className="font-display font-bold">{formatMoney(intake.estimate?.oneTime ?? 0, "USD")}</span></div>
+          {(intake.estimate?.monthly ?? 0) > 0 && (
+            <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Recurring</span><span className="font-display font-bold">{formatMoney(intake.estimate!.monthly, "USD")}/mo</span></div>
+          )}
+          <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Lead score</span>
+            <span className="font-meta text-[10px] px-2 py-0.5 text-white" style={{ background: LEAD_BADGE[intake.leadCategory] ?? "#6b7280" }}>
+              {intake.leadScore} · {intake.leadCategory}
+            </span>
+          </div>
+          {intake.orderId && <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Linked order</span><span className="font-meta text-[10px]">{intake.orderId}</span></div>}
+          {missing.length > 0 && (
+            <p className="font-meta text-[9px] text-amber-600 mt-3">⚠ Missing: {missing.join(", ")}</p>
+          )}
+        </div>
+
+        <ProposalButton intake={intake} onDone={onDone} />
+
+        {pickedAddons.length > 0 && (
+          <>
+            <span className={`${labelCls} mt-5`}>SELECTED ADD-ONS</span>
+            <ul className="border border-[var(--line)] px-4 py-2 mt-1">
+              {pickedAddons.map((x) => x && (
+                <li key={x.id} className="flex justify-between py-1.5 border-b border-[var(--line)] last:border-0 text-[13px]">
+                  <span>{x.name}</span><span className="font-meta text-[10px]">+{formatMoney(x.price, "USD")}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {pickedRecurring.length > 0 && (
+          <>
+            <span className={`${labelCls} mt-5`}>RECURRING SERVICES</span>
+            <ul className="border border-[var(--line)] px-4 py-2 mt-1">
+              {pickedRecurring.map((x) => x && (
+                <li key={x.id} className="flex justify-between py-1.5 border-b border-[var(--line)] last:border-0 text-[13px]">
+                  <span>{x.name}</span><span className="font-meta text-[10px]">+{formatMoney(x.monthly, "USD")}/mo</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {intake.assets.length > 0 && (
+          <>
+            <span className={`${labelCls} mt-5`}>CLIENT FILES ({intake.assets.length})</span>
+            <div className="border border-[var(--line)] px-4 py-3 mt-1 flex flex-col gap-1.5">
+              {intake.assets.map((asset, i) => <IntakeAssetLink key={`${asset.name}-${i}`} asset={asset} />)}
+            </div>
+          </>
+        )}
+
+        {intake.contract && (
+          <>
+            <span className={`${labelCls} mt-5`}>SIGNED AGREEMENT</span>
+            <div className="border border-[var(--dept)] p-4 mt-1" style={{ background: "var(--dept-soft)" }}>
+              <p className="text-sm">{intake.contract.signedName} — {new Date(intake.contract.signedAt).toLocaleString()}</p>
+              <p className="font-meta text-[9px] text-[var(--muted)] mt-1">{intake.contract.version}</p>
+              <details className="mt-3">
+                <summary className="font-meta text-[10px] dept-accent cursor-pointer">View signed scope text</summary>
+                <pre className="mt-2 text-[10.5px] leading-relaxed whitespace-pre-wrap font-sans max-h-64 overflow-y-auto bg-[var(--bg)] border border-[var(--line)] p-3">
+                  {intake.contract.scopeText}
+                </pre>
+              </details>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IntakesManager() {
+  const [intakes, setIntakes] = useState<IntakeRecord[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const reload = () => listAllIntakes().then((xs) => { setIntakes(xs); setLoaded(true); });
+  useEffect(() => { reload(); }, []);
+
+  const submitted = intakes.filter((x) => x.status === "submitted");
+  const pipeline = intakes.filter((x) => x.status !== "draft");
+  const oneTime = pipeline.reduce((s, x) => s + (x.estimate?.oneTime ?? 0), 0);
+  const monthly = pipeline.reduce((s, x) => s + (x.estimate?.monthly ?? 0), 0);
+
+  return (
+    <div>
+      <div className="grid sm:grid-cols-4 gap-px mb-8" style={{ background: "var(--line)" }}>
+        {[
+          { label: "Needs review", value: String(submitted.length), accent: submitted.length > 0 },
+          { label: "Active briefs", value: String(pipeline.length), accent: false },
+          { label: "Est. one-time pipeline", value: formatMoney(oneTime, "USD"), accent: false },
+          { label: "Est. monthly recurring", value: formatMoney(monthly, "USD"), accent: false },
+        ].map((s) => (
+          <div key={s.label} className="p-4" style={{ background: "var(--panel)" }}>
+            <span className="font-meta text-[9px] text-[var(--muted)] uppercase">{s.label}</span>
+            <p className={`font-display text-xl font-bold mt-1 ${s.accent ? "dept-accent" : ""}`}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {loaded && intakes.length === 0 && (
+        <p className="font-meta text-[11px] text-[var(--muted)]">No client briefs yet — website buyers complete their project brief (and sign the agreement) right after checkout or from their portal.</p>
+      )}
+
+      <div className="flex flex-col gap-3">
+        {intakes.map((x) => {
+          const open = openId === x.id;
+          return (
+            <div key={x.id} className="border border-[var(--line)] px-5 py-4" style={{ background: "var(--panel)" }}>
+              <div className="grid md:grid-cols-[1fr_170px_150px_130px_90px] gap-4 items-center">
+                <div>
+                  <p className="font-display text-sm font-bold uppercase">{String(x.answers?.business_name ?? "") || x.packageName}</p>
+                  <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
+                    {String(x.answers?.contact_name ?? "")} · {x.email} · {x.packageName}
+                    {x.answers?.website_type ? ` · ${x.answers.website_type}` : ""}
+                  </p>
+                </div>
+                <span className="font-meta text-[10px]">
+                  {x.status === "draft" ? "Draft in progress" : `${formatMoney(x.estimate?.oneTime ?? 0, "USD")}${(x.estimate?.monthly ?? 0) > 0 ? ` + ${formatMoney(x.estimate!.monthly, "USD")}/mo` : ""}`}
+                </span>
+                <span className="font-meta text-[10px] px-2 py-1 text-white text-center" style={{ background: LEAD_BADGE[x.leadCategory] ?? "#6b7280" }}>
+                  {x.leadScore ?? 0} · {x.leadCategory ?? "—"}
+                </span>
+                <select value={x.status}
+                  onChange={async (e) => {
+                    const okDone = await mutate(() => setIntakeStatus(x.id, e.target.value as IntakeRecord["status"]), "Brief status updated");
+                    if (okDone) reload();
+                  }}
+                  className={`${inputCls} !py-1.5 font-meta text-[10px]`}
+                  aria-label="Brief status">
+                  {INTAKE_STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ").toUpperCase()}</option>)}
+                </select>
+                <button className="font-meta text-[10px] dept-accent u-line justify-self-end" onClick={() => setOpenId(open ? null : x.id)}>
+                  {open ? "Close" : "View brief"}
+                </button>
+              </div>
+              {open && <IntakeDetail intake={x} onDone={reload} />}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2116,6 +2559,36 @@ function AdminCommunications() {
   const [ordersList, setOrdersList] = useState<OrderRecord[]>([]);
   const [startingCall, setStartingCall] = useState(false);
 
+  // Email typeahead (searches the client directory built from orders & leads)
+  const [emailPicked, setEmailPicked] = useState(false);
+  const [emailSugOpen, setEmailSugOpen] = useState(false);
+  const [emailSugIdx, setEmailSugIdx] = useState(0);
+  const emailBoxRef = useRef<HTMLDivElement>(null);
+
+  const instantEmailQuery = instantEmail.trim().toLowerCase();
+  const emailSuggestions = (!instantEmailQuery || emailPicked)
+    ? []
+    : clientDirectory
+        .filter((c) => c.email.includes(instantEmailQuery) || c.name.toLowerCase().includes(instantEmailQuery))
+        .slice(0, 6);
+
+  const pickEmailSuggestion = (c: { email: string; name: string }) => {
+    setInstantEmail(c.email);
+    setInstantName(c.name);
+    setEmailPicked(true);
+    setEmailSugOpen(false);
+  };
+
+  // close the suggestion list on outside click
+  useEffect(() => {
+    if (!emailSugOpen) return;
+    const fn = (e: MouseEvent) => {
+      if (emailBoxRef.current && !emailBoxRef.current.contains(e.target as Node)) setEmailSugOpen(false);
+    };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [emailSugOpen]);
+
   const reloadData = async () => {
     const [m, c, ords, lds] = await Promise.all([
       listAllMeetings(),
@@ -2980,16 +3453,70 @@ function AdminCommunications() {
             </div>
 
             <form onSubmit={handleStartInstantCall} className="space-y-4 text-xs">
-              <div>
-                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Client Email Address *</label>
+              <div ref={emailBoxRef} className="relative">
+                <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1" htmlFor="instant-email">
+                  Client Email Address *
+                </label>
                 <input
+                  id="instant-email"
                   type="email"
                   required
+                  autoComplete="off"
                   value={instantEmail}
-                  onChange={(e) => setInstantEmail(e.target.value)}
+                  onChange={(e) => { setInstantEmail(e.target.value); setEmailPicked(false); setEmailSugIdx(0); setEmailSugOpen(true); }}
+                  onFocus={() => setEmailSugOpen(true)}
+                  onKeyDown={(e) => {
+                    if (!emailSuggestions.length) return;
+                    if (e.key === "ArrowDown") { e.preventDefault(); setEmailSugIdx((i) => (i + 1) % emailSuggestions.length); }
+                    else if (e.key === "ArrowUp") { e.preventDefault(); setEmailSugIdx((i) => (i - 1 + emailSuggestions.length) % emailSuggestions.length); }
+                    else if (e.key === "Enter" && emailSugOpen) { e.preventDefault(); pickEmailSuggestion(emailSuggestions[emailSugIdx]); }
+                    else if (e.key === "Escape") setEmailSugOpen(false);
+                  }}
                   placeholder="client@domain.com"
+                  role="combobox"
+                  aria-expanded={emailSugOpen && emailSuggestions.length > 0}
+                  aria-controls="instant-email-suggestions"
+                  aria-autocomplete="list"
                   className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
                 />
+                {emailSugOpen && emailSuggestions.length > 0 && (
+                  <div
+                    id="instant-email-suggestions"
+                    role="listbox"
+                    aria-label="Matching clients"
+                    className="absolute left-0 right-0 top-full mt-1.5 z-20 bg-[var(--panel)] border border-[var(--line-strong)] rounded-xl shadow-2xl overflow-hidden"
+                  >
+                    <p className="font-meta text-[8px] uppercase tracking-wider text-[var(--muted)] px-3 pt-2 pb-1">
+                      From your clients — select to autofill
+                    </p>
+                    {emailSuggestions.map((c, i) => (
+                      <button
+                        key={c.email}
+                        type="button"
+                        role="option"
+                        aria-selected={i === emailSugIdx}
+                        onMouseEnter={() => setEmailSugIdx(i)}
+                        onClick={() => pickEmailSuggestion(c)}
+                        className={`w-full text-left px-3 py-2 flex items-center gap-2.5 border-t border-[var(--line)] transition-colors ${
+                          i === emailSugIdx ? "bg-[var(--dept-soft)]" : "hover:bg-[var(--dept-soft)]"
+                        }`}
+                      >
+                        <span className="w-6 h-6 rounded-full bg-[var(--dept)] text-[var(--on-dept)] flex items-center justify-center font-meta text-[9px] font-bold shrink-0">
+                          {c.name.slice(0, 1).toUpperCase()}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[11.5px] font-semibold truncate">{c.email}</span>
+                          <span className="block font-meta text-[8.5px] text-[var(--muted)] truncate">{c.name} · {c.info}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {emailSugOpen && instantEmailQuery.includes("@") && !emailPicked && emailSuggestions.length === 0 && clientDirectory.length > 0 && (
+                  <p className="font-meta text-[8.5px] text-[var(--muted)] mt-1">
+                    No matching client — this will start a call with a new contact.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -3250,7 +3777,7 @@ function ClientDesignsManager() {
 
 /* ================= PAGE ================= */
 
-const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
+const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Intakes", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
 
 const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
 const labelCls2 = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
@@ -3326,6 +3853,78 @@ function AdminSignIn() {
   );
 }
 
+/* ------------------------------------------------------------------
+   STUDIO ALERT CENTER
+   Live visual alerts for anything that needs the studio's attention:
+   new orders, review/approval requests, signed briefs, fresh leads.
+------------------------------------------------------------------- */
+interface AdminAlerts { newOrders: number; reviewReqs: number; newBriefs: number; newLeads: number; unreadMsgs: number }
+
+function AlertStrip({ data, onNavigate }: { data: AdminAlerts; onNavigate: (t: (typeof TABS)[number]) => void }) {
+  const alerts = [
+    data.newOrders > 0 && {
+      key: "orders", tone: "#ef4444",
+      label: `${data.newOrders} new order${data.newOrders > 1 ? "s" : ""} received`,
+      sub: "Confirm payment & schedule kickoff", tab: "Orders" as const,
+    },
+    data.unreadMsgs > 0 && {
+      key: "msgs", tone: "#f43f5e",
+      label: `${data.unreadMsgs} unread client message${data.unreadMsgs > 1 ? "s" : ""}`,
+      sub: "Project chat is waiting for a reply", tab: "Orders" as const,
+    },
+    data.reviewReqs > 0 && {
+      key: "review", tone: "#f59e0b",
+      label: `${data.reviewReqs} project${data.reviewReqs > 1 ? "s" : ""} waiting on the studio`,
+      sub: "Client submitted a review, revision or approval", tab: "Orders" as const,
+    },
+    data.newBriefs > 0 && {
+      key: "briefs", tone: "#8b5cf6",
+      label: `${data.newBriefs} signed website brief${data.newBriefs > 1 ? "s" : ""} to review`,
+      sub: "Scope signed — send the final proposal", tab: "Intakes" as const,
+    },
+    data.newLeads > 0 && {
+      key: "leads", tone: "#06b6d4",
+      label: `${data.newLeads} new lead${data.newLeads > 1 ? "s" : ""}`,
+      sub: "Respond while they're hot", tab: "Leads" as const,
+    },
+  ].filter(Boolean) as { key: string; tone: string; label: string; sub: string; tab: (typeof TABS)[number] }[];
+
+  if (alerts.length === 0) {
+    return (
+      <div className="mb-8 border border-[var(--line)] px-5 py-3 flex items-center gap-3" style={{ background: "var(--panel)" }}>
+        <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden />
+        <span className="font-meta text-[10px] text-[var(--muted)]">ALL CLEAR — no client requests waiting on the studio right now.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-8" role="alert" aria-live="polite" aria-label="Studio alerts">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="relative flex w-2.5 h-2.5" aria-hidden>
+          <span className="absolute inline-flex w-full h-full rounded-full bg-red-500 opacity-60 animate-ping" />
+          <span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-red-500" />
+        </span>
+        <span className="font-meta text-[10px] font-bold tracking-wider">NEEDS YOUR ATTENTION</span>
+      </div>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-2">
+        {alerts.map((a) => (
+          <button key={a.key} onClick={() => onNavigate(a.tab)}
+            className="border px-4 py-3 text-left transition-colors hover:border-[var(--dept)] group"
+            style={{ borderColor: a.tone, background: "var(--panel)" }}>
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ background: a.tone }} aria-hidden />
+              <span className="font-display text-[13px] font-bold uppercase leading-tight">{a.label}</span>
+            </span>
+            <span className="font-meta text-[9px] text-[var(--muted)] block mt-1">{a.sub}</span>
+            <span className="font-meta text-[9px] dept-accent mt-2 inline-block group-hover:underline">OPEN {a.tab.toUpperCase()} →</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
   useDepartment(null);
   const { user, loading, isAdmin, signOut } = useAuth();
@@ -3333,6 +3932,35 @@ export default function Admin() {
   useSEO({ title: "Admin — Social Kon10 Marketing", description: "Studio admin dashboard." });
 
   const allowed = firebaseReady ? isAdmin : true; // demo mode: open for preview
+
+  /* studio alert polling — refreshes on tab change + every 60s */
+  const [alerts, setAlerts] = useState<AdminAlerts | null>(null);
+  useEffect(() => {
+    if (!allowed) return;
+    let stop = false;
+    const load = async () => {
+      const [orders, intakes, leads] = await Promise.all([listAllOrders(), listAllIntakes(), listLeads()]);
+      if (stop) return;
+      setAlerts({
+        newOrders: orders.filter((o) => o.status === "ORDER RECEIVED").length,
+        reviewReqs: orders.filter((o) => ["CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length,
+        newBriefs: intakes.filter((i) => i.status === "submitted").length,
+        newLeads: leads.filter((l) => l.status === "new").length,
+        unreadMsgs: orders.filter(orderHasUnreadClientMessage).length,
+      });
+    };
+    void load();
+    const t = setInterval(() => void load(), 60000);
+    return () => { stop = true; clearInterval(t); };
+  }, [allowed, tab]);
+
+  const tabBadge = (t: (typeof TABS)[number]): number => {
+    if (!alerts) return 0;
+    if (t === "Orders") return alerts.newOrders + alerts.reviewReqs + alerts.unreadMsgs;
+    if (t === "Intakes") return alerts.newBriefs;
+    if (t === "Leads") return alerts.newLeads;
+    return 0;
+  };
 
   return (
     <section className="wrap pt-14 md:pt-20 pb-24 min-h-[70vh]">
@@ -3358,14 +3986,26 @@ export default function Admin() {
         </>
       ) : (
         <>
+          {/* studio alert center — every client request that needs attention */}
+          {alerts && <AlertStrip data={alerts} onNavigate={setTab} />}
+
           <div className="flex flex-wrap gap-2 mb-10" role="tablist" aria-label="Admin sections">
-            {TABS.map((t) => (
-              <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                className="font-meta text-[10px] px-4 py-2 border transition-colors"
-                style={tab === t ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
-                {t.toUpperCase()}
-              </button>
-            ))}
+            {TABS.map((t) => {
+              const badge = tabBadge(t);
+              return (
+                <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                  className="font-meta text-[10px] px-4 py-2 border transition-colors relative"
+                  style={tab === t ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
+                  {t.toUpperCase()}
+                  {badge > 0 && (
+                    <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center"
+                      aria-label={`${badge} items need attention`}>
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
             <button
               onClick={signOut}
               className="font-meta text-[10px] px-4 py-2 border border-[var(--line)] text-[var(--muted)] hover:border-red-500 hover:text-red-500 transition-colors ml-auto"
@@ -3377,6 +4017,7 @@ export default function Admin() {
           {tab === "Client Designs" && <ClientDesignsManager />}
           {tab === "Communications" && <AdminCommunications />}
           {tab === "Leads" && <Leads />}
+          {tab === "Intakes" && <IntakesManager />}
           {tab === "Products" && <Products />}
           {tab === "Portfolio" && <PortfolioManager />}
           {tab === "Promos" && (
