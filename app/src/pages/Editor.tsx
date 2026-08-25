@@ -36,7 +36,7 @@ import {
   type EditorObject, type Kon10Doc, type Kon10Field, type FadeMaskDirection,
 } from "../lib/editor";
 import {
-  clearDraft, createDesign, deleteVersion, findDesignFor, getCustomerDesignById, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion,
+  clearDraft, createDesign, deleteVersion, deliverProofToOrder, findDesignFor, getCustomerDesignById, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion,
   type CustomerDesign, type DesignVersion,
 } from "../lib/editor-store";
 import {
@@ -51,6 +51,7 @@ import { ANIMATION_PRESETS, playAnimationCycle, recordCanvasAnimation, captureIn
 import { MOCKUP_TEMPLATES, generateMockupDataUrl } from "../lib/mockup-generator";
 import { parseCsvText, applyCsvRowToCanvas } from "../lib/bulk-merge";
 import { generateBarcodeSvg, svgToDataUrl } from "../lib/barcodes";
+import { exportFabricCanvasToPsdBlob, triggerPsdDownload } from "../lib/psd-export";
 
 // Register Fabric class aliases so classRegistry handles Image / FabricImage interchangeably
 try {
@@ -703,11 +704,14 @@ export default function Editor() {
   const [searchParams] = useSearchParams();
   const clientParam = searchParams.get("client") || searchParams.get("email");
   const designIdParam = searchParams.get("designId");
+  const orderIdParam = searchParams.get("orderId");
+  const adminParam = searchParams.get("admin") === "true";
   const navigate = useNavigate();
   const isAuthor = window.location.pathname.startsWith("/editor/author/");
   useSEO({ title: "KON10 Studio — Social Kon10 Marketing", description: "Create. Customize. Download." });
 
   const { user, isAdmin } = useAuth();
+  const isDesignerMode = !isAuthor && (isAdmin || adminParam || !!orderIdParam || (!!clientParam && clientParam !== user?.email));
   const { templates, ready } = useTemplates();
   const tpl: Template | undefined = useMemo(() => {
     const found = templates.find((x) => x.slug === slug);
@@ -815,13 +819,14 @@ export default function Editor() {
   }));
   const [snapOn, setSnapOn] = useState(true);
   const snapRef = useRef(true);
-  const [guides, setGuides] = useState<{ v: number | null; h: number | null }>({ v: null, h: null });
+  const vGuideRef = useRef<HTMLDivElement>(null);
+  const hGuideRef = useRef<HTMLDivElement>(null);
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null);
   const ctxEventRef = useRef<Event | null>(null);
-  const altCycleRef = useRef<{ t: FabricObject | null; time: number }>({ t: null, time: 0 });
+  const altCycleRef = useRef<{ time: number; hits: FabricObject[]; index: number }>({ time: 0, hits: [], index: 0 });
   const [zoomMenu, setZoomMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [exportFmt, setExportFmt] = useState<"png" | "jpg" | "pdf" | "svg">("png");
+  const [exportFmt, setExportFmt] = useState<"png" | "jpg" | "pdf" | "svg" | "psd">("png");
   const [exportQuality, setExportQuality] = useState(0.92);
   const [exportPhase, setExportPhase] = useState<"idle" | "prep" | "render" | "done">("idle");
   const [checks, setChecks] = useState<DesignCheck[]>([]);
@@ -865,6 +870,10 @@ export default function Editor() {
     try { return JSON.parse(localStorage.getItem("sk-user-uploads") ?? "[]"); } catch { return []; }
   });
   const [uploadDragActive, setUploadDragActive] = useState(false);
+  const [deliverModalOpen, setDeliverModalOpen] = useState(false);
+  const [deliverNote, setDeliverNote] = useState("");
+  const [deliveringProof, setDeliveringProof] = useState(false);
+  const [masterOverride, setMasterOverride] = useState(isDesignerMode);
   const [fadeMenuOpen, setFadeMenuOpen] = useState(false);
   const [hoveredFadeEdge, setHoveredFadeEdge] = useState<FadeMaskDirection | null>(null);
   const [edgeTriggersVisible] = useState(true);
@@ -1160,9 +1169,79 @@ export default function Editor() {
   /* author mode gets full control over every layer; customers get template rules */
   const applyModePermissions = useCallback((c: Canvas) => {
     const objs = c.getObjects() as unknown as EditorObject[];
-    if (isAuthor) applyPermissionsToAll(objs, "author");
+    if (isAuthor || masterOverride || isDesignerMode) applyPermissionsToAll(objs, "author");
     else objs.forEach((o) => applyCustomerPermissions(o));
-  }, [isAuthor]);
+  }, [isAuthor, masterOverride, isDesignerMode]);
+
+  const toggleMasterOverride = useCallback(() => {
+    const c = fc.current;
+    if (!c) return;
+    const next = !masterOverride;
+    setMasterOverride(next);
+    c.getObjects().forEach((o) => {
+      if (next) {
+        o.set({
+          lockMovementX: false,
+          lockMovementY: false,
+          lockRotation: false,
+          lockScalingX: false,
+          lockScalingY: false,
+          hasControls: true,
+          selectable: true,
+          evented: true,
+        });
+      }
+    });
+    c.requestRenderAll();
+    toast.success(next ? "🔓 Master Layer Override ON — All layers unlocked for designer" : "🔒 Standard layer constraints restored");
+  }, [masterOverride]);
+
+  const handleDeliverProof = useCallback(async () => {
+    const targetOrderId = orderIdParam || design?.orderId;
+    if (!targetOrderId) {
+      toast.error("No active customer order ID linked to this design. Please specify an Order ID.");
+      return;
+    }
+    const c = fc.current;
+    if (!c) return;
+    setDeliveringProof(true);
+    try {
+      const dataUrl = renderCleanDataUrl(c, canvasSize, {
+        format: "png",
+        multiplier: 2,
+      });
+
+      const json = serialize();
+      if (json && design?.id) {
+        await saveDesign(design.id, {
+          canvasJson: json,
+          thumbnail: renderCleanDataUrl(c, canvasSize, { format: "jpeg", multiplier: 0.5, quality: 0.85 }),
+        });
+      }
+
+      const result = await deliverProofToOrder({
+        orderId: targetOrderId,
+        designId: design?.id,
+        dataUrl,
+        filename: `${(design?.title || slug || "proof").replace(/[^\w-]/g, "_")}-proof-v${design?.version || 1}.png`,
+        note: deliverNote,
+        designerName: user?.email ? user.email.split("@")[0] : "Studio Designer",
+      });
+
+      if (result.ok) {
+        toast.success(`Proof delivered to Order #${targetOrderId.slice(0, 8).toUpperCase()}! Order status is now CLIENT REVIEW.`);
+        setDeliverModalOpen(false);
+        setDeliverNote("");
+      } else {
+        toast.error(result.error || "Failed to deliver proof to order.");
+      }
+    } catch (err) {
+      console.error("Proof delivery failed:", err);
+      toast.error("Failed to deliver proof: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setDeliveringProof(false);
+    }
+  }, [orderIdParam, design, canvasSize, serialize, slug, deliverNote, user?.email]);
 
   const applyHistory = useCallback(async (idx: number) => {
     const c = fc.current;
@@ -1188,8 +1267,11 @@ export default function Editor() {
 
   const convertPsdTextToLiveTextbox = useCallback((imgObj: FabricObject) => {
     const raw = imgObj as unknown as EditorObject;
-    const text = (raw.kPsdText as string) || (raw.text as string) || (typeof raw.kName === "string" ? raw.kName : "Text");
-    const fill = (raw.kFontColor as string) || "#ffffff";
+    let text = (raw.kPsdText as string) || (raw.text as string) || (typeof raw.kName === "string" ? raw.kName : "");
+    if (!text || /^layer \d+$/i.test(text.trim()) || /^image/i.test(text.trim()) || /^bitmap/i.test(text.trim())) {
+      text = "Your Text Here";
+    }
+    const fill = (raw.kFontColor as string) || (typeof imgObj.fill === "string" ? imgObj.fill : "#ffffff");
     const fontFamily = (raw.kFontFamily as string) || "Archivo, Bebas Neue, Impact, sans-serif";
     const origLeft = imgObj.left ?? 0;
     const origTop = imgObj.top ?? 0;
@@ -1210,9 +1292,9 @@ export default function Editor() {
 
     // Derive accurate font size from rendered pixel height so live text matches visual size exactly
     const derivedFontSize = Math.round(approxLineH * 0.85);
-    const fontSize = Math.max((raw.kFontSize as number) || 0, derivedFontSize, 16);
+    const fontSize = Math.max((raw.kFontSize as number) || 0, derivedFontSize, 18);
     // 30% width buffer prevents unwanted word wrapping
-    const width = Math.max(boxW * 1.3, 200);
+    const width = Math.max(boxW * 1.3, 160);
 
     const textbox = new Textbox(text, {
       left: isCanvasCentered ? centerX : origLeft,
@@ -1232,6 +1314,7 @@ export default function Editor() {
       selectable: true,
       evented: true,
       hasControls: true,
+      globalCompositeOperation: "source-over",
     });
     textbox.setCoords();
 
@@ -1425,8 +1508,16 @@ export default function Editor() {
       setBooting(true);
 
       const c = new Canvas(canvasEl.current!, {
-        width: canvasSize.width, height: canvasSize.height,
-        backgroundColor: resolvedMaster.canvas.background, preserveObjectStacking: true,
+        width: canvasSize.width,
+        height: canvasSize.height,
+        backgroundColor: resolvedMaster.canvas.background,
+        preserveObjectStacking: true,
+        selection: true,
+        selectionColor: "rgba(59, 130, 246, 0.2)",
+        selectionBorderColor: "#60a5fa",
+        selectionLineWidth: 1.5,
+        selectionDashArray: [4, 4],
+        selectionFullyContained: false,
       });
       fc.current = c;
 
@@ -1628,28 +1719,48 @@ export default function Editor() {
       /* double click: edit text directly or convert PSD text layer to live Textbox */
       const handleCanvasDblClick = (target: FabricObject | undefined) => {
         if (!target) return;
+
+        // If target is inside a Group, locate the inner text object
+        if (isGroup(target)) {
+          const grp = target as unknown as { getObjects: () => FabricObject[] };
+          const textChild = grp.getObjects().find(
+            (o) => isText(o) || (o as unknown as EditorObject).kLayerType === "text" || (o as unknown as EditorObject).kIsPsdText
+          );
+          if (textChild) {
+            ungroupSelection();
+            c.setActiveObject(textChild);
+            c.renderAll();
+            target = textChild;
+          }
+        }
+
         const raw = target as unknown as EditorObject;
         if (raw.kIsPsdText || (!isText(target) && raw.kLayerType === "text")) {
           convertPsdTextToLiveTextbox(target);
           return;
-        } else if (isText(target)) {
+        } else if (isText(target) || (target as unknown as { text?: string }).text !== undefined) {
           let tbObj = target;
+          const rawObj = tbObj as unknown as EditorObject;
+
+          // Unlock any locks that would prevent editing
+          rawObj.kLocked = false;
+          rawObj.kUserLock = false;
+
           // If it's a non-interactive base Text instance without enterEditing, promote to Textbox
           if (typeof (tbObj as unknown as Textbox).enterEditing !== "function") {
-            const rawObj = tbObj as unknown as EditorObject;
             const newTb = new Textbox((tbObj as unknown as { text?: string }).text ?? "", {
               left: tbObj.left,
               top: tbObj.top,
-              width: tbObj.width ?? 200,
+              width: Math.max(80, tbObj.width ?? 200),
               fontSize: (tbObj as unknown as { fontSize?: number }).fontSize ?? 32,
-              fill: tbObj.fill,
+              fill: tbObj.fill || "#ffffff",
               fontFamily: (tbObj as unknown as { fontFamily?: string }).fontFamily ?? "sans-serif",
               fontWeight: (tbObj as unknown as { fontWeight?: string | number }).fontWeight,
               fontStyle: ((tbObj as unknown as { fontStyle?: string }).fontStyle as "normal" | "italic" | "oblique") ?? "normal",
               textAlign: ((tbObj as unknown as { textAlign?: string }).textAlign as "left" | "center" | "right" | "justify") ?? "left",
               angle: tbObj.angle,
-              scaleX: tbObj.scaleX,
-              scaleY: tbObj.scaleY,
+              scaleX: tbObj.scaleX ?? 1,
+              scaleY: tbObj.scaleY ?? 1,
               originX: tbObj.originX,
               originY: tbObj.originY,
               editable: true,
@@ -1666,67 +1777,105 @@ export default function Editor() {
           }
 
           const tb = tbObj as unknown as Textbox;
-          (tb as unknown as { editable?: boolean }).editable = true;
-          (tb as unknown as { selectable?: boolean }).selectable = true;
-          (tb as unknown as { evented?: boolean }).evented = true;
-          c.setActiveObject(tb);
+          tb.editable = true;
+          tb.selectable = true;
+          tb.evented = true;
+          tb.lockMovementX = false;
+          tb.lockMovementY = false;
+
           const sx = tb.scaleX ?? 1;
           const sy = tb.scaleY ?? 1;
           if (sx !== 1 || sy !== 1) {
             tb.set({
-              fontSize: Math.round((tb.fontSize ?? 32) * sy),
-              width: Math.round((tb.width ?? 100) * sx),
+              fontSize: Math.max(8, Math.round((tb.fontSize ?? 32) * sy)),
+              width: Math.max(40, Math.round((tb.width ?? 100) * sx)),
               scaleX: 1,
               scaleY: 1,
             });
-            tb.setCoords();
           }
+          tb.setCoords();
+          c.setActiveObject(tb);
+          c.renderAll();
+          setSel(readSelection(c));
 
-          const startEditing = () => {
+          // Start editing mode cleanly without moving the object
+          setTimeout(() => {
             try {
               tb.enterEditing();
+              tb.lockMovementX = true;
+              tb.lockMovementY = true;
               if (tb.hiddenTextarea) {
                 tb.hiddenTextarea.focus();
-                tb.hiddenTextarea.select();
               }
-              tb.selectAll();
               c.renderAll();
               setSel(readSelection(c));
             } catch (err) {
               console.warn("enterEditing failed:", err);
             }
-          };
-
-          startEditing();
-          requestAnimationFrame(startEditing);
+          }, 30);
+        } else if (isImage(target) && !raw.kLocked && !raw.kUserLock) {
+          convertPsdTextToLiveTextbox(target);
+          return;
         }
       };
+
+      c.on("text:editing:entered", (opt) => {
+        const tb = (opt.target ?? c.getActiveObject()) as unknown as Textbox;
+        if (tb) {
+          tb.lockMovementX = true;
+          tb.lockMovementY = true;
+        }
+        setSel(readSelection(c));
+      });
+
+      c.on("text:editing:exited", (opt) => {
+        const tb = (opt.target ?? c.getActiveObject()) as unknown as Textbox;
+        if (tb) {
+          tb.lockMovementX = false;
+          tb.lockMovementY = false;
+        }
+        setSel(readSelection(c));
+      });
+
+      c.on("text:selection:changed", () => {
+        setSel(readSelection(c));
+      });
+
+      c.on("before:transform", () => {
+        if (spaceRef.current || panningRef.current) {
+          (c as unknown as { _currentTransform?: unknown })._currentTransform = null;
+        }
+      });
 
       c.on("mouse:dblclick", (opt) => {
         const target = opt.target ?? c.getActiveObject() ?? undefined;
         handleCanvasDblClick(target);
       });
 
-      const onUpperCanvasDblClick = (ev: MouseEvent) => {
-        const sp = c.getScenePoint(ev);
-        const target = c.getActiveObject() ?? c.getObjects().slice().reverse().find((o) =>
-          o.visible !== false && o.selectable !== false && o.evented !== false && o.containsPoint(sp)
-        ) ?? undefined;
-        handleCanvasDblClick(target);
-      };
-      const upperEl = c.upperCanvasEl;
-      upperEl?.addEventListener("dblclick", onUpperCanvasDblClick);
-
       /* smart guides: snap to canvas center/edges + other objects (§5) */
       c.on("object:moving", (e) => {
+        if (spaceRef.current || panningRef.current) return;
         const o = e.target;
-        if (!o || !snapRef.current) { setGuides({ v: null, h: null }); return; }
-        const th = 6 / (c.getZoom() || 1);
+        if (!o) return;
+
+        if (!snapRef.current) {
+          if (vGuideRef.current) vGuideRef.current.style.display = "none";
+          if (hGuideRef.current) hGuideRef.current.style.display = "none";
+          return;
+        }
+
+        const currentZoom = c.getZoom() || 1;
+        const vpt = c.viewportTransform || [1, 0, 0, 1, 0, 0];
+        const th = 5 / currentZoom;
         const r = o.getBoundingRect();
+        const stageEl = stageRef.current;
+        const stageBounds = stageEl?.getBoundingClientRect();
+
         let dx = 0, dy = 0;
         let gv: number | null = null, gh: number | null = null;
         const vC = [r.left, r.left + r.width / 2, r.left + r.width];
         const hC = [r.top, r.top + r.height / 2, r.top + r.height];
+
         outerV: for (const t of snapCache.current.v) {
           for (let i = 0; i < 3; i++) {
             if (Math.abs(vC[i] + dx - t) < th) { dx = t - vC[i]; gv = t; break outerV; }
@@ -1737,14 +1886,48 @@ export default function Editor() {
             if (Math.abs(hC[i] + dy - t) < th) { dy = t - hC[i]; gh = t; break outerH; }
           }
         }
+
         if (dx) o.set("left", (o.left ?? 0) + dx);
         if (dy) o.set("top", (o.top ?? 0) + dy);
-        setGuides((g) => (g.v === gv && g.h === gh ? g : { v: gv, h: gh }));
+
+        // Direct DOM update for guide lines without triggering React re-renders
+        if (stageBounds) {
+          if (gv !== null && vGuideRef.current) {
+            const screenX = stageBounds.left + gv * currentZoom + vpt[4];
+            vGuideRef.current.style.display = "block";
+            vGuideRef.current.style.left = `${screenX}px`;
+            vGuideRef.current.style.top = `${stageBounds.top}px`;
+            vGuideRef.current.style.height = `${stageBounds.height}px`;
+          } else if (vGuideRef.current) {
+            vGuideRef.current.style.display = "none";
+          }
+
+          if (gh !== null && hGuideRef.current) {
+            const screenY = stageBounds.top + gh * currentZoom + vpt[5];
+            hGuideRef.current.style.display = "block";
+            hGuideRef.current.style.top = `${screenY}px`;
+            hGuideRef.current.style.left = `${stageBounds.left}px`;
+            hGuideRef.current.style.width = `${stageBounds.width}px`;
+          } else if (hGuideRef.current) {
+            hGuideRef.current.style.display = "none";
+          }
+        }
       });
 
       c.on("mouse:down", (opt) => {
         if (retouchRef.current) { retouchApi.current.down(opt as { e: Event }); return; }
         const ev = opt.e as MouseEvent;
+        if (spaceRef.current) {
+          panningRef.current = true;
+          c.selection = false;
+          (c as unknown as { _currentTransform?: unknown })._currentTransform = null;
+          c.defaultCursor = "grabbing";
+          c.hoverCursor = "grabbing";
+          panStart.current = { x: ev.clientX, y: ev.clientY, vpt: [...(c.viewportTransform ?? [1, 0, 0, 1, 0, 0])] as number[] };
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
         if (ev.button === 0 && ev.altKey) {
           const sp = c.getScenePoint(opt.e as MouseEvent);
           const hits = c.getObjects().filter((o) =>
@@ -1753,16 +1936,18 @@ export default function Editor() {
           if (hits.length) {
             const prev = altCycleRef.current;
             const now = Date.now();
-            let base = c.getActiveObject();
-            if (prev.t && now - prev.time < 1600 && hits.includes(prev.t)) base = prev.t;
-            let idx = hits.length - 1;
-            if (base && !isActiveSelection(base) && hits.includes(base)) idx = hits.indexOf(base) - 1;
-            if (idx < 0) idx = hits.length - 1;
-            const t = hits[idx];
-            altCycleRef.current = { t, time: now };
-            c.discardActiveObject();
-            c.setActiveObject(t); c.renderAll(); setSel(readSelection(c));
-            toast.info(`Selected: ${(t as unknown as EditorObject).kName ?? t.type ?? "layer"}`, { duration: 1100 });
+            let nextIndex = 0;
+            if (prev && (now - prev.time < 1200) && prev.hits.length === hits.length) {
+              nextIndex = (prev.index + 1) % hits.length;
+            }
+            altCycleRef.current = { time: now, hits, index: nextIndex };
+            const pick = hits[nextIndex];
+            if (pick) {
+              c.discardActiveObject();
+              c.setActiveObject(pick);
+              c.renderAll();
+              setSel(readSelection(c));
+            }
           }
           return;
         }
@@ -1775,12 +1960,6 @@ export default function Editor() {
           return;
         }
         setCtx(null);
-        if (spaceRef.current) {
-          panningRef.current = true;
-          c.selection = false;
-          panStart.current = { x: ev.clientX, y: ev.clientY, vpt: [...(c.viewportTransform ?? [1, 0, 0, 1, 0, 0])] as number[] };
-          return;
-        }
         const active = new Set(c.getActiveObjects());
         const v: number[] = [0, canvasSize.width / 2, canvasSize.width, ...userGuidesRef.current.v];
         const h: number[] = [0, canvasSize.height / 2, canvasSize.height, ...userGuidesRef.current.h];
@@ -1794,19 +1973,30 @@ export default function Editor() {
       });
       c.on("mouse:move", (opt) => {
         if (retouchRef.current?.painting) { retouchApi.current.move(opt as { e: Event }); return; }
-        if (!panningRef.current) return;
-        const ev = opt.e as MouseEvent;
-        const s = panStart.current;
-        const vpt = c.viewportTransform!;
-        vpt[4] = s.vpt[4] + (ev.clientX - s.x);
-        vpt[5] = s.vpt[5] + (ev.clientY - s.y);
-        c.requestRenderAll();
+        if (panningRef.current) {
+          const ev = opt.e as MouseEvent;
+          const s = panStart.current;
+          const vpt = c.viewportTransform!;
+          vpt[4] = s.vpt[4] + (ev.clientX - s.x);
+          vpt[5] = s.vpt[5] + (ev.clientY - s.y);
+          (c as unknown as { _currentTransform?: unknown })._currentTransform = null;
+          c.requestRenderAll();
+          return;
+        }
       });
       c.on("mouse:up", () => {
+        if (vGuideRef.current) vGuideRef.current.style.display = "none";
+        if (hGuideRef.current) hGuideRef.current.style.display = "none";
+        if (panningRef.current) {
+          panningRef.current = false;
+          c.defaultCursor = spaceRef.current ? "grab" : "default";
+          c.hoverCursor = spaceRef.current ? "grab" : "move";
+          c.selection = !spaceRef.current;
+          (c as unknown as { _currentTransform?: unknown })._currentTransform = null;
+          return;
+        }
         if (retouchRef.current?.painting) retouchApi.current.up();
-        panningRef.current = false;
         c.selection = true;
-        setGuides({ v: null, h: null });
       });
 
       /* overlays (rulers/grid/toolbar) in sync with pan/zoom, throttled */
@@ -1884,7 +2074,19 @@ export default function Editor() {
 
       if (inField) return;
       if (e.key === "Enter" && cropRect) { e.preventDefault(); commitCrop(); return; }
-      if (e.code === "Space") { spaceRef.current = true; return; }
+      if (e.code === "Space") {
+        if (!editingText) {
+          e.preventDefault();
+          spaceRef.current = true;
+          const c = fc.current;
+          if (c) {
+            c.defaultCursor = "grab";
+            c.hoverCursor = "grab";
+            c.selection = false;
+          }
+        }
+        return;
+      }
       if (mod && key === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if (mod && key === "s") { e.preventDefault(); const d = designRef.current; if (d) void persistNow(d.id); return; }
       if (mod && key === "c") { copySelection(); return; }
@@ -1922,7 +2124,19 @@ export default function Editor() {
         if (key === "t") { e.preventDefault(); addText("heading"); return; }
       }
     };
-    const up = (e: KeyboardEvent) => { if (e.code === "Space") { spaceRef.current = false; panningRef.current = false; } };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        spaceRef.current = false;
+        panningRef.current = false;
+        const c = fc.current;
+        if (c) {
+          c.defaultCursor = "default";
+          c.hoverCursor = "move";
+          c.selection = true;
+          (c as unknown as { _currentTransform?: unknown })._currentTransform = null;
+        }
+      }
+    };
     const onOff = () => {
       const nowOffline = !navigator.onLine;
       setOffline(nowOffline);
@@ -2745,6 +2959,91 @@ export default function Editor() {
 
   const setProp = (props: Record<string, unknown>) => {
     const c = fc.current; if (!c || !sel.obj || sel.kind === "multi") return;
+
+    // Handle text-specific property updates (partial selection coloring & style override cleaning)
+    if (isText(sel.obj)) {
+      const tb = sel.obj as unknown as Textbox;
+      const isEditing = Boolean((tb as unknown as { isEditing?: boolean }).isEditing);
+      const hasSubSelection = isEditing && typeof tb.selectionStart === "number" && typeof tb.selectionEnd === "number" && tb.selectionStart !== tb.selectionEnd;
+
+      if (props.fill !== undefined) {
+        (props as Record<string, unknown>).globalCompositeOperation = "source-over";
+        if (hasSubSelection) {
+          tb.setSelectionStyles({ fill: props.fill as string });
+          c.renderAll();
+          pushHistory();
+          setSel((s) => ({ ...s }));
+          return;
+        } else {
+          // Setting fill on whole text: clean any per-character styles that might override the new color
+          tb.styles = {};
+          tb.set("globalCompositeOperation", "source-over");
+        }
+      }
+
+      if (props.textBackgroundColor !== undefined) {
+        if (hasSubSelection) {
+          tb.setSelectionStyles({ textBackgroundColor: props.textBackgroundColor as string });
+          c.renderAll();
+          pushHistory();
+          setSel((s) => ({ ...s }));
+          return;
+        } else {
+          if (tb.styles) {
+            Object.values(tb.styles).forEach((lineStyles) => {
+              if (lineStyles && typeof lineStyles === "object") {
+                Object.values(lineStyles).forEach((charStyle) => {
+                  if (charStyle && (charStyle as { textBackgroundColor?: string }).textBackgroundColor) {
+                    delete (charStyle as { textBackgroundColor?: string }).textBackgroundColor;
+                  }
+                });
+              }
+            });
+          }
+        }
+      }
+
+      if (props.fontSize !== undefined && hasSubSelection) {
+        tb.setSelectionStyles({ fontSize: props.fontSize as number });
+        c.renderAll();
+        pushHistory();
+        setSel((s) => ({ ...s }));
+        return;
+      }
+
+      if (props.fontWeight !== undefined && hasSubSelection) {
+        tb.setSelectionStyles({ fontWeight: props.fontWeight as string });
+        c.renderAll();
+        pushHistory();
+        setSel((s) => ({ ...s }));
+        return;
+      }
+
+      if (props.fontStyle !== undefined && hasSubSelection) {
+        tb.setSelectionStyles({ fontStyle: props.fontStyle as string });
+        c.renderAll();
+        pushHistory();
+        setSel((s) => ({ ...s }));
+        return;
+      }
+
+      if (props.underline !== undefined && hasSubSelection) {
+        tb.setSelectionStyles({ underline: Boolean(props.underline) });
+        c.renderAll();
+        pushHistory();
+        setSel((s) => ({ ...s }));
+        return;
+      }
+
+      if (props.linethrough !== undefined && hasSubSelection) {
+        tb.setSelectionStyles({ linethrough: Boolean(props.linethrough) });
+        c.renderAll();
+        pushHistory();
+        setSel((s) => ({ ...s }));
+        return;
+      }
+    }
+
     sel.obj.set(props as Partial<FabricObject>);
     sel.obj.setCoords();
     c.renderAll();
@@ -3985,6 +4284,9 @@ export default function Editor() {
         a.href = url; a.download = `${name}.svg`;
         document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
+      } else if (exportFmt === "psd") {
+        const psdBlob = await exportFabricCanvasToPsdBlob(c, canvasSize);
+        triggerPsdDownload(psdBlob, `${name}.psd`);
       } else {
         const dataUrl = renderCleanDataUrl(c, canvasSize, {
           format: exportFmt === "jpg" ? "jpeg" : "png",
@@ -4134,7 +4436,6 @@ export default function Editor() {
   const vpt = fc.current?.viewportTransform ?? [zoom, 0, 0, zoom, 0, 0];
   const canUndo = historyRef.current.idx > 0;
   const canRedo = historyRef.current.idx < historyRef.current.stack.length - 1;
-  const canvasRect = (guides.v !== null || guides.h !== null) && canvasEl.current ? canvasEl.current.getBoundingClientRect() : null;
 
   const selectLayer = (o: FabricObject, ev?: React.MouseEvent) => {
     const c = fc.current; if (!c) return;
@@ -4175,12 +4476,24 @@ export default function Editor() {
     const c = fc.current; if (!c) return;
     const e = o as unknown as EditorObject;
     const locked = !e.kUserLock;
-    o.set({ kUserLock: locked } as Partial<FabricObject>);
-    const blocked = locked || (e.kLocked === true && !isAuthor);
-    o.selectable = !blocked;
-    o.evented = !blocked;
-    if (locked && c.getActiveObjects().includes(o)) { c.discardActiveObject(); }
-    c.renderAll(); pushHistory();
+    o.set({
+      kUserLock: locked,
+      lockMovementX: locked,
+      lockMovementY: locked,
+      lockRotation: locked,
+      lockScalingX: locked,
+      lockScalingY: locked,
+      hasControls: !locked,
+      selectable: !locked,
+      evented: !locked,
+    } as Partial<FabricObject>);
+    if (locked && c.getActiveObjects().includes(o)) {
+      c.discardActiveObject();
+    }
+    c.renderAll();
+    pushHistory();
+    refreshLayers();
+    toast.success(locked ? `🔒 Locked "${e.kName ?? o.type}"` : `🔓 Unlocked "${e.kName ?? o.type}"`);
   };
 
   /* one padlock for both lock kinds: user lock toggles freely; template locks
@@ -4247,11 +4560,13 @@ export default function Editor() {
 
   const TbColor = ({ tip, value, disabled, onChange }: { tip: string; value: string; disabled?: boolean; onChange: (hex: string) => void }) => (
     <Tip tip={tip} below>
-      <label className={"s-icon-btn relative" + (disabled ? " opacity-35 pointer-events-none" : "")} aria-label={tip}>
-        <span className="w-4 h-4 rounded-full border border-white/40" style={{ background: value }} />
-        <input type="color" className="absolute inset-0 opacity-0 cursor-pointer" value={value}
-          onChange={(e) => onChange(e.target.value)} />
-      </label>
+      <ColorField
+        value={value}
+        disabled={disabled}
+        compact
+        docColors={docColors}
+        onChange={onChange}
+      />
     </Tip>
   );
 
@@ -4301,11 +4616,12 @@ export default function Editor() {
     { id: "jpg" as const, name: "JPG", desc: "Web & social sharing" },
     { id: "svg" as const, name: "SVG", desc: "Scalable vector — logos & print" },
     { id: "pdf" as const, name: "PDF", desc: pages.length > 1 ? `Print · all ${pages.length} pages` : "Print-ready document" },
+    { id: "psd" as const, name: "PSD (Photoshop)", desc: "Layered source file with all your customizations" },
   ];
 
-  /** SVG is a new universal format — allowed unless a template explicitly opts out */
+  /** SVG and PSD are universal formats — allowed unless a template explicitly opts out */
   const fmtAllowed = (id: (typeof fmtMeta)[number]["id"]) =>
-    id === "svg" ? doc?.exports.svg !== false : !!doc?.exports[id];
+    id === "svg" || id === "psd" ? (doc?.exports as unknown as Record<string, boolean>)?.[id] !== false : !!doc?.exports[id];
 
   /* ---------------- main layout ---------------- */
 
@@ -4318,8 +4634,8 @@ export default function Editor() {
           <Link to="/" className="flex items-center gap-2 shrink-0" aria-label="Exit to home">
             <img src="/assets/sk-mark.png" alt="" width={26} height={17} className="h-[15px] w-auto" />
           </Link>
-          <span className="font-meta text-[9px] px-2 py-1 rounded-md shrink-0" style={{ background: "var(--dept)", color: "var(--on-dept)" }}>
-            KON10 STUDIO{isAuthor ? " · AUTHOR" : ""}
+          <span className="font-meta text-[9px] px-2 py-1 rounded-md shrink-0" style={{ background: isDesignerMode ? "rgb(245 158 11)" : "var(--dept)", color: isDesignerMode ? "#000" : "var(--on-dept)" }}>
+            KON10 STUDIO{isAuthor ? " · AUTHOR" : isDesignerMode ? " · DESIGNER" : ""}
           </span>
           <span className="font-display text-[13px] font-bold uppercase truncate max-md:hidden">{tpl.name}</span>
           <span className="font-meta text-[9px] shrink-0 flex items-center gap-1.5" role="status"
@@ -4394,26 +4710,11 @@ export default function Editor() {
           <span className="w-px h-5 bg-[var(--s-line)] mx-1.5" />
           <TbIcon tip="Resize design — fit to another format" onClick={() => setResizeOpen(true)} d="M4 9V4h5 M20 15v5h-5 M9 4 4 9 M15 20l5-5 M14 4h6v6 M4 14v6h6" />
           <TbIcon tip="Version history" onClick={openHistory} d="M12 7v5l3 2 M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18z" />
-          <TbIcon tip="Animate design — create motion video" onClick={() => setAnimOpen(true)} active={animOpen} d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z M5 18l1 3 3-1-3-1z M19 16l1 3 3-1-3-1z" />
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
           <button className="s-btn s-btn-line max-lg:hidden" onClick={() => { setPaletteQ(""); setPaletteIdx(0); setPaletteOpen(true); }}>
             <span className="s-kbd">⌘K</span>
-          </button>
-          <button
-            className={"s-btn !text-[11.5px] flex items-center gap-1.5 transition-all " + (isFullscreen ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "")}
-            onClick={toggleFullscreen}
-            title={isFullscreen ? "Exit Fullscreen (F or Esc)" : "Enter Fullscreen Mode (F)"}
-          >
-            <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              {isFullscreen ? (
-                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
-              ) : (
-                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-              )}
-            </svg>
-            <span className="max-sm:hidden">{isFullscreen ? "Exit Full" : "Fullscreen"}</span>
           </button>
           <button className="s-btn s-btn-line text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20 max-sm:hidden flex items-center gap-1" onClick={() => setAnimOpen(true)}>
             <span>✨</span> Animate
@@ -4442,10 +4743,61 @@ export default function Editor() {
           <button className="s-btn" onClick={() => {
             const d = designRef.current;
             if (d && navigator.onLine) void persistNow(d.id);
-            navigate(isAuthor ? "/admin" : "/client");
+            navigate(isAuthor || isDesignerMode ? "/admin" : "/client");
           }} aria-label="Exit editor">Exit</button>
         </div>
       </div>
+
+      {/* Studio Designer Mode HUD */}
+      {isDesignerMode && (
+        <div className="bg-amber-950/90 border-b border-amber-500/40 px-3.5 py-2 flex flex-wrap items-center justify-between gap-3 text-amber-200 text-xs shrink-0 z-30 shadow-md">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="bg-amber-500 text-black font-meta text-[8.5px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shrink-0 shadow-sm">
+              🛠️ DESIGNER MODE
+            </span>
+            <span className="font-meta text-[11px] truncate text-white">
+              Client: <strong className="text-amber-300">{clientParam || design?.email || "Guest Client"}</strong>
+            </span>
+            {(orderIdParam || design?.orderId) && (
+              <span className="font-meta text-[10px] text-amber-300/80 shrink-0">
+                · Order <strong className="text-white">#{(orderIdParam || design?.orderId || "").slice(0, 8).toUpperCase()}</strong>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={toggleMasterOverride}
+              className={`font-meta text-[9.5px] px-2.5 py-1 rounded border transition-colors flex items-center gap-1 ${
+                masterOverride
+                  ? "bg-amber-500 text-black font-bold border-amber-400"
+                  : "bg-black/40 text-amber-300 border-amber-500/40 hover:bg-amber-500/20"
+              }`}
+              title="Unlock all template layers to edit unconstrained"
+            >
+              <span>{masterOverride ? "🔓" : "🔒"}</span>
+              <span>{masterOverride ? "Master Override ON" : "Unlock All Layers"}</span>
+            </button>
+
+            {(orderIdParam || design?.orderId) && (
+              <button
+                onClick={() => setDeliverModalOpen(true)}
+                className="font-meta text-[9.5px] px-3 py-1 bg-amber-400 text-black hover:bg-amber-300 font-bold rounded shadow transition-colors flex items-center gap-1"
+                title="Deliver proof to client order vault"
+              >
+                <span>🚀</span> Deliver Proof to Order
+              </button>
+            )}
+
+            <button
+              onClick={() => navigate("/admin")}
+              className="font-meta text-[9.5px] text-amber-400/80 hover:text-white px-2 py-0.5 underline transition-colors"
+            >
+              Back to Admin
+            </button>
+          </div>
+        </div>
+      )}
 
       {offline && (
         <div className="px-4 py-1.5 font-meta text-[9.5px] text-center shrink-0 tracking-wider"
@@ -6384,10 +6736,36 @@ export default function Editor() {
                 </div>
                 {isText(selObj) && (
                   <>
-                    <div className="flex flex-col gap-1">
-                      <span className="s-label !mb-0 text-[10px]">Text Content</span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="s-label !mb-0 text-[10px]">Text Content</span>
+                        <button
+                          type="button"
+                          className="font-meta text-[9px] text-[var(--dept)] hover:underline flex items-center gap-1"
+                          onClick={() => {
+                            const c = fc.current;
+                            if (c && selObj) {
+                              const tb = selObj as unknown as Textbox;
+                              tb.editable = true;
+                              c.setActiveObject(tb);
+                              c.renderAll();
+                              setTimeout(() => {
+                                try {
+                                  tb.enterEditing();
+                                  tb.selectAll();
+                                  c.renderAll();
+                                } catch (e) {
+                                  console.warn(e);
+                                }
+                              }, 30);
+                            }
+                          }}
+                        >
+                          <span>✏️</span> Focus on Canvas
+                        </button>
+                      </div>
                       <textarea
-                        className="s-input !py-1.5 !px-2 !text-[12px] min-h-[44px] resize-y"
+                        className="s-input !py-1.5 !px-2 !text-[12px] min-h-[48px] resize-y font-normal"
                         value={t.text ?? ""}
                         disabled={styleLocked}
                         placeholder="Type text here…"
@@ -6426,6 +6804,94 @@ export default function Editor() {
                         <span>✨</span> All AI Prompts…
                       </button>
                     </div>
+                    {/* Partial Text Highlight / Selection Controls */}
+                    {(() => {
+                      const tb = selObj as unknown as Textbox;
+                      const isEditing = Boolean((tb as unknown as { isEditing?: boolean }).isEditing);
+                      const sStart = tb.selectionStart ?? 0;
+                      const sEnd = tb.selectionEnd ?? 0;
+                      const fullText = t.text ?? "";
+                      const hasSubSel = isEditing && sStart !== sEnd;
+                      const highlightedText = hasSubSel ? fullText.slice(Math.min(sStart, sEnd), Math.max(sStart, sEnd)) : "";
+
+                      return (
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2 shadow-inner">
+                          <div className="flex items-center justify-between">
+                            <span className="font-meta text-[9px] uppercase tracking-wider text-amber-400 font-bold flex items-center gap-1">
+                              <span>✨</span> {hasSubSel ? "Highlighted Portion" : "Text Selection"}
+                            </span>
+                            <span className="font-meta text-[8.5px] text-zinc-400 font-mono">
+                              {hasSubSel ? `[${Math.min(sStart, sEnd)}:${Math.max(sStart, sEnd)}]` : "All text"}
+                            </span>
+                          </div>
+
+                          {hasSubSel ? (
+                            <div className="text-[11.5px] font-bold text-amber-300 bg-amber-950/40 border border-amber-500/30 rounded px-2 py-1 truncate">
+                              "{highlightedText}"
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-zinc-400 leading-tight">
+                              Drag on canvas to highlight any word, or use quick selectors:
+                            </p>
+                          )}
+
+                          <div className="grid grid-cols-3 gap-1">
+                            <button
+                              type="button"
+                              className="s-btn s-btn-line !py-1 !text-[9.5px] font-medium"
+                              onClick={() => {
+                                const c = fc.current;
+                                if (c && selObj) {
+                                  const tbObj = selObj as unknown as Textbox;
+                                  tbObj.enterEditing();
+                                  tbObj.selectAll();
+                                  c.renderAll();
+                                  setSel(readSelection(c));
+                                }
+                              }}
+                            >
+                              Select All
+                            </button>
+                            <button
+                              type="button"
+                              className="s-btn s-btn-line !py-1 !text-[9.5px] font-medium"
+                              onClick={() => {
+                                const c = fc.current;
+                                if (c && selObj) {
+                                  const tbObj = selObj as unknown as Textbox;
+                                  tbObj.enterEditing();
+                                  const firstSpace = fullText.indexOf(" ");
+                                  tbObj.selectionStart = 0;
+                                  tbObj.selectionEnd = firstSpace > 0 ? firstSpace : fullText.length;
+                                  c.renderAll();
+                                  setSel(readSelection(c));
+                                }
+                              }}
+                            >
+                              First Word
+                            </button>
+                            <button
+                              type="button"
+                              className="s-btn s-btn-line !py-1 !text-[9.5px] font-medium"
+                              onClick={() => {
+                                const c = fc.current;
+                                if (c && selObj) {
+                                  const tbObj = selObj as unknown as Textbox;
+                                  tbObj.enterEditing();
+                                  const lastSpace = fullText.lastIndexOf(" ");
+                                  tbObj.selectionStart = lastSpace >= 0 ? lastSpace + 1 : 0;
+                                  tbObj.selectionEnd = fullText.length;
+                                  c.renderAll();
+                                  setSel(readSelection(c));
+                                }
+                              }}
+                            >
+                              Last Word
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
                 <FontField value={t.fontFamily} disabled={styleLocked} onChange={(stack) => setFont(stack)} />
@@ -6485,8 +6951,32 @@ export default function Editor() {
                   <button className="s-btn s-btn-line grow !px-0" disabled={styleLocked} onClick={() => setCase("title")} aria-label="Title case">Aa</button>
                   <button className="s-btn s-btn-line grow !px-0" disabled={styleLocked} onClick={() => setCase("lower")} aria-label="Lowercase">aa</button>
                 </div>
-                <ColorField label="Color" value={normalizeHex(t.fill) ?? "#ffffff"} disabled={styleLocked} docColors={docColors}
-                  onChange={(hex) => setProp({ fill: hex })} />
+
+                {/* Text Color Section with Quick Swatches */}
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <span className="s-label !mb-0 text-[10px]">
+                      {Boolean((selObj as unknown as Textbox).isEditing && (selObj as unknown as Textbox).selectionStart !== (selObj as unknown as Textbox).selectionEnd)
+                        ? "Color (for Highlighted Selection)"
+                        : "Color"}
+                    </span>
+                  </div>
+                  <ColorField label="" value={normalizeHex(t.fill) ?? "#ffffff"} disabled={styleLocked} docColors={docColors}
+                    onChange={(hex) => setProp({ fill: hex })} />
+                  <div className="flex flex-wrap gap-1.5 mt-0.5">
+                    {["#ffffff", "#facc15", "#22c55e", "#06b6d4", "#ef4444", "#ec4899", "#8b5cf6", "#000000"].map((hexColor) => (
+                      <button
+                        key={hexColor}
+                        type="button"
+                        className="s-swatch !w-5 !h-5 border border-white/20 hover:scale-110 transition-transform"
+                        style={{ background: hexColor }}
+                        title={`Apply ${hexColor}`}
+                        onClick={() => setProp({ fill: hexColor })}
+                      />
+                    ))}
+                  </div>
+                </div>
+
                 <div className="flex items-end gap-1.5">
                   <div className="grow">
                     <ColorField label="Text highlight" value={normalizeHex(t.textBackgroundColor) ?? "#000000"} disabled={styleLocked} docColors={docColors}
@@ -6536,6 +7026,26 @@ export default function Editor() {
 
           {selObj && sel.kind === "image" && (
             <>
+              {/* 1-Click Convert to Live Text (for dates, times, venues, titles imported from PSD) */}
+              <div className="bg-gradient-to-r from-cyan-950/60 to-blue-950/60 border border-cyan-500/40 rounded-xl p-2.5 flex flex-col gap-2 shadow-md">
+                <div className="flex items-center justify-between">
+                  <span className="font-meta text-[9.5px] uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-1.5">
+                    <span>🔤</span> Text / Date Layer
+                  </span>
+                  <span className="font-meta text-[8.5px] text-zinc-400">PSD / Raster</span>
+                </div>
+                <p className="text-[10px] text-zinc-300 leading-tight">
+                  Convert this element to live editable text to change words, dates, fonts, and colors:
+                </p>
+                <button
+                  type="button"
+                  className="s-btn s-btn-dept !py-1.5 !text-[11px] font-bold w-full flex items-center justify-center gap-1.5 shadow"
+                  onClick={() => convertPsdTextToLiveTextbox(selObj)}
+                >
+                  <span>🔤</span> Convert to Live Text
+                </button>
+              </div>
+
               <p className="s-label">Image</p>
               {(isAuthor || selObj.kReplaceable) && (
                 <label className="s-list-btn justify-center cursor-pointer">
@@ -6854,80 +7364,66 @@ export default function Editor() {
 
 
       {/* right-click context menu (§30) */}
-      {ctx && (
-        <div className="s-menu" style={{ left: Math.min(ctx.x, window.innerWidth - 240), top: Math.min(ctx.y, window.innerHeight - 560) }}>
-          {menuItem("Copy", "⌘C", copySelection, { disabled: sel.kind === "none" })}
-          {menuItem("Paste", "⌘V", () => void pasteClipboard(), { disabled: !clipboardRef.current })}
-          {menuItem("Duplicate", "⌘D", () => void duplicateSelection(), { disabled: sel.kind === "none" })}
-          <div className="s-menu-sep" />
-          {menuItem("Bring forward", "⌘]", () => reorderActive("forward"), { disabled: sel.kind === "none" })}
-          {menuItem("Send backward", "⌘[", () => reorderActive("backward"), { disabled: sel.kind === "none" })}
-          {sel.kind !== "none" && sel.kind !== "multi" && menuItem("Center on canvas", undefined, () => { align("centerX"); align("centerY"); })}
-          {(sel.kind === "text" || sel.kind === "shape" || isGroup(selObj)) &&
-            menuItem("Rasterize into image", undefined, rasterizeSelection)}
-          <div className="s-menu-sep" />
-          {sel.kind !== "none" && menuItem("Export layer as PNG (Save As…)", undefined, () => void exportSelectedElement("png", 2, true))}
-          {sel.kind !== "none" && menuItem("Export layer as JPEG (Save As…)", undefined, () => void exportSelectedElement("jpg", 2, true))}
-          {sel.kind !== "none" && menuItem("Copy layer image to clipboard", undefined, () => void copySelectedElementToClipboard(2))}
-          <div className="s-menu-sep" />
-          {menuItem("Copy style", undefined, copyStyle, { disabled: sel.kind === "none" || sel.kind === "multi" })}
-          {menuItem("Paste style", undefined, pasteStyle, { disabled: !styleRef.current || sel.kind === "none" })}
-          {/* quick actions — type-aware */}
-          {sel.kind === "text" && (
-            <>
-              <div className="s-menu-sep" />
-              {menuItem("Warp — arc up ⌒", undefined, () => applyWarp("arcUp", (selObj as unknown as { kWarp?: { bend: number } | null }).kWarp?.bend ?? 90))}
-              {menuItem("Warp — arc down ⌣", undefined, () => applyWarp("arcDown", (selObj as unknown as { kWarp?: { bend: number } | null }).kWarp?.bend ?? 90))}
-              {menuItem("Warp — wave 〜", undefined, () => applyWarp("wave", (selObj as unknown as { kWarp?: { bend: number } | null }).kWarp?.bend ?? 90))}
-              {menuItem("Warp — circle ◯", undefined, () => applyWarp("circle"))}
-              {!!(selObj as unknown as { kWarp?: unknown }).kWarp && menuItem("Remove warp", undefined, () => applyWarp(null))}
-            </>
-          )}
-          {sel.kind === "image" && (
-            <>
-              <div className="s-menu-sep" />
-              {menuItem("Edge fade mask — bottom ▼", undefined, () => applyFadeMask("bottom"))}
-              {menuItem("Edge fade mask — top ▲", undefined, () => applyFadeMask("top"))}
-              {menuItem("Edge fade mask — radial ○", undefined, () => applyFadeMask("radial"))}
-              {!!(selObj as unknown as EditorObject)?.kFadeMask && menuItem("Remove edge fade mask", undefined, () => applyFadeMask("none"))}
-              <div className="s-menu-sep" />
-              {menuItem("Crop visually", undefined, startCrop)}
-              {menuItem("Spot heal", undefined, () => startRetouch("heal"))}
-              {menuItem("Clone stamp", undefined, () => startRetouch("clone"))}
-              {menuItem("Remove background", "AI", () => void removeBackgroundAI())}
-            </>
-          )}
-          {ctxLayers.length > 1 && (
-            <>
-              <div className="s-menu-sep" />
-              {ctxLayers.map((o, i) => menuItem(
-                `${i === 0 ? "Select" : "Select beneath"}: ${(o as unknown as EditorObject).kName ?? o.type ?? "layer"}`,
-                i === 0 ? "top" : `−${i}`,
-                () => {
-                  const c = fc.current; if (!c) return;
-                  c.discardActiveObject();
-                  c.setActiveObject(o); c.renderAll(); setSel(readSelection(c));
-                }))}
-            </>
-          )}
-          <div className="s-menu-sep" />
-          {sel.kind === "multi" && menuItem("Group", "⌘G", groupSelection)}
-          {isGroup(selObj) && menuItem("Ungroup", "⌘⇧G", ungroupSelection)}
-          {sel.kind !== "none" && sel.kind !== "multi" && menuItem(
-            selObj?.kUserLock ? "Unlock" : selObj?.kLocked ? "Unlock (template lock)" : "Lock",
-            undefined, () => { if (sel.obj) toggleAnyLock(sel.obj); })}
-          <div className="s-menu-sep" />
-          {menuItem("Delete", "⌫", deleteSelection, { disabled: sel.kind === "none", danger: true })}
-        </div>
-      )}
+      {ctx && (() => {
+        const safeTop = Math.max(10, Math.min(ctx.y, window.innerHeight - 340));
+        const safeLeft = Math.max(10, Math.min(ctx.x, window.innerWidth - 240));
+        return (
+          <div
+            className="s-menu shadow-2xl backdrop-blur-xl"
+            style={{
+              left: safeLeft,
+              top: safeTop,
+              maxHeight: "min(calc(100vh - 80px), 340px)",
+            }}
+          >
+            {menuItem("Copy", "⌘C", copySelection, { disabled: sel.kind === "none" })}
+            {menuItem("Paste", "⌘V", () => void pasteClipboard(), { disabled: !clipboardRef.current })}
+            {menuItem("Duplicate", "⌘D", () => void duplicateSelection(), { disabled: sel.kind === "none" })}
+            <div className="s-menu-sep" />
+            {menuItem("Bring forward", "⌘]", () => reorderActive("forward"), { disabled: sel.kind === "none" })}
+            {menuItem("Send backward", "⌘[", () => reorderActive("backward"), { disabled: sel.kind === "none" })}
+            {sel.kind !== "none" && sel.kind !== "multi" && menuItem("Center on canvas", undefined, () => { align("centerX"); align("centerY"); })}
+            {(sel.kind === "text" || sel.kind === "shape" || isGroup(selObj)) &&
+              menuItem("Rasterize layer", undefined, rasterizeSelection)}
+            <div className="s-menu-sep" />
+            {menuItem("Copy style", undefined, copyStyle, { disabled: sel.kind === "none" || sel.kind === "multi" })}
+            {menuItem("Paste style", undefined, pasteStyle, { disabled: !styleRef.current || sel.kind === "none" })}
+            {ctxLayers.length > 1 && (
+              <>
+                <div className="s-menu-sep" />
+                {ctxLayers.map((o, i) => menuItem(
+                  `${i === 0 ? "Select" : "Select beneath"}: ${(o as unknown as EditorObject).kName ?? o.type ?? "layer"}`,
+                  i === 0 ? "top" : `−${i}`,
+                  () => {
+                    const c = fc.current; if (!c) return;
+                    c.discardActiveObject();
+                    c.setActiveObject(o); c.renderAll(); setSel(readSelection(c));
+                  }))}
+              </>
+            )}
+            <div className="s-menu-sep" />
+            {sel.kind === "multi" && menuItem("Group", "⌘G", groupSelection)}
+            {isGroup(selObj) && menuItem("Ungroup", "⌘⇧G", ungroupSelection)}
+            {sel.kind !== "none" && sel.kind !== "multi" && menuItem(
+              selObj?.kUserLock ? "Unlock" : selObj?.kLocked ? "Unlock (template lock)" : "Lock",
+              undefined, () => { if (sel.obj) toggleAnyLock(sel.obj); })}
+            <div className="s-menu-sep" />
+            {menuItem("Delete", "⌫", deleteSelection, { disabled: sel.kind === "none", danger: true })}
+          </div>
+        );
+      })()}
 
-      {/* smart guide lines (§5) */}
-      {canvasRect && guides.v !== null && (
-        <div className="s-guide" style={{ left: canvasRect.left + guides.v * zoom + vpt[4], top: canvasRect.top, width: 1.5, height: canvasRect.height }} />
-      )}
-      {canvasRect && guides.h !== null && (
-        <div className="s-guide" style={{ top: canvasRect.top + guides.h * zoom + vpt[5], left: canvasRect.left, height: 1.5, width: canvasRect.width }} />
-      )}
+      {/* smart guide lines (§5) - direct DOM for 120fps smooth performance */}
+      <div
+        ref={vGuideRef}
+        className="s-guide pointer-events-none fixed z-50 transition-none hidden"
+        style={{ width: 1.5 }}
+      />
+      <div
+        ref={hGuideRef}
+        className="s-guide pointer-events-none fixed z-50 transition-none hidden"
+        style={{ height: 1.5 }}
+      />
 
       {/* boot loading (§51) */}
       {booting && (
@@ -7101,6 +7597,108 @@ export default function Editor() {
                   {exportPhase === "prep" ? "PREPARING…" : exportPhase === "render" ? "RENDERING YOUR DESIGN…" : "✓ COMPLETE"}
                 </p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deliver Proof to Client Order Modal */}
+      {deliverModalOpen && (
+        <div
+          className="fixed inset-0 z-[150] grid place-items-center p-4 s-fade backdrop-blur-md"
+          style={{ background: "rgba(0, 0, 0, 0.82)" }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Deliver Proof to Client Order"
+          onClick={() => { if (!deliveringProof) setDeliverModalOpen(false); }}
+        >
+          <div
+            className="s-panel2 border border-amber-500/40 rounded-2xl w-full max-w-lg p-6 s-pop shadow-2xl bg-[#141418] text-white flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🚀</span>
+                <div>
+                  <h2 className="font-display text-base font-bold uppercase tracking-wider text-amber-300">
+                    Deliver Proof to Client
+                  </h2>
+                  <p className="font-meta text-[9.5px] text-zinc-400">
+                    Publish high-res deliverable to Order Vault and notify client.
+                  </p>
+                </div>
+              </div>
+              <button
+                disabled={deliveringProof}
+                className="s-icon-btn !w-7 !h-7 text-[12px]"
+                onClick={() => setDeliverModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Target Order & Recipient Details */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-3.5 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="font-meta text-[10px] text-zinc-400">Target Order:</span>
+                <span className="font-mono text-[11px] font-bold text-amber-300">
+                  #{(orderIdParam || design?.orderId || "").toUpperCase()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-meta text-[10px] text-zinc-400">Client Email:</span>
+                <span className="font-meta text-[11px] text-zinc-200">
+                  {clientParam || design?.email || "Client"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-meta text-[10px] text-zinc-400">Design Title:</span>
+                <span className="font-bold text-white truncate max-w-[200px]">
+                  {design?.title || tpl?.name || "Customer Artwork"}
+                </span>
+              </div>
+            </div>
+
+            {/* Designer Note / Changelog */}
+            <div>
+              <label className="font-meta text-[10px] text-zinc-300 block mb-1 uppercase font-bold">
+                Designer Notes for Client (Optional):
+              </label>
+              <textarea
+                rows={3}
+                value={deliverNote}
+                onChange={(e) => setDeliverNote(e.target.value)}
+                placeholder="e.g. Adjusted color palette to match your logo, increased font contrast, and aligned text layers."
+                className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-400 placeholder:text-zinc-500"
+              />
+            </div>
+
+            {/* Action Summary */}
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl font-meta text-[9.5px] text-amber-200 space-y-1">
+              <p>✓ Renders crisp 2x high-resolution PNG proof</p>
+              <p>✓ Attaches file to client's Order Deliverables Vault</p>
+              <p>✓ Posts notice in the project discussion thread</p>
+              <p>✓ Automatically advances order status to <strong>CLIENT REVIEW</strong></p>
+            </div>
+
+            {/* Submit & Cancel Buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                disabled={deliveringProof}
+                onClick={() => setDeliverModalOpen(false)}
+                className="btn btn-ghost !py-2 !px-4 text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deliveringProof}
+                onClick={handleDeliverProof}
+                className="btn btn-dept !py-2 !px-5 text-xs font-bold uppercase shadow-lg flex items-center gap-1.5 !bg-amber-400 !text-black hover:!bg-amber-300"
+              >
+                {deliveringProof ? "Rendering & Delivering…" : "🚀 Confirm & Deliver Proof"}
+              </button>
             </div>
           </div>
         </div>

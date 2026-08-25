@@ -204,13 +204,28 @@
 .s-menu {
   position: fixed;
   z-index: 150;
-  min-width: 216px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: min(calc(100vh - 80px), 520px);
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--s-panel2);
   border: 1px solid var(--s-line2);
-  border-radius: 11px;
-  padding: 5px;
-  box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.75);
   animation: sPop 0.13s ease;
+  overscroll-behavior: contain;
+}
+.s-menu::-webkit-scrollbar {
+  width: 5px;
+}
+.s-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+}
+.s-menu::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
 }
 .s-menu-item {
   display: flex;

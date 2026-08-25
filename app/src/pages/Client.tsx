@@ -36,7 +36,8 @@ import {
   currentVersion, downloadTemplate, entitlementsFromOrders, useTemplateFavorites, useTemplates,
   type Entitlement, type Template,
 } from "../lib/templates";
-import { deleteDesign, listDesigns, type CustomerDesign } from "../lib/editor-store";
+import { deleteDesign, findDesignFor, findDesignForOrder, listDesigns, type CustomerDesign } from "../lib/editor-store";
+import { exportJsonDocToPsdBlob, exportImageToPsdBlob, triggerPsdDownload } from "../lib/psd-export";
 import { TemplateCard, TemplatePreview } from "../components/Watermark";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 
@@ -235,36 +236,241 @@ function ReceiptModal({ order, onClose }: { order: OrderRecord; onClose: () => v
   );
 }
 
+function QuickPreviewModal({
+  title,
+  subtitle,
+  imageSrc,
+  tpl,
+  customDesign,
+  onClose,
+  onDownloadCustomPsd,
+  onDownloadOriginal,
+  editUrl,
+}: {
+  title: string;
+  subtitle?: string;
+  imageSrc?: string;
+  tpl?: Template;
+  customDesign?: CustomerDesign | null;
+  onClose: () => void;
+  onDownloadCustomPsd?: () => void;
+  onDownloadOriginal?: () => void;
+  editUrl?: string;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[150] grid place-items-center p-4 bg-black/80 backdrop-blur-md s-fade"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#121216] border border-white/15 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row text-white s-pop max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Left: Preview Artwork */}
+        <div className="md:w-1/2 bg-black/60 relative flex items-center justify-center p-6 border-b md:border-b-0 md:border-r border-white/10 overflow-hidden min-h-[280px]">
+          {imageSrc ? (
+            <img
+              src={imageSrc}
+              alt={title}
+              className="max-h-[55vh] w-auto max-w-full object-contain rounded-xl shadow-2xl border border-white/10"
+            />
+          ) : tpl ? (
+            <div className="w-full aspect-[4/5] relative rounded-xl overflow-hidden shadow-2xl">
+              <TemplatePreview tpl={tpl} className="absolute inset-0" noWatermark />
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-500">No preview image available.</p>
+          )}
+        </div>
+
+        {/* Right: Info & Actions */}
+        <div className="md:w-1/2 p-6 flex flex-col justify-between overflow-y-auto">
+          <div>
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-white/10">
+              <div>
+                <span className="font-meta text-[9px] text-amber-400 font-bold uppercase tracking-wider">
+                  {customDesign ? "Customized Flyer Preview" : "Master Blueprint Preview"}
+                </span>
+                <h3 className="font-display text-lg font-bold uppercase text-white mt-0.5">{title}</h3>
+              </div>
+              <button
+                onClick={onClose}
+                className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 grid place-items-center text-xs text-zinc-300"
+              >
+                ✕
+              </button>
+            </div>
+
+            {subtitle && (
+              <p className="font-meta text-[11px] text-zinc-400 mt-2">{subtitle}</p>
+            )}
+
+            <div className="bg-white/5 border border-white/10 rounded-xl p-3 mt-4 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-zinc-400 font-meta text-[10px]">Status:</span>
+                <span className="text-emerald-400 font-bold font-meta text-[10px]">
+                  {customDesign ? "✓ Customized with Your Edits" : "Original Blueprint"}
+                </span>
+              </div>
+              {customDesign?.version && (
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-meta text-[10px]">Version:</span>
+                  <span className="text-zinc-200 font-mono text-[10px]">v{customDesign.version}</span>
+                </div>
+              )}
+              {customDesign?.updatedAt && (
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-meta text-[10px]">Last Updated:</span>
+                  <span className="text-zinc-200 font-meta text-[10px]">
+                    {new Date(customDesign.updatedAt).toLocaleString()}
+                  </span>
+                </div>
+              )}
+              {tpl && (
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-meta text-[10px]">Dimensions:</span>
+                  <span className="text-zinc-200 font-mono text-[10px]">{tpl.dimensions || "1080 × 1350 px"}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="pt-6 space-y-2 mt-4 border-t border-white/10">
+            {customDesign && onDownloadCustomPsd && (
+              <button
+                onClick={onDownloadCustomPsd}
+                className="w-full btn btn-dept !py-2.5 flex items-center justify-center gap-2 font-bold uppercase shadow-lg"
+              >
+                <span>📥</span> Download Customized PSD
+              </button>
+            )}
+            {onDownloadOriginal && (
+              <button
+                onClick={onDownloadOriginal}
+                className="w-full btn btn-ghost !py-2 flex items-center justify-center gap-2 font-meta text-xs"
+              >
+                <span>📦</span> Download Master Blueprint
+              </button>
+            )}
+            {editUrl && (
+              <Link
+                to={editUrl}
+                className="w-full btn btn-fill !py-2 flex items-center justify-center gap-2 font-display text-xs uppercase"
+              >
+                <span>✏️</span> Open in Kon10 Studio
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LibraryCard({ ent, tpl, orders }: { ent: Entitlement; tpl: Template | undefined; orders: OrderRecord[] }) {
   const { user } = useAuth();
   const [state, setState] = useState<"idle" | "preparing" | "failed">("idle");
+  const [customDesign, setCustomDesign] = useState<CustomerDesign | null>(null);
   const [receipt, setReceipt] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const order = orders.find((o) => o.id === ent.orderId);
   const ver = tpl ? currentVersion(tpl) : undefined;
   const updateAvailable = ver && ver.version !== ent.version;
 
-  const download = async () => {
+  useEffect(() => {
+    if (!tpl) return;
+    let active = true;
+    const loadDesign = async () => {
+      if (ent.orderId) {
+        const byOrder = await findDesignForOrder(ent.orderId);
+        if (byOrder) return byOrder;
+      }
+      return await findDesignFor(user?.email ?? order?.email ?? "", tpl.slug, user?.uid);
+    };
+    loadDesign().then((found) => {
+      if (active && found) setCustomDesign(found);
+    });
+    return () => {
+      active = false;
+    };
+  }, [tpl, user, order, ent.orderId]);
+
+  const downloadOriginal = async () => {
     if (!tpl) return;
     setState("preparing");
     const res = await downloadTemplate(tpl, ent.orderId, user?.email ?? order?.email ?? "customer");
     setState(res.ok ? "idle" : "failed");
   };
 
+  const downloadCustomizedPsd = async () => {
+    if (!customDesign) return;
+    setState("preparing");
+    try {
+      toast.info("Generating customized PSD with all your updates…");
+      let blob: Blob | null = null;
+      if (customDesign.canvasJson) {
+        try {
+          blob = await exportJsonDocToPsdBlob(customDesign.canvasJson);
+        } catch (jsonErr) {
+          console.warn("Vector JSON PSD export failed, falling back to raster layer PSD:", jsonErr);
+        }
+      }
+      if (!blob && customDesign.thumbnail) {
+        blob = await exportImageToPsdBlob(customDesign.thumbnail, customDesign.title || tpl?.name || "Custom Flyer");
+      }
+      if (!blob) {
+        throw new Error("No artwork data found for this customized design.");
+      }
+      triggerPsdDownload(
+        blob,
+        `${(customDesign.title || tpl?.name || "custom-flyer").replace(/[^\w-]/g, "_")}-v${customDesign.version || 1}.psd`
+      );
+      toast.success("Layered customized PSD downloaded!");
+      setState("idle");
+    } catch (err) {
+      console.error("Customized PSD export error:", err);
+      toast.error("Could not generate customized PSD. Downloading original blueprint.");
+      void downloadOriginal();
+    }
+  };
+
   return (
     <article className="border border-[var(--line-strong)] grid sm:grid-cols-[140px_1fr]" style={{ background: "var(--panel)" }}>
-      <div className="relative aspect-[4/5] sm:aspect-auto">
-        {tpl ? (
+      <div className="relative aspect-[4/5] sm:aspect-auto overflow-hidden bg-zinc-950 group">
+        {customDesign?.thumbnail && customDesign.thumbnail.length > 50 ? (
+          <img
+            src={customDesign.thumbnail}
+            alt={customDesign.title || tpl?.name || "Custom Flyer"}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : tpl ? (
           <TemplatePreview tpl={tpl} className="absolute inset-0" noWatermark />
         ) : (
           <div className="absolute inset-0 grid place-items-center" style={{ background: "var(--dept-soft)" }}>
             <span className="font-meta text-[9px] text-[var(--muted)] px-3 text-center">TEMPLATE RETIRED</span>
           </div>
         )}
+        {(customDesign?.thumbnail || tpl) && (
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1 text-white font-meta text-[10px] font-bold uppercase backdrop-blur-[2px]"
+          >
+            <span className="text-base">👁️</span> Quick Preview
+          </button>
+        )}
       </div>
       <div className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="font-display text-base font-bold uppercase leading-tight">{tpl?.name ?? ent.name}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-display text-base font-bold uppercase leading-tight">{tpl?.name ?? ent.name}</h3>
+              {customDesign && (
+                <span className="font-meta text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  Customized
+                </span>
+              )}
+            </div>
             <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
               Purchased {ent.purchasedAt ? new Date(ent.purchasedAt).toLocaleDateString() : "—"} · Order #{ent.orderId.slice(0, 8).toUpperCase()}
             </p>
@@ -279,16 +485,42 @@ function LibraryCard({ ent, tpl, orders }: { ent: Entitlement; tpl: Template | u
           <p className="font-meta text-[9px] text-[var(--muted)] mt-2">This template was retired from the store — your purchase and downloads are unaffected.</p>
         )}
         <div className="flex flex-wrap gap-2 mt-4">
-          {tpl && (
-            <button className="btn btn-dept !py-2 !px-3.5" disabled={state === "preparing"} onClick={download}>
+          <button
+            type="button"
+            className="btn btn-ghost !py-2 !px-3 font-display text-[10.5px] font-bold uppercase flex items-center gap-1.5"
+            onClick={() => setPreviewOpen(true)}
+          >
+            <span>👁️</span> Quick Preview
+          </button>
+          {customDesign?.canvasJson ? (
+            <>
+              <button
+                className="btn btn-dept !py-2 !px-3.5 flex items-center gap-1.5 shadow-sm"
+                disabled={state === "preparing"}
+                onClick={downloadCustomizedPsd}
+                title="Download layered Photoshop PSD file with all your custom text and image edits"
+              >
+                <span>📥</span> {state === "preparing" ? "Generating PSD…" : "Download Customized PSD"}
+              </button>
+              <button
+                className="btn btn-ghost !py-2 !px-3"
+                disabled={state === "preparing"}
+                onClick={downloadOriginal}
+                title="Download original master template blueprint"
+              >
+                Original Master
+              </button>
+            </>
+          ) : tpl ? (
+            <button className="btn btn-dept !py-2 !px-3.5" disabled={state === "preparing"} onClick={downloadOriginal}>
               {state === "preparing" ? "Preparing your download…" : updateAvailable ? "Download Latest Version" : "Download"}
             </button>
-          )}
+          ) : null}
           {state === "failed" && (
-            <button className="btn btn-ghost !py-2 !px-3.5" onClick={download}>Download failed — Try Again</button>
+            <button className="btn btn-ghost !py-2 !px-3.5" onClick={downloadOriginal}>Download failed — Try Again</button>
           )}
           {order && <button className="btn btn-ghost !py-2 !px-3.5" onClick={() => setReceipt(true)}>View Receipt</button>}
-          {tpl && <Link to={`/editor/${tpl.slug}`} className="btn btn-fill !py-2 !px-3.5">Edit with Kon10</Link>}
+          {tpl && <Link to={`/editor/${tpl.slug}${customDesign ? `?designId=${customDesign.id}` : ""}`} className="btn btn-fill !py-2 !px-3.5">Edit with Kon10</Link>}
           {tpl && <Link to={`/templates/${tpl.slug}`} className="btn btn-ghost !py-2 !px-3.5">{ent.customized ? "View Template" : "Customize Template"}</Link>}
           {tpl && (
             <a className="btn btn-ghost !py-2 !px-3.5" target="_blank" rel="noreferrer"
@@ -299,6 +531,19 @@ function LibraryCard({ ent, tpl, orders }: { ent: Entitlement; tpl: Template | u
         </div>
       </div>
       {receipt && order && <ReceiptModal order={order} onClose={() => setReceipt(false)} />}
+      {previewOpen && (
+        <QuickPreviewModal
+          title={customDesign?.title || tpl?.name || ent.name}
+          subtitle={`Order #${ent.orderId.slice(0, 8).toUpperCase()} · Licensed to ${user?.email ?? order?.email ?? "Customer"}`}
+          imageSrc={customDesign?.thumbnail}
+          tpl={tpl}
+          customDesign={customDesign}
+          onClose={() => setPreviewOpen(false)}
+          onDownloadCustomPsd={customDesign?.canvasJson ? downloadCustomizedPsd : undefined}
+          onDownloadOriginal={downloadOriginal}
+          editUrl={tpl ? `/editor/${tpl.slug}${customDesign ? `?designId=${customDesign.id}` : ""}` : undefined}
+        />
+      )}
     </article>
   );
 }
@@ -388,6 +633,7 @@ function MyDesigns() {
   const { templates } = useTemplates();
   const [designs, setDesigns] = useState<CustomerDesign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [previewTarget, setPreviewTarget] = useState<{ design: CustomerDesign; tpl?: Template } | null>(null);
 
   const reload = async () => {
     setDesigns(await listDesigns(user?.email ?? "demo@local", user?.uid ?? null));
@@ -413,31 +659,68 @@ function MyDesigns() {
         const tpl = templates.find((t) => t.slug === d.templateSlug);
         return (
           <article key={d.id} className="border border-[var(--line-strong)] flex flex-col" style={{ background: "var(--panel)" }}>
-            <div className="aspect-[4/5] relative overflow-hidden" style={{ background: "var(--dept-soft)" }}>
-              {d.thumbnail && d.thumbnail.length > 25000 ? (
+            <div className="aspect-[4/5] relative overflow-hidden bg-zinc-950 group" style={{ background: "var(--dept-soft)" }}>
+              {d.thumbnail && d.thumbnail.length > 50 ? (
                 <img src={d.thumbnail} alt={`${d.title} thumbnail`} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
               ) : tpl ? (
                 <TemplatePreview tpl={tpl} className="absolute inset-0" noWatermark />
               ) : d.thumbnail ? (
                 <img src={d.thumbnail} alt={`${d.title} thumbnail`} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
               ) : null}
+              <button
+                type="button"
+                onClick={() => setPreviewTarget({ design: d, tpl })}
+                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1 text-white font-meta text-[10px] font-bold uppercase backdrop-blur-[2px]"
+              >
+                <span className="text-base">👁️</span> Quick Preview
+              </button>
             </div>
             <div className="p-4 flex flex-col gap-1 grow">
-              <h3 className="font-display text-sm font-bold uppercase leading-tight">{d.title}</h3>
+              <div className="flex items-center justify-between gap-1">
+                <h3 className="font-display text-sm font-bold uppercase leading-tight truncate">{d.title}</h3>
+                {d.version && <span className="font-mono text-[9px] text-amber-400">v{d.version}</span>}
+              </div>
               <p className="font-meta text-[9px] text-[var(--muted)]">
                 {tpl?.name ?? d.templateSlug} · edited {d.updatedAt ? new Date(d.updatedAt).toLocaleDateString() : "—"}
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
-                <Link to={`/editor/${d.templateSlug}`} className="btn btn-dept !py-1.5 !px-3">Edit</Link>
+                <button
+                  type="button"
+                  className="btn btn-ghost !py-1.5 !px-2.5 font-display text-[10px] font-bold uppercase flex items-center gap-1"
+                  onClick={() => setPreviewTarget({ design: d, tpl })}
+                >
+                  <span>👁️</span> Preview
+                </button>
+                <Link to={`/editor/${d.templateSlug || d.id}?designId=${d.id}${d.orderId ? `&orderId=${d.orderId}` : ""}`} className="btn btn-dept !py-1.5 !px-3">Edit</Link>
+                <button
+                  className="btn btn-ghost !py-1.5 !px-2.5 font-display text-[10px] font-bold uppercase flex items-center gap-1 hover:border-[var(--dept)]"
+                  title="Download layered Photoshop PSD file with all your customizations"
+                  onClick={async () => {
+                    if (!d.canvasJson) {
+                      toast.error("No canvas data available for this design.");
+                      return;
+                    }
+                    try {
+                      toast.info("Generating customized Photoshop PSD…");
+                      const blob = await exportJsonDocToPsdBlob(d.canvasJson);
+                      triggerPsdDownload(blob, `${(d.title || "design").replace(/[^\w-]/g, "_")}-v${d.version || 1}.psd`);
+                      toast.success("Layered PSD downloaded!");
+                    } catch (err) {
+                      console.error("PSD generation error:", err);
+                      toast.error("Could not export PSD.");
+                    }
+                  }}
+                >
+                  <span>📥</span> PSD
+                </button>
                 <Link
-                  to={`/meet?topic=${encodeURIComponent(`Live Co-Design: ${d.title}`)}&designId=${d.id}&template=${d.templateSlug}`}
-                  className="btn btn-ghost !py-1.5 !px-3 font-display text-[10px] font-bold uppercase flex items-center gap-1 hover:border-[var(--dept)]"
+                  to={`/meet?topic=${encodeURIComponent(`Live Co-Design: ${d.title}`)}&designId=${d.id}&template=${d.templateSlug}${d.orderId ? `&orderId=${d.orderId}` : ""}`}
+                  className="btn btn-ghost !py-1.5 !px-2.5 font-display text-[10px] font-bold uppercase flex items-center gap-1 hover:border-[var(--dept)]"
                   title="Launch live co-design session with your designer"
                 >
                   <span>🎨</span> Co-Design
                 </Link>
-                {tpl && <Link to={`/templates/${tpl.slug}`} className="btn btn-ghost !py-1.5 !px-3">Template</Link>}
-                <button className="btn btn-ghost !py-1.5 !px-3 !text-red-600" onClick={async () => {
+                <button className="btn btn-ghost !py-1.5 !px-2.5 !text-red-600" onClick={async () => {
                   if (!confirm(`Delete "${d.title}"? This can't be undone.`)) return;
                   await deleteDesign(d.id);
                   reload();
@@ -447,6 +730,43 @@ function MyDesigns() {
           </article>
         );
       })}
+      {previewTarget && (
+        <QuickPreviewModal
+          title={previewTarget.design.title || previewTarget.tpl?.name || "Custom Flyer"}
+          subtitle={`Edited on ${previewTarget.design.updatedAt ? new Date(previewTarget.design.updatedAt).toLocaleDateString() : "recently"} · ${previewTarget.tpl?.category ? previewTarget.tpl.category.toUpperCase() : "CUSTOM"}`}
+          imageSrc={previewTarget.design.thumbnail}
+          tpl={previewTarget.tpl}
+          customDesign={previewTarget.design}
+          onClose={() => setPreviewTarget(null)}
+          onDownloadCustomPsd={async () => {
+            if (!previewTarget.design) return;
+            try {
+              toast.info("Generating customized PSD…");
+              let blob: Blob | null = null;
+              if (previewTarget.design.canvasJson) {
+                try {
+                  blob = await exportJsonDocToPsdBlob(previewTarget.design.canvasJson);
+                } catch (e) {
+                  console.warn("Vector export failed, trying thumbnail fallback:", e);
+                }
+              }
+              if (!blob && previewTarget.design.thumbnail) {
+                blob = await exportImageToPsdBlob(previewTarget.design.thumbnail, previewTarget.design.title || "Custom Flyer");
+              }
+              if (blob) {
+                triggerPsdDownload(blob, `${(previewTarget.design.title || "custom-design").replace(/[^\w-]/g, "_")}.psd`);
+                toast.success("PSD downloaded!");
+              } else {
+                toast.error("No artwork available to export.");
+              }
+            } catch (e) {
+              console.error(e);
+              toast.error("PSD download failed.");
+            }
+          }}
+          editUrl={`/editor/${previewTarget.design.templateSlug || previewTarget.design.id}?designId=${previewTarget.design.id}${previewTarget.design.orderId ? `&orderId=${previewTarget.design.orderId}` : ""}`}
+        />
+      )}
     </div>
   );
 }
@@ -674,30 +994,42 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     setBusyAction(true);
     try {
       const nextStatus: OrderStatus = current.status === "CLIENT REVIEW" ? "FINAL APPROVAL" : "COMPLETED";
-      await setOrderStatus(current.id, nextStatus);
       await postMessage(current.id, "client", `✅ Deliverable approved by client. Ready for ${nextStatus.toLowerCase()}.`, user?.email ?? "Client");
+      try {
+        await setOrderStatus(current.id, nextStatus);
+      } catch (err) {
+        console.warn("Status update fallback:", err);
+      }
       toast.success("Deliverable approved! Studio notified.");
       onReload();
-    } catch {
-      toast.error("Failed to approve. Please try again.");
+    } catch (err) {
+      console.error("Approve deliverable failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to approve. Please try again.");
+    } finally {
+      setBusyAction(false);
     }
-    setBusyAction(false);
   };
 
   const submitRevision = async () => {
     if (!revisionText.trim()) return;
     setBusyAction(true);
     try {
-      await setOrderStatus(current.id, "REVISION");
       await postMessage(current.id, "client", `🔄 Revision requested:\n\n${revisionText.trim()}`, user?.email ?? "Client");
+      try {
+        await setOrderStatus(current.id, "REVISION");
+      } catch (err) {
+        console.warn("Status update fallback:", err);
+      }
       toast.success("Revision request submitted to your designer.");
       setRevisionPrompt(false);
       setRevisionText("");
       onReload();
-    } catch {
-      toast.error("Failed to submit revision.");
+    } catch (err) {
+      console.error("Submit revision failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to submit revision.");
+    } finally {
+      setBusyAction(false);
     }
-    setBusyAction(false);
   };
 
   const processVaultFiles = async (fileList: FileList | File[]) => {

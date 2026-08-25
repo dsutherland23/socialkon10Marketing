@@ -27,6 +27,9 @@ service cloud.firestore {
       allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
       allow update: if isAdmin()
         || (signedIn()
+            && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes']))
+        || (signedIn()
             && resource.data.uid == null
             && request.resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid']));

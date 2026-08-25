@@ -1,4 +1,4 @@
-import { addManaged, idbGet, idbSet, listManaged, removeManaged, updateManaged } from "./backend";
+import { addManaged, attachFiles, idbGet, idbSet, listManaged, postMessage, removeManaged, setOrderStatus, updateManaged } from "./backend";
 import { firebaseReady } from "./firebase";
 
 /* ------------------------------------------------------------------
@@ -14,6 +14,7 @@ export interface CustomerDesign {
   uid: string | null;
   email: string;
   templateSlug: string;
+  orderId?: string;       // Linked customer order ID
   title: string;
   canvasJson: string;     // serialized Kon10Doc — the customer's copy
   thumbnail: string;      // small jpeg dataURL
@@ -67,6 +68,57 @@ export async function getCustomerDesignById(id: string): Promise<CustomerDesign 
 export async function findDesignFor(email: string, templateSlug: string, uid?: string | null): Promise<CustomerDesign | null> {
   const all = await listDesigns(email, uid);
   return all.find((d) => d.templateSlug === templateSlug) ?? null;
+}
+
+export async function findDesignForOrder(orderId: string): Promise<CustomerDesign | null> {
+  if (!orderId) return null;
+  const rows = await listManaged("customerDesigns");
+  const match = (rows as unknown as CustomerDesign[]).find((d) => d.orderId === orderId);
+  return match ?? null;
+}
+
+export async function linkDesignToOrder(designId: string, orderId: string): Promise<void> {
+  await updateManaged("customerDesigns", designId, { orderId });
+}
+
+export async function deliverProofToOrder({
+  orderId,
+  designId,
+  dataUrl,
+  filename,
+  note,
+  designerName = "Studio Designer",
+}: {
+  orderId: string;
+  designId?: string;
+  dataUrl: string;
+  filename?: string;
+  note?: string;
+  designerName?: string;
+}): Promise<{ ok: boolean; fileUrl?: string; error?: string }> {
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const cleanFilename = filename || `proof-design-${Date.now().toString().slice(-6)}.png`;
+    const file = new File([blob], cleanFilename, { type: blob.type || "image/png" });
+
+    const attached = await attachFiles(orderId, [file]);
+    const messageContent = note?.trim()
+      ? `✨ ${designerName} delivered a new design proof: "${cleanFilename}".\n\n💬 Designer Note: ${note.trim()}`
+      : `✨ ${designerName} delivered a new design proof: "${cleanFilename}" to the project vault for review.`;
+
+    await postMessage(orderId, "studio", messageContent, designerName);
+    await setOrderStatus(orderId, "CLIENT REVIEW");
+
+    if (designId) {
+      void linkDesignToOrder(designId, orderId);
+    }
+
+    return { ok: true, fileUrl: attached[0]?.path };
+  } catch (err) {
+    console.error("deliverProofToOrder error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "Failed to deliver proof" };
+  }
 }
 
 export async function createDesign(d: Omit<CustomerDesign, "id" | "createdAt" | "updatedAt" | "version">): Promise<CustomerDesign> {

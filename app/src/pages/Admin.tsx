@@ -25,7 +25,8 @@ import {
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
-import { listAllCustomerDesigns, deleteDesign, type CustomerDesign } from "../lib/editor-store";
+import { listAllCustomerDesigns, deleteDesign, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
+import { useTemplates } from "../lib/templates";
 
 /* ------------------------------------------------------------------
    ADMIN DASHBOARD (PRD §33, §67, §68, §85)
@@ -269,6 +270,145 @@ function AdminDeliverableItem({
         </div>
       )}
     </>
+  );
+}
+
+function OrderStudioWorkspace({ order, onReload }: { order: OrderRecord; onReload: () => void }) {
+  const [design, setDesign] = useState<CustomerDesign | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const { templates } = useTemplates();
+
+  // Find candidate template slug from order items
+  const templateItem = order.items.find(
+    (it) => it.templateSlug || it.name.toLowerCase().includes("template")
+  );
+  const templateSlug = templateItem?.templateSlug || "custom";
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    findDesignForOrder(order.id).then(async (found) => {
+      if (!active) return;
+      if (found) {
+        setDesign(found);
+        setLoading(false);
+      } else {
+        const clientDesigns = await listDesigns(order.email, null);
+        const match = clientDesigns.find((d) => d.templateSlug === templateSlug) || clientDesigns[0];
+        if (active) {
+          setDesign(match ?? null);
+          setLoading(false);
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [order.id, order.email, templateSlug]);
+
+  const initializeCanvas = async () => {
+    setCreating(true);
+    try {
+      const tpl = templates.find((t) => t.slug === templateSlug) || templates[0];
+      const newDesign = await createDesign({
+        uid: null,
+        email: order.email,
+        templateSlug: tpl?.slug || "custom",
+        orderId: order.id,
+        title: `${order.name} — ${tpl?.name || "Custom Design"}`,
+        canvasJson: tpl?.canvasJson || "",
+        thumbnail: tpl?.thumbnail || "",
+      });
+      setDesign(newDesign);
+      toast.success("Studio design canvas initialized for this order!");
+      window.open(
+        `/editor/${newDesign.templateSlug}?designId=${newDesign.id}&orderId=${order.id}&client=${encodeURIComponent(order.email)}`,
+        "_blank"
+      );
+      onReload();
+    } catch (err) {
+      toast.error("Failed to initialize canvas: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="border border-[var(--line-strong)] rounded-xl p-5 bg-[var(--bg)] shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-xl">🎨</span>
+          <div>
+            <h4 className="font-display text-xs font-bold uppercase tracking-wider">KON10 Studio Workspace</h4>
+            <p className="font-meta text-[9px] text-[var(--muted)]">
+              Design &amp; deliver custom vector artwork directly for this order.
+            </p>
+          </div>
+        </div>
+        {design && (
+          <span className="font-meta text-[8.5px] px-2.5 py-1 bg-[var(--dept)] text-[var(--on-dept)] font-bold uppercase rounded-full">
+            v{design.version || 1} · Connected
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="font-meta text-[10px] text-[var(--muted)] py-3">Connecting to Studio canvas…</p>
+      ) : design ? (
+        <div className="flex flex-col sm:flex-row gap-4 items-center bg-[var(--panel)] border border-[var(--line)] p-4 rounded-lg">
+          <div className="w-24 h-24 bg-neutral-900 rounded border border-[var(--line)] overflow-hidden shrink-0 flex items-center justify-center">
+            {design.thumbnail && design.thumbnail.length > 50 ? (
+              <img src={design.thumbnail} alt={design.title} className="w-full h-full object-contain" />
+            ) : (
+              <span className="text-2xl">📐</span>
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h5 className="font-display text-sm font-bold uppercase truncate">{design.title}</h5>
+            <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5">
+              Template: <strong className="text-[var(--ink)]">{design.templateSlug}</strong> · Last edited:{" "}
+              {design.updatedAt ? new Date(design.updatedAt).toLocaleString() : "—"}
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <a
+                href={`/editor/${design.templateSlug || "custom"}?designId=${design.id}&orderId=${order.id}&client=${encodeURIComponent(order.email)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm"
+              >
+                <span>✏️</span> Open in Studio (Designer Mode)
+              </a>
+              <a
+                href={`/meet?topic=${encodeURIComponent(`Live Co-Design: ${order.name}`)}&orderId=${order.id}&designId=${design.id}&template=${design.templateSlug}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-ghost !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1"
+              >
+                <span>🎥</span> Launch Live Co-Design
+              </a>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-[var(--panel)] border border-dashed border-[var(--line-strong)] p-5 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
+          <div>
+            <p className="font-display text-xs font-bold uppercase">No Design Canvas Initialized Yet</p>
+            <p className="font-meta text-[9.5px] text-[var(--muted)] mt-0.5">
+              Start editing {templateSlug !== "custom" ? `the "${templateSlug}" template` : "custom vector artwork"} for {order.name}.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={creating}
+            onClick={initializeCanvas}
+            className="btn btn-dept !py-2 !px-4 font-display text-[10px] font-bold uppercase shrink-0 shadow-sm"
+          >
+            {creating ? "Initializing…" : "✨ Initialize Design Canvas"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -624,6 +764,9 @@ function Orders() {
                 {/* TAB 1: Client, Scope & Financials */}
                 {cockpitTab === "overview" && (
                   <div className="flex flex-col gap-6">
+                    {/* Studio Vector Workspace & Canvas */}
+                    <OrderStudioWorkspace order={current} onReload={reload} />
+
                     {/* Client Intake & Contact */}
                     <div>
                       <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Client Details &amp; Brief</h4>
@@ -3046,6 +3189,11 @@ function ClientDesignsManager() {
                     <p className="font-meta text-[9.5px] text-[var(--dept)] truncate font-bold">
                       👤 {d.email || "Guest Client"}
                     </p>
+                    {d.orderId && (
+                      <p className="font-meta text-[8.5px] text-emerald-500 font-bold truncate">
+                        📦 Linked to Order #{d.orderId.slice(0, 8).toUpperCase()}
+                      </p>
+                    )}
                     <p className="font-meta text-[8.5px] text-[var(--muted)]">
                       Updated: {d.updatedAt ? new Date(d.updatedAt).toLocaleString() : "—"}
                     </p>
@@ -3055,13 +3203,13 @@ function ClientDesignsManager() {
                 {/* Admin Actions */}
                 <div className="pt-3 border-t border-[var(--line)] flex flex-wrap items-center gap-1.5">
                   <a
-                    href={`/editor/${d.templateSlug || d.id}?designId=${d.id}&client=${encodeURIComponent(d.email || "")}`}
+                    href={`/editor/${d.templateSlug || d.id}?designId=${d.id}&client=${encodeURIComponent(d.email || "")}${d.orderId ? `&orderId=${d.orderId}` : ""}&admin=true`}
                     target="_blank"
                     rel="noreferrer"
                     className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm"
                     title="Open this exact customer design in KON10 Studio"
                   >
-                    <span>✏️</span> Open in Studio
+                    <span>✏️</span> Open in Studio (Designer Mode)
                   </a>
 
                   <button

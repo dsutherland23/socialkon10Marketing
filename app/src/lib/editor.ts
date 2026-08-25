@@ -105,13 +105,21 @@ export function applyCustomerPermissions(obj: EditorObject): void {
   if (obj.kLocked || obj.kUserLock) {
     obj.selectable = false;
     obj.evented = false;
+    obj.lockMovementX = true;
+    obj.lockMovementY = true;
+    obj.lockScalingX = true;
+    obj.lockScalingY = true;
+    obj.lockRotation = true;
+    obj.hasControls = false;
     return;
   }
   obj.selectable = true;
   obj.evented = true;
-  if (obj.kMovable === false) { obj.lockMovementX = true; obj.lockMovementY = true; }
-  if (obj.kResizable === false) { obj.lockScalingX = true; obj.lockScalingY = true; }
-  if (obj.kRotatable === false) { obj.lockRotation = true; }
+  obj.lockMovementX = obj.kMovable === false;
+  obj.lockMovementY = obj.kMovable === false;
+  obj.lockScalingX = obj.kResizable === false;
+  obj.lockScalingY = obj.kResizable === false;
+  obj.lockRotation = obj.kRotatable === false;
   obj.hasControls = obj.kResizable !== false || obj.kRotatable !== false;
   if (/^(textbox|itext)$/i.test(obj.type ?? "")) {
     obj.editable = obj.kEditable !== false;
@@ -128,10 +136,19 @@ export function applyCustomerPermissions(obj: EditorObject): void {
 /** Apply permissions to every object on a canvas-like collection. */
 export function applyPermissionsToAll(objects: EditorObject[], mode: EditorMode): void {
   if (mode === "author") {
-    /* author = full control. kLocked & friends stay on the objects as
-       metadata (they still gate customers + show in the Layers padlock),
-       but nothing is ever unselectable or transform-locked for the author. */
+    /* author = full control, but respects explicit user locks */
     objects.forEach((o) => {
+      if (o.kUserLock) {
+        o.selectable = false;
+        o.evented = false;
+        o.lockMovementX = true;
+        o.lockMovementY = true;
+        o.lockScalingX = true;
+        o.lockScalingY = true;
+        o.lockRotation = true;
+        o.hasControls = false;
+        return;
+      }
       o.selectable = true;
       o.evented = true;
       o.lockMovementX = false; o.lockMovementY = false;

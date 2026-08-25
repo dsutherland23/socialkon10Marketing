@@ -266,16 +266,21 @@ function walkLayers(
           if (folderList) folderList.add(folderPath);
         }
 
-        // If this was a text layer in Photoshop, record rich typography metadata for instant double-click live conversion
-        if (layer.text?.text) {
-          const rawText = (layer.text.text ?? "").trim();
+        // If this was a text layer in Photoshop or name suggests typography
+        const hasTextMeta = Boolean(layer.text?.text);
+        const textFromMeta = (layer.text?.text ?? "").trim();
+        const cleanName = layerName.trim();
+        const isLikelyTypography = hasTextMeta || /^(date|time|title|subtitle|header|heading|venue|location|tickets|entry|dj|artist|presents|featuring|info|text|txt|address|phone|price|rsvp|\d{1,2}[:/.-]\d{1,2}|oct|nov|dec|jan|feb|mar|apr|may|jun|jul|aug|sep|sun|mon|tue|wed|thu|fri|sat|pm|am|[a-z0-9\s,.-]{3,30})\b/i.test(cleanName);
+
+        if (hasTextMeta || (isLikelyTypography && !/^layer \d+$/i.test(cleanName) && !/^background/i.test(cleanName))) {
+          const rawText = textFromMeta || cleanName;
           if (rawText) {
             imgObj.kIsPsdText = true;
             imgObj.kPsdText = rawText;
             imgObj.kLayerType = "text";
-            imgObj.kFontSize = layer.text.style?.fontSize ?? 36;
-            imgObj.kFontColor = psdColor(layer.text.style?.fillColor as { r: number; g: number; b: number } | undefined);
-            imgObj.kFontFamily = layer.text.style?.font?.name || "Bebas Neue, Impact, sans-serif";
+            imgObj.kFontSize = layer.text?.style?.fontSize ?? 36;
+            imgObj.kFontColor = psdColor(layer.text?.style?.fillColor as { r: number; g: number; b: number } | undefined) || "#ffffff";
+            imgObj.kFontFamily = layer.text?.style?.font?.name || "Bebas Neue, Impact, sans-serif";
             const fieldId = `field_${nextId()}`;
             imgObj.kPlaceholder = fieldId;
             fields.push({
