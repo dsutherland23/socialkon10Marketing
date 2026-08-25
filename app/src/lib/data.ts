@@ -4,6 +4,8 @@
    Prices mirror the official 2026 rate sheet (USD, BMD at 1:1 peg).
 ------------------------------------------------------------------- */
 
+import { getRate } from "./rates";
+
 export type DeptId = "brand" | "social" | "web";
 export type PriceType = "fixed" | "starting" | "quote" | "consultation";
 export type BillingType = "one_time" | "monthly" | "hourly";
@@ -951,7 +953,8 @@ export type CurrencyCode = (typeof CURRENCIES)[number]["code"];
 
 export function formatMoney(usd: number, code: CurrencyCode = "USD"): string {
   const c = CURRENCIES.find((x) => x.code === code) ?? CURRENCIES[0];
-  const v = usd * c.rate;
+  // Live rate when the FX feed has loaded; static estimate otherwise (rates.ts)
+  const v = usd * getRate(code);
   return `${c.symbol}${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 

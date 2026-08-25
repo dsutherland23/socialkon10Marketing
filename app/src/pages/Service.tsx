@@ -8,6 +8,7 @@ import { useSEO, track, breadcrumbLd } from "../lib/seo";
 import { ClipLines, Reveal } from "../lib/motion";
 import { ArrowLink, FinalCta } from "../components/blocks";
 import { ProjectCover } from "../components/cover";
+import { WebConfigurator } from "../components/WebConfigurator";
 
 /* ------------------------------------------------------------------
    SERVICE PRODUCT PAGE + CONFIGURATOR (PRD §25–27)
@@ -25,6 +26,8 @@ export default function ServicePage() {
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
   const [rush, setRush] = useState(false);
   const [added, setAdded] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const isWebProject = !!service && ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03"].includes(service.id);
 
   useDepartment(service?.dept ?? null);
   useSEO({
@@ -229,6 +232,11 @@ export default function ServicePage() {
                     <button className="btn btn-ghost justify-center" onClick={() => { addToCart("cart"); track("package_view", { service: service.slug }); }}>
                       {added ? "Added ✓" : "Add to cart"}
                     </button>
+                    {isWebProject && (
+                      <button className="btn btn-ghost justify-center !border-[var(--dept)] dept-accent" onClick={() => { setConfigOpen(true); track("package_selected", { package_id: service.id, package_name: service.name }); }}>
+                        Power Up — 50+ add-ons <span className="btn-arrow" aria-hidden>→</span>
+                      </button>
+                    )}
                   </div>
                 </>
               ) : (
@@ -255,6 +263,9 @@ export default function ServicePage() {
         </div>
       </section>
       <FinalCta />
+
+      {/* Power Up Your Website — add-on configurator (PRD v1.0.0) */}
+      {configOpen && <WebConfigurator pkg={service} onClose={() => setConfigOpen(false)} />}
     </>
   );
 }

@@ -11,7 +11,8 @@
     "qa:editor": "node scripts/qa-editor.mjs",
     "qa:customer": "node scripts/qa-customer.mjs",
     "qa:studio": "node scripts/qa-studio.mjs",
-    "qa:intake": "node scripts/qa-intake.mjs"
+    "qa:intake": "node scripts/qa-intake.mjs",
+    "qa:webconfig": "node scripts/qa-web-config.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

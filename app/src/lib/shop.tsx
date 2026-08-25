@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { PROMO_CODES, serviceBySlug, type CurrencyCode, type ServiceProduct } from "./data";
 import { useContent } from "./content";
+import { refreshRates, fxStatus } from "./rates";
 import { track } from "./seo";
 
 export interface CartItem {
@@ -22,6 +23,9 @@ interface ShopState {
   items: CartItem[];
   currency: CurrencyCode;
   setCurrency: (c: CurrencyCode) => void;
+  /** bumps when live FX rates load — consumers re-render converted prices */
+  fxTick: number;
+  fxLive: boolean;
   add: (item: Omit<CartItem, "key">) => void;
   remove: (key: string) => void;
   clear: () => void;
@@ -77,6 +81,12 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     else sessionStorage.removeItem("sk-flash");
   }, [flash]);
 
+  // Live FX: refresh on boot, re-render consumers if converted prices moved
+  const [fxTick, setFxTick] = useState(0);
+  useEffect(() => {
+    void refreshRates().then((changed) => { if (changed) setFxTick((v) => v + 1); });
+  }, []);
+
   const add: ShopState["add"] = (item) => {
     const key = `${item.serviceSlug}-${item.tierLabel ?? ""}-${Date.now()}`;
     setItems((xs) => [...xs, { ...item, key }]);
@@ -122,7 +132,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   }, [items, promo, allPromos, flash]);
 
   const value: ShopState = {
-    items, currency, setCurrency, add, remove, clear,
+    items, currency, setCurrency, fxTick, fxLive: fxStatus().live, add, remove, clear,
     promo, applyPromo, clearPromo: () => setPromo(null),
     flash, applyFlash, clearFlash,
     subtotal, discount, total, count: items.length,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { CONTACT, CURRENCIES, DEPARTMENTS, type CurrencyCode } from "../lib/data";
+import { fxStatus, getRate } from "../lib/rates";
 import { useRouteDept } from "../lib/dept";
 import { useShop } from "../lib/shop";
 import { useTheme } from "../lib/theme";
@@ -44,7 +45,10 @@ function ThemeToggle() {
 }
 
 function CurrencySelect() {
-  const { currency, setCurrency } = useShop();
+  const { currency, setCurrency, fxLive } = useShop();
+  const fx = fxStatus();
+  const rate = currency !== "USD" ? getRate(currency) : 1;
+  const age = fx.fetchedAt ? new Date(fx.fetchedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
   return (
     <label className="hidden lg:inline-flex items-center gap-1 font-meta text-[10px]">
       <span className="sr-only">Display currency</span>
@@ -52,10 +56,23 @@ function CurrencySelect() {
         value={currency}
         onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
         aria-label="Display currency"
+        title={currency === "USD" || currency === "BMD"
+          ? "US Dollar — all charges settle in USD"
+          : fxLive
+            ? `Live rate: $1 USD = ${currency === "JMD" ? "J$" : "C$"}${rate.toFixed(2)} (updated ${age}) · display only — charges settle in USD`
+            : `Estimated rate: $1 USD = ${currency === "JMD" ? "J$" : "C$"}${rate.toFixed(2)} · display only — charges settle in USD`}
         className="bg-transparent border border-[var(--line)] px-2 py-1 cursor-pointer hover:border-[var(--dept)] transition-colors"
       >
         {CURRENCIES.map((c) => <option key={c.code} value={c.code} className="text-black">{c.code}</option>)}
       </select>
+      {currency !== "USD" && currency !== "BMD" && (
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${fxLive ? "bg-emerald-500" : "bg-amber-500"}`}
+          title={fxLive ? "Live exchange rate" : "Estimated rate (feed unavailable)"}
+          role="img"
+          aria-label={fxLive ? "Live exchange rate" : "Estimated rate"}
+        />
+      )}
     </label>
   );
 }

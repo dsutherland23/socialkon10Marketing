@@ -16,6 +16,7 @@ import { ArrowLink, Faq, FinalCta, SectionHead, ServiceCard } from "../component
 import { ProjectCover } from "../components/cover";
 import { FilterDropdown, ServiceCard as DesignServiceCard } from "./DesignStore";
 import { DesignJourneys } from "../components/TalkToUs";
+import { WebConfigurator } from "../components/WebConfigurator";
 
 /* ------------------------------------------------------------------
    DEPARTMENT PAGE — one component, three atmospheres.
@@ -618,6 +619,7 @@ function BrandCatalog({ services }: { services: ServiceProduct[] }) {
 export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const dept = DEPARTMENTS.find((d) => d.id === deptId);
   const { currency } = useShop();
   const { services: allServices, faqs: allFaqs, projects } = useContent();
+  const [configFor, setConfigFor] = useState<ServiceProduct | null>(null);
   useDepartment(deptId);
   useSEO({
     title: dept ? `${dept.name} — Social Kon10 Marketing` : "Services — Social Kon10",
@@ -706,15 +708,29 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
             <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
               {services.map((s, i) => (
                 <Reveal key={s.id} delay={i * 60} className="h-full">
-                  <Link to={`/services/${s.slug}`} className="group flex flex-col h-full p-6 md:p-7 hover:bg-[var(--dept-soft)] transition-colors" style={{ background: "var(--bg)" }}>
-                    <span className="font-meta text-[9px] text-[var(--muted)]">{s.billing === "monthly" ? "MONTHLY" : "PROJECT"}</span>
-                    <h3 className="font-display text-lg font-bold uppercase mt-3 group-hover:text-[var(--dept)] transition-colors">{s.name}</h3>
+                  <div className="group flex flex-col h-full p-6 md:p-7 hover:bg-[var(--dept-soft)] transition-colors" style={{ background: "var(--bg)" }}>
+                    <span className="font-meta text-[9px] text-[var(--muted)]">{s.billing === "monthly" ? "MONTHLY" : "PROJECT"} · {s.id}</span>
+                    <h3 className="font-display text-lg font-bold uppercase mt-3">{s.name}</h3>
                     <span className="font-display-wide text-3xl font-bold mt-5">
                       {formatMoney(s.price, currency)}<span className="text-sm font-meta font-normal text-[var(--muted)]">{s.billing === "monthly" ? "/mo" : s.priceType === "starting" ? "+" : ""}</span>
                     </span>
                     <span className="text-[13px] text-[var(--muted)] mt-2 flex-1">{s.tagline}</span>
-                    <span className="font-meta text-[10px] dept-accent mt-6 transition-transform duration-200 group-hover:translate-x-1" aria-hidden>CONFIGURE →</span>
-                  </Link>
+                    {s.billing !== "monthly" ? (
+                      <span className="mt-6 flex flex-col gap-2">
+                        <button type="button" onClick={() => { setConfigFor(s); track("package_selected", { package_id: s.id, package_name: s.name }); }}
+                          className="btn btn-dept !py-2.5 justify-center w-full">
+                          Customize This Package <span className="btn-arrow" aria-hidden>→</span>
+                        </button>
+                        <Link to={`/services/${s.slug}`} className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors text-center underline underline-offset-4">
+                          View details
+                        </Link>
+                      </span>
+                    ) : (
+                      <Link to={`/services/${s.slug}`} className="font-meta text-[10px] dept-accent mt-6 transition-transform duration-200 group-hover:translate-x-1" aria-label={`Configure ${s.name}`}>
+                        CONFIGURE →
+                      </Link>
+                    )}
+                  </div>
                 </Reveal>
               ))}
             </div>
@@ -754,6 +770,9 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
       </section>
 
       <FinalCta />
+
+      {/* Power Up Your Website — add-on configurator (PRD v1.0.0) */}
+      {configFor && <WebConfigurator pkg={configFor} onClose={() => setConfigFor(null)} />}
     </>
   );
 }
