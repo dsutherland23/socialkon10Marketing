@@ -50,9 +50,80 @@ export interface IntakeRecord {
   leadCategory: string;
   assets: IntakeAsset[];
   contract: IntakeContract | null;
+  /** set when the chosen website_type scopes to a different package tier than the one paid for */
+  scopeShift?: ScopeShift | null;
   createdAt: string;
   updatedAt: string;
   submittedAt?: string;
+}
+
+/* ---------------- scope-shift engine ----------------
+   The client pays for a package at checkout, then describes their
+   project in the brief. When the chosen website_type scopes to a
+   different package tier, the difference must be detected, shown to
+   the client BEFORE they sign, and surfaced to the studio — never
+   left as a silent gap. Prices resolve through the live catalog
+   (CMS overrides) via the priceFor argument.
+------------------------------------------------------------------- */
+
+export type ScopeDirection = "upgrade" | "downgrade" | "custom-quote";
+
+export interface ScopeShift {
+  direction: ScopeDirection;
+  paidPackage: string;        // package slug that was paid for
+  paidPackageName: string;
+  requiredPackage: string;    // package slug the chosen type scopes to
+  requiredPackageName: string;
+  paidBase: number;           // USD actually paid for the package line
+  requiredBase: number;       // USD current price of the required package
+  difference: number;         // upgrade: requiredBase - paidBase (>= 0); otherwise 0
+  acknowledgedAt?: string;    // client acknowledged the scope change (required to submit)
+}
+
+/** website_type answer → package tier it scopes to (single source of truth). */
+export const WEBSITE_TYPE_TIER: Record<string, string> = {
+  "Landing Page": "landing-page",
+  "Portfolio": "landing-page",
+  "Business Website": "business-website",
+  "Corporate Website": "business-website",
+  "Booking Website": "business-website",
+  "E-commerce": "ecommerce-website",
+  "Membership": "custom",
+  "Web Application": "custom",
+  "Custom": "custom",
+};
+
+const TIER_RANK: Record<string, number> = { "landing-page": 1, "business-website": 2, "ecommerce-website": 3, custom: 4 };
+
+/**
+ * Compare the paid package against the tier the chosen website_type needs.
+ * Returns null when both are the same tier (no commercial impact).
+ * `priceFor` resolves a package slug to its CURRENT live price (CMS-aware);
+ * `paidBase` is what the client actually paid (order truth) — falls back to priceFor.
+ */
+export function detectScopeShift(
+  paidSlug: string,
+  websiteType: string,
+  priceFor: (slug: string) => number = (s) => serviceBySlug(s)?.price ?? 0,
+  paidBase?: number,
+): ScopeShift | null {
+  const requiredSlug = WEBSITE_TYPE_TIER[websiteType];
+  if (!requiredSlug) return null;
+  const paidRank = TIER_RANK[paidSlug] ?? 4;
+  const reqRank = TIER_RANK[requiredSlug] ?? 4;
+  if (paidRank === reqRank) return null; // same tier — no price impact
+  const paid = paidBase ?? priceFor(paidSlug);
+  const required = priceFor(requiredSlug);
+  const paidName = INTAKE_PACKAGES[paidSlug]?.name ?? paidSlug;
+  const reqName = INTAKE_PACKAGES[requiredSlug]?.name ?? "Custom-scoped project";
+  if (reqRank > paidRank) {
+    if (requiredSlug === "custom") {
+      return { direction: "custom-quote", paidPackage: paidSlug, paidPackageName: paidName, requiredPackage: requiredSlug, requiredPackageName: reqName, paidBase: paid, requiredBase: 0, difference: 0 };
+    }
+    return { direction: "upgrade", paidPackage: paidSlug, paidPackageName: paidName, requiredPackage: requiredSlug, requiredPackageName: reqName, paidBase: paid, requiredBase: required, difference: Math.max(0, required - paid) };
+  }
+  // downgrade — never auto-reprice client-side; the studio reviews credit / added value
+  return { direction: "downgrade", paidPackage: paidSlug, paidPackageName: paidName, requiredPackage: requiredSlug, requiredPackageName: reqName, paidBase: paid, requiredBase: required, difference: 0 };
 }
 
 /* ---------------- packages (mirror live shop, USD) ---------------- */
@@ -180,30 +251,34 @@ export interface IntakeAddon {
   category: string;
   excludeFor?: string[];        // package slugs that already include it
   onlyForTypes?: string[];      // website types it applies to
+  orderMatches?: string[];      // lowercase checkout add-on names that already cover this (configurator purchases)
 }
 
+/* Prices reconcile to the published configurator catalog (website-addons.ts) —
+   one feature, one price, everywhere the client sees it. Items with no published
+   equivalent keep their premium scope pricing (documented per item). */
 export const INTAKE_ADDONS: IntakeAddon[] = [
-  { id: "copywriting", name: "Professional Copywriting", desc: "Conversion-focused website copy written for your audience.", price: 500, category: "Content" },
-  { id: "premium_uiux", name: "Premium UI/UX Design", desc: "A fully bespoke interface designed around your brand and audience.", price: 600, category: "Design" },
-  { id: "advanced_animation", name: "Advanced Animations", desc: "Custom motion, transitions and interactive details.", price: 900, category: "Design" },
-  { id: "advanced_seo", name: "Advanced SEO Setup", desc: "Keyword mapping, schema markup, Search Console + analytics.", price: 800, category: "SEO" },
-  { id: "booking", name: "Online Booking System", desc: "Services, availability, deposits and automated confirmations.", price: 1200, category: "Booking", excludeFor: [], onlyForTypes: ["Booking Website", "Business Website", "Custom"] },
-  { id: "customer_accounts", name: "Customer Accounts / Login", desc: "Sign-in, profiles and saved details for your customers.", price: 1000, category: "User Management", excludeFor: ["ecommerce-website"] },
-  { id: "membership", name: "Membership Area", desc: "Gated content, member tiers and recurring access.", price: 1500, category: "Membership", onlyForTypes: ["Membership", "Custom"] },
-  { id: "payment_gateway", name: "Payment Gateway Integration", desc: "Accept cards online through your merchant provider.", price: 600, category: "Payments", excludeFor: ["ecommerce-website"] },
-  { id: "extra_products_20", name: "Extra 20 Products", desc: "Catalog setup beyond the included 20 products.", price: 500, category: "E-commerce", onlyForTypes: ["E-commerce"] },
-  { id: "multilingual", name: "Multi-language Support", desc: "Your site in two or more languages.", price: 900, category: "Content" },
-  { id: "whatsapp", name: "WhatsApp Chat Integration", desc: "One-tap chat from every page to your WhatsApp.", price: 250, category: "Communication" },
-  { id: "analytics_dashboard", name: "Advanced Analytics Dashboard", desc: "Traffic, conversions and sales reporting in one view.", price: 800, category: "Dashboard" },
+  { id: "copywriting", name: "Professional Copywriting", desc: "Conversion-focused copy for up to 5 pages, written for your audience.", price: 600, category: "Content", orderMatches: ["professional copywriting", "website copy package"] }, // = published Website Copy Package
+  { id: "premium_uiux", name: "Premium UI/UX Design", desc: "A fully bespoke interface designed around your brand and audience.", price: 600, category: "Design" }, // intake-only premium scope
+  { id: "advanced_animation", name: "Advanced Animations", desc: "Custom motion, transitions and interactive details.", price: 900, category: "Design" }, // intake-only premium scope
+  { id: "advanced_seo", name: "Advanced SEO Setup", desc: "Keyword research and deeper page-level SEO optimization.", price: 350, category: "SEO", orderMatches: ["seo growth", "local seo"] }, // = published SEO Growth
+  { id: "booking", name: "Online Booking System", desc: "Services, availability, deposits and automated confirmations.", price: 500, category: "Booking", excludeFor: [], onlyForTypes: ["Booking Website", "Business Website", "Custom"], orderMatches: ["booking system", "advanced booking + payments"] }, // = published Advanced Booking + Payments
+  { id: "customer_accounts", name: "Customer Accounts / Login", desc: "Sign-in, profiles and saved details for your customers.", price: 1000, category: "User Management", excludeFor: ["ecommerce-website"] }, // intake-only premium scope
+  { id: "membership", name: "Membership Area", desc: "Gated content, member tiers and recurring access.", price: 1500, category: "Membership", onlyForTypes: ["Membership", "Custom"] }, // intake-only premium scope
+  { id: "payment_gateway", name: "Payment Gateway Integration", desc: "Accept cards online through your merchant provider.", price: 600, category: "Payments", excludeFor: ["ecommerce-website"] }, // intake-only premium scope
+  { id: "extra_products_20", name: "Extra 25 Products", desc: "Catalog setup beyond the included 20 products.", price: 300, category: "E-commerce", onlyForTypes: ["E-commerce"], orderMatches: ["additional 10 products", "additional 25 products", "additional 50 products"] }, // = published Additional 25 Products
+  { id: "multilingual", name: "Multi-language Support", desc: "Your site in two or more languages.", price: 900, category: "Content" }, // intake-only premium scope
+  { id: "whatsapp", name: "WhatsApp Chat Integration", desc: "One-tap chat from every page to your WhatsApp.", price: 100, category: "Communication", orderMatches: ["whatsapp integration", "whatsapp lead capture", "whatsapp automation"] }, // = published WhatsApp Integration
+  { id: "analytics_dashboard", name: "Advanced Analytics Dashboard", desc: "Traffic, conversions and sales reporting in one view.", price: 800, category: "Dashboard" }, // intake-only premium scope (a dashboard build, not tracking setup)
 ];
 
-export interface RecurringService { id: string; name: string; desc: string; monthly: number }
+export interface RecurringService { id: string; name: string; desc: string; monthly: number; orderMatches?: string[] }
 
 export const RECURRING_SERVICES: RecurringService[] = [
-  { id: "care_plan", name: "Website Care Plan", desc: "Updates, security monitoring, backups and priority fixes.", monthly: 250 },
+  { id: "care_plan", name: "Website Care Plan", desc: "Updates, security monitoring, backups and priority fixes.", monthly: 250, orderMatches: ["website care plan"] },
   { id: "hosting", name: "Managed Hosting", desc: "Fast managed hosting with SSL, uptime monitoring and email support.", monthly: 120 },
   { id: "priority_support", name: "Priority Support", desc: "Same-day responses and monthly strategy check-in.", monthly: 300 },
-  { id: "monthly_seo", name: "Monthly SEO Management", desc: "Ongoing rankings work: content, keywords and reporting.", monthly: 600 },
+  { id: "monthly_seo", name: "Monthly SEO Management", desc: "Ongoing rankings work: content, keywords and reporting.", monthly: 300, orderMatches: ["ongoing seo management"] }, // matches published entry price
 ];
 
 /** Recommendation engine (spec §recommendation_engine). */
@@ -406,21 +481,37 @@ export function buildScopeSections(
   answers: Record<string, string | string[]>,
   addons: string[],
   recurring: string[],
+  scopePkg?: IntakePackage,   // when the brief scopes to a higher tier, scope describes THAT package
 ): { title: string; items: string[] }[] {
+  const effective = scopePkg ?? pkg;
   const picked = addons.map((id) => INTAKE_ADDONS.find((a) => a.id === id)).filter(Boolean) as IntakeAddon[];
   const rec = recurring.map((id) => RECURRING_SERVICES.find((r) => r.id === id)).filter(Boolean) as RecurringService[];
   const pages = answers.pages_needed;
   return [
-    { title: "Included in your package", items: pkg.scopeIncludes },
+    { title: `Included — ${effective.name}`, items: effective.scopeIncludes },
     ...(pages && Array.isArray(pages) && pages.length ? [{ title: "Planned pages / sections", items: pages as string[] }] : []),
     ...(picked.length ? [{ title: "Selected add-ons", items: picked.map((a) => `${a.name} — $${a.price.toLocaleString()} one-time`) }] : []),
     ...(rec.length ? [{ title: "Recurring services", items: rec.map((r) => `${r.name} — $${r.monthly.toLocaleString()}/month`) }] : []),
-    { title: "Not included (scope protection)", items: pkg.scopeExcludes },
+    { title: "Not included (scope protection)", items: effective.scopeExcludes },
   ];
 }
 
-export function buildContractText(scope: { title: string; items: string[] }[], estimate: { oneTime: number; monthly: number }, clientName: string, businessName: string): string {
+export interface PaymentLedger {
+  paid: number;          // USD already paid with the linked order (0 when unpaid)
+  difference: number;    // scope-upgrade difference to be proposed (0 otherwise)
+  balance: number;       // difference + selected add-ons = estimated balance due
+  shiftLabel?: string;   // e.g. "Landing Page / One-Page Website → Standard Business Website"
+}
+
+export function buildContractText(scope: { title: string; items: string[] }[], estimate: { oneTime: number; monthly: number }, clientName: string, businessName: string, ledger?: PaymentLedger | null): string {
   const scopeLines = scope.map((s) => `${s.title.toUpperCase()}\n${s.items.map((i) => `  • ${i}`).join("\n")}`).join("\n\n");
+  const paymentBlock = ledger && (ledger.paid > 0 || ledger.difference > 0)
+    ? `
+PAYMENT POSITION
+Paid to date: $${ledger.paid.toLocaleString()} USD (received with your order — credited in full).
+${ledger.difference > 0 ? `Scope upgrade (${ledger.shiftLabel}): $${ledger.difference.toLocaleString()} USD difference, to be itemised in the Studio's final proposal.\n` : ""}Estimated balance due: $${ledger.balance.toLocaleString()} USD (scope difference + selected add-ons), payable only on approval of the final proposal. Nothing further is charged without your approval.
+`
+    : "";
   return `PROJECT AGREEMENT — SOCIALKON10 MARKETING AGENCY
 Version ${CONTRACT_VERSION}
 
@@ -433,7 +524,7 @@ ${scopeLines}
 ESTIMATE
 Estimated one-time project value: $${estimate.oneTime.toLocaleString()} USD.
 ${estimate.monthly > 0 ? `Recurring services: $${estimate.monthly.toLocaleString()} USD/month (billed monthly, cancel anytime after the first term).` : "No recurring services selected."}
-This estimate is based on the information provided and is subject to final project review. Third-party software, hosting, payment processing, subscriptions and external service fees are not included unless specifically stated. The final proposal issued by the Studio governs the final price.
+${paymentBlock}This estimate is based on the information provided and is subject to final project review. Third-party software, hosting, payment processing, subscriptions and external service fees are not included unless specifically stated. The final proposal issued by the Studio governs the final price.
 
 TERMS
 1. CLIENT RESPONSIBILITIES — The Client agrees to provide content, images, credentials and feedback in a timely manner. Delays in receiving materials extend the delivery timeline accordingly.
@@ -490,6 +581,62 @@ export async function saveProfile(uid: string, data: Omit<ClientProfile, "update
   } catch (err) {
     console.warn("saveProfile Firestore error (cached locally):", err);
   }
+}
+
+/* ---------------- zero-repeat prefill (2026: confirm, don't re-ask) ----------------
+   Every fact has exactly one home. The brief prefills from what the
+   order (checkout), the saved account profile and the auth account
+   already know — the client confirms or adjusts, never retypes.
+------------------------------------------------------------------- */
+
+export interface IntakePrefill {
+  answers: Record<string, string>;
+  prefilled: string[];        // intake field ids that came pre-filled (for the "from your order" hint)
+}
+
+export function resolveIntakePrefill(args: {
+  orderDetails?: Record<string, string> | null;
+  profile?: ClientProfile | null;
+  user?: { displayName?: string | null; email?: string | null } | null;
+}): IntakePrefill {
+  const { orderDetails: d, profile: p, user: u } = args;
+  const out: Record<string, string> = {};
+  const prefilled: string[] = [];
+  const put = (field: string, ...vals: (string | undefined | null)[]) => {
+    const v = vals.find((x) => x && String(x).trim());
+    if (v) { out[field] = String(v).trim(); prefilled.push(field); }
+  };
+  // industry is a fixed-option select — only prefill on an exact option match
+  const industryMatch = (v?: string | null) => {
+    const m = v?.trim();
+    return m && INDUSTRIES.some((o) => o.value.toLowerCase() === m.toLowerCase()) ? m : undefined;
+  };
+
+  put("business_name", d?.company, p?.company);
+  put("contact_name", d?.name, p?.name, u?.displayName);
+  put("email", d?.email, p?.email, u?.email);
+  put("phone", d?.phone, p?.phone);
+  put("existing_website", d?.website, p?.website);
+  put("industry", industryMatch(d?.industry) ?? industryMatch(p?.industry));
+  // free-text answers captured at checkout map to their textarea equivalents
+  put("target_audience", d?.audience);
+  put("visitor_action", d?.goals);
+  put("brand_colors", d?.colors);
+  return { answers: out, prefilled };
+}
+
+/**
+ * Intake add-on / recurring ids already covered by add-ons purchased at
+ * checkout (matched by published configurator name). These render as
+ * "In your order ✓" and can never be double-billed in the brief.
+ */
+export function coveredByOrder(purchasedNames: string[]): { addons: string[]; recurring: string[] } {
+  const names = purchasedNames.map((n) => n.toLowerCase().replace(/\s*×\d+$/, "").trim());
+  const has = (m?: string[]) => !!m?.some((x) => names.includes(x));
+  return {
+    addons: INTAKE_ADDONS.filter((a) => has(a.orderMatches)).map((a) => a.id),
+    recurring: RECURRING_SERVICES.filter((r) => has(r.orderMatches)).map((r) => r.id),
+  };
 }
 
 /* ---------------- intake CRUD ---------------- */

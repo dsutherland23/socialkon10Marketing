@@ -142,10 +142,21 @@ export function adminNewOrderEmail(args: {
 
 export function intakeReceivedEmail(args: {
   to: string; name: string; packageName: string; intakeId: string; portalUrl?: string;
+  scopeShift?: { direction: string; summary: string; difference: number };
 }): EmailPayload {
+  const shiftBlock = args.scopeShift?.direction === "upgrade" ? `
+    <p style="border-left:3px solid #d97706;padding:10px 14px;background:#fffbeb;font-size:13px">
+      <strong>Scope upgrade noted:</strong> your brief scopes to ${args.scopeShift.summary}.
+      Your payment is credited in full — the studio will send a proposal for the
+      <strong>${formatMoney(args.scopeShift.difference, "USD")}</strong> difference before any work begins. Nothing is charged without your approval.
+    </p>` : args.scopeShift?.direction === "downgrade" ? `
+    <p style="border-left:3px solid #666;padding:10px 14px;background:#f5f5f5;font-size:13px">
+      Your paid package already covers this scope — the studio will confirm added value or a credit in your proposal.
+    </p>` : "";
   const body = `
     <p>Hi ${args.name || "there"},</p>
     <p>Your <strong>${args.packageName}</strong> project brief and signed agreement are with the studio — thank you.</p>
+    ${shiftBlock}
     <p>What happens next:</p>
     <ol style="padding-left:18px;font-size:14px;line-height:1.8">
       <li>The studio reviews your brief &amp; signed scope</li>
@@ -167,19 +178,24 @@ export function intakeReceivedEmail(args: {
 export function adminIntakeEmail(args: {
   business: string; contact: string; email: string; packageName: string; websiteType: string;
   oneTime: number; monthly: number; leadScore: number; leadCategory: string; intakeId: string; adminUrl?: string;
+  scopeShift?: { direction: string; summary: string; difference: number };
 }): EmailPayload {
+  const shiftRow = args.scopeShift
+    ? `<tr><td style="padding:6px 0;border-bottom:1px solid #eee;color:#777">⚠ Scope shift</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee"><strong>${args.scopeShift.summary}${args.scopeShift.direction === "upgrade" ? ` (+${formatMoney(args.scopeShift.difference, "USD")})` : args.scopeShift.direction === "downgrade" ? " — REVIEW credit/value" : " — custom quote"}</strong></td></tr>`
+    : "";
   const body = `
     <p><strong>${args.business || args.contact}</strong> (${args.contact} · ${args.email}) signed a website brief.</p>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;font-size:13px">
       <tr><td style="padding:6px 0;border-bottom:1px solid #eee;color:#777">Package</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${args.packageName}</td></tr>
       <tr><td style="padding:6px 0;border-bottom:1px solid #eee;color:#777">Website type</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${args.websiteType}</td></tr>
+      ${shiftRow}
       <tr><td style="padding:6px 0;border-bottom:1px solid #eee;color:#777">Estimate</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${formatMoney(args.oneTime, "USD")}${args.monthly > 0 ? ` + ${formatMoney(args.monthly, "USD")}/mo` : ""}</td></tr>
       <tr><td style="padding:6px 0;color:#777">Lead score</td><td align="right" style="padding:6px 0"><strong>${args.leadScore} · ${args.leadCategory}</strong></td></tr>
     </table>
     <p style="font-size:13px;color:#555">Brief: ${args.intakeId} — review the scope and send the proposal.</p>`;
   return {
     to: STUDIO_EMAIL,
-    subject: `📝 Signed brief — ${args.business || args.contact} · ${formatMoney(args.oneTime, "USD")}`,
+    subject: `📝 Signed brief — ${args.business || args.contact} · ${formatMoney(args.oneTime, "USD")}${args.scopeShift?.direction === "upgrade" ? " · ⚠ SCOPE SHIFT" : ""}`,
     html: shell("New signed website brief.", body, args.adminUrl ? { label: "Review in Intakes", href: args.adminUrl } : undefined),
     type: "admin_intake",
   };

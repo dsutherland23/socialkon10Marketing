@@ -67,12 +67,14 @@ try {
   await page.setViewport({ width: 1600, height: 950 });
   page.on('pageerror', e => pageErrors.push(e.message));
 
-  // seed the cart with a website package before any app code runs
+  // seed the cart: LANDING PAGE ($1,500) + one configurator add-on (to prove
+  // the brief never double-bills purchased add-ons) before any app code runs.
+  // The brief then chooses E-commerce ($3,500 live) → scope shift, $2,000 difference.
   await page.evaluateOnNewDocument(() => {
     const item = {
-      key: 'business-website--qa', serviceSlug: 'business-website',
-      name: 'Standard Business Website', unitPrice: 3500,
-      addons: [], rush: false, billing: 'one_time', depositPct: 50,
+      key: 'landing-page--qa', serviceSlug: 'landing-page',
+      name: 'Landing Page / One-Page Website', unitPrice: 1500,
+      addons: [{ name: 'SEO Growth', price: 350 }], rush: false, billing: 'one_time', depositPct: 50,
     };
     localStorage.setItem('sk-cart', JSON.stringify([item]));
     localStorage.setItem('sk-currency', 'USD');
@@ -83,17 +85,28 @@ try {
   await page.goto(`${BASE}/checkout`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await nap(5000);
   let text = await bodyText(page);
-  ok('cart summary shows the website package', /Standard Business Website/i.test(text));
+  ok('cart summary shows the website package', /Landing Page/i.test(text));
 
   await clickBtn(page, /Your details/i);
   await nap(800);
   await page.type('#f-name', 'QA Client');
   await page.type('#f-email', 'qa.client@example.com');
-  await page.type('#f-goals', 'Test the intake flow end to end.');
+  // slim checkout (2026): deep-brief questions live in the intake, not the payment page
+  const slim = await page.evaluate(() => !document.querySelector('#f-goals') && !document.querySelector('#f-audience') && !document.querySelector('#f-colors'));
+  ok('checkout is slim — goals/audience/colours moved to the post-payment brief', slim);
+  let stepText = await bodyText(page);
+  ok('brief-after-payment note sets expectations', /brief opens right after payment/i.test(stepText));
   await clickBtn(page, /Files/i);
   await nap(800);
   text = await bodyText(page);
   ok('files step reached after valid details', /Drop files or browse/i.test(text));
+
+  // upload a file at checkout — the brief must show it as already received
+  const fileInput = await page.$('input[type="file"]');
+  if (fileInput) await fileInput.uploadFile(new URL('./qa-fixture.svg', import.meta.url).pathname);
+  await nap(700);
+  text = await bodyText(page);
+  ok('checkout accepts the uploaded file', /qa-fixture\.svg/i.test(text));
 
   await clickBtn(page, /Payment/i);
   await nap(800);
@@ -123,6 +136,7 @@ try {
   }));
   ok('contact name prefilled from checkout', prefill.name === 'QA Client', JSON.stringify(prefill));
   ok('email prefilled from checkout', prefill.email === 'qa.client@example.com');
+  ok('zero-repeat banner shown (confirm, don\'t retype)', await page.evaluate(() => !!document.querySelector('[data-prefill-banner]')));
 
   // required-field guard: empty business fields block Continue
   await clickDlg(page, /^Continue/i);
@@ -147,6 +161,13 @@ try {
   const condVisible = await page.evaluate(() => !!document.querySelector('#in-product_count'));
   ok('e-commerce conditional questions appear (product count)', condVisible);
 
+  // scope-shift: paid Landing Page ($1,500) → chose E-commerce ($3,500 live)
+  const shiftDir = await page.evaluate(() => document.querySelector('[data-scope-shift]')?.getAttribute('data-scope-shift') ?? null);
+  ok('scope-shift card appears the moment a higher tier is chosen', shiftDir === 'upgrade', String(shiftDir));
+  text = await bodyText(page);
+  ok('shift card states the $2,000 difference, credited payment, nothing charged now',
+    /2,000/.test(text) && /Nothing is charged now/i.test(text) && /credited in full/i.test(text));
+
   await clickCard(page, 'Sell online');
   await page.type('#in-visitor_action', 'Buy a meal combo.');
   await page.type('#in-target_audience', 'Hungry locals, 18-45.');
@@ -162,6 +183,8 @@ try {
   ok('design step reached', /Which direction feels right/i.test(text));
   ok('colour scheme picker present', /Colour scheme/i.test(text));
   ok('file upload zones present', /Logo & brand assets/i.test(text) && /Photos & content/i.test(text));
+  ok('checkout file shown as already received (no re-upload)', await page.evaluate(() =>
+    /qa-fixture\.svg/i.test(document.querySelector('[data-order-files]')?.textContent ?? '')));
 
   await clickCard(page, 'Clean & minimal');
   await page.select('#in-logo_status', 'Yes — ready to upload');
@@ -183,12 +206,22 @@ try {
   text = await bodyText(page);
   ok('add-ons step reached', /Power it up/i.test(text));
   ok('recommended picks flagged', /Recommended/i.test(text));
-  ok('base estimate shows package price', /3,500/.test(text));
+  ok('ledger shows what was paid with the order ($1,850)', /1,850/.test(text));
+  ok('ledger shows the scope-upgrade difference (+$2,000)', await page.evaluate(() =>
+    /2,000/.test(document.querySelector('[data-ledger-difference]')?.textContent ?? '')));
+
+  // purchased at checkout → covered in the brief, never double-billed
+  const coveredSeo = await page.evaluate(() => {
+    const dlg = document.querySelector('[role="dialog"]');
+    const b = [...dlg.querySelectorAll('button')].find(x => /Advanced SEO Setup/i.test(x.textContent));
+    return b ? { disabled: b.disabled, badge: /In your order/i.test(b.textContent) } : null;
+  });
+  ok('purchased SEO add-on shows "In your order ✓" and cannot be re-selected', coveredSeo?.disabled === true && coveredSeo?.badge === true, JSON.stringify(coveredSeo));
 
   await clickCard(page, 'WhatsApp Chat Integration');
   await nap(500);
-  text = await bodyText(page);
-  ok('estimate updates live when add-on selected (+$250 → $3,750)', /3,750/.test(text));
+  const bal = await page.evaluate(() => document.querySelector('[data-ledger-balance]')?.textContent ?? '');
+  ok('ledger balance = difference + new add-on ($2,000 + $100 = $2,100)', /2,100/.test(bal), bal);
 
   // monthly recurring toggle
   await clickCard(page, 'Website Care Plan');
@@ -202,9 +235,12 @@ try {
   /* ---------------- REVIEW & SIGN ---------------- */
   console.log('\nreview & sign — the agreement');
   text = await bodyText(page);
-  ok('review step shows scope sections', /Included in your package/i.test(text) && /Not included/i.test(text));
+  ok('review step scope describes the REQUIRED package (e-commerce)', /Included — E-Commerce Website/i.test(text) && /Not included/i.test(text));
   ok('agreement text present with version', /PROJECT AGREEMENT/i.test(text) && /SK-WEB-AGREEMENT-2026\.1/i.test(text));
   ok('selected add-on appears in scope', /WhatsApp Chat Integration/i.test(text));
+  ok('contract itemises the payment position (paid / difference / balance)', /PAID TO DATE/i.test(text) && /Scope upgrade/i.test(text) && /balance due/i.test(text));
+  ok('review ledger shows the estimated balance ($2,100)', await page.evaluate(() =>
+    /2,100/.test(document.querySelector('[data-review-balance]')?.textContent ?? '')));
 
   // submit gated until checkbox + signature
   let submitDisabled = await page.evaluate(() => {
@@ -213,6 +249,7 @@ try {
   });
   ok('submit blocked until agreement ticked + signed', submitDisabled === true, String(submitDisabled));
 
+  // agreement + signature alone are NOT enough when a scope shift needs acknowledging
   await page.evaluate(() => {
     const cb = [...document.querySelectorAll('[role="dialog"] input[type="checkbox"]')].pop();
     cb?.click();
@@ -223,7 +260,15 @@ try {
     const b = [...document.querySelectorAll('[role="dialog"] button')].find(x => /Sign & submit brief/i.test(x.textContent));
     return b ? b.disabled : null;
   });
-  ok('submit enabled after tick + signature', submitDisabled === false, String(submitDisabled));
+  ok('submit STILL blocked until the scope shift is acknowledged', submitDisabled === true, String(submitDisabled));
+
+  await page.evaluate(() => { document.querySelector('[data-shift-ack] input[type="checkbox"]')?.click(); });
+  await nap(400);
+  submitDisabled = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[role="dialog"] button')].find(x => /Sign & submit brief/i.test(x.textContent));
+    return b ? b.disabled : null;
+  });
+  ok('submit enabled after shift ack + agreement + signature', submitDisabled === false, String(submitDisabled));
 
   await clickDlg(page, /Sign & submit brief/i);
   await page.waitForFunction(() => /Brief received/i.test(document.body.innerText), { timeout: 30000 });
@@ -241,6 +286,12 @@ try {
   const intakes = await page.evaluate(() => JSON.parse(localStorage.getItem('sk-demo-intakes') || '[]'));
   ok('exactly one brief record exists (no duplicates)', intakes.length === 1, `${intakes.length} records`);
   ok('brief uses stable dedupe id + submitted status', intakes[0]?.id?.startsWith('web-') && intakes[0]?.status === 'submitted', JSON.stringify({ id: intakes[0]?.id, status: intakes[0]?.status }));
+
+  // the scope shift is on the signed record — direction, difference, client acknowledgment
+  const ss = intakes[0]?.scopeShift;
+  ok('scope shift recorded on the signed brief (upgrade · $3,000 · acknowledged)',
+    ss?.direction === 'upgrade' && ss?.difference === 3000 && !!ss?.acknowledgedAt, JSON.stringify(ss));
+  ok('studio alert email flags the scope shift', emailLog.some(e => e.type === 'admin_intake' && /SCOPE SHIFT/i.test(e.subject ?? '')), JSON.stringify(emailLog.filter(e => e.type === 'admin_intake').map(e => e.subject)));
 
   /* ---------------- WRAP ---------------- */
   console.log('\npage errors');

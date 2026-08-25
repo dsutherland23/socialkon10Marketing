@@ -22,6 +22,7 @@ import {
 import { activeProviders } from "../lib/payments";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
+import { useContent } from "../lib/content";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
 import { IntakeWizard } from "../components/IntakeWizard";
@@ -2100,7 +2101,11 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
   const [intakes, setIntakes] = useState<IntakeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"Projects" | "Meetings & Calls" | "My Templates" | "My Designs" | "Favorites" | "Account">("Projects");
-  const [wizardFor, setWizardFor] = useState<{ pkg: IntakePackage; orderId: string | null; existing: IntakeRecord | null } | null>(null);
+  const [wizardFor, setWizardFor] = useState<{ pkg: IntakePackage; orderId: string | null; existing: IntakeRecord | null; order: OrderRecord | null } | null>(null);
+  const [profile, setProfile] = useState<ClientProfile | null>(null);
+  const { services } = useContent();
+  // live CMS-aware package prices for the scope-shift engine (falls back to catalog in intake.ts)
+  const priceFor = (slug: string) => services.find((s) => s.slug === slug)?.price ?? 0;
 
   const reload = async () => {
     if (user) {
@@ -2108,9 +2113,10 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
       await claimCustomerDesigns(user);
       await claimIntakes(user);
     }
-    const [o, i] = await Promise.all([listMyOrders(user), listMyIntakes(user)]);
+    const [o, i, p] = await Promise.all([listMyOrders(user), listMyIntakes(user), user ? getProfile(user.uid) : null]);
     setOrders(o);
     setIntakes(i);
+    setProfile(p);
     setLoading(false);
   };
 
@@ -2133,7 +2139,7 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
 
   const openWizard = (order: OrderRecord | null, existing?: IntakeRecord | null) => {
     const slug = existing?.packageSlug ?? order?.items.find((i) => isIntakePackage(i.serviceSlug))?.serviceSlug;
-    setWizardFor({ pkg: intakePackageFor(slug), orderId: order?.id ?? existing?.orderId ?? null, existing: existing ?? null });
+    setWizardFor({ pkg: intakePackageFor(slug), orderId: order?.id ?? existing?.orderId ?? null, existing: existing ?? null, order: order ?? null });
   };
 
   useEffect(() => {
@@ -2274,6 +2280,23 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
           orderId={wizardFor.orderId}
           existing={wizardFor.existing}
           prefill={{ name: user?.displayName ?? "", email: user?.email ?? "" }}
+          profile={profile}
+          priceFor={priceFor}
+          order={wizardFor.order ? (() => {
+            const o = wizardFor.order!;
+            const pkgItem = o.items.find((i) => isIntakePackage(i.serviceSlug));
+            return {
+              id: o.id,
+              amountPaid: o.amountPaid,
+              packageUnitPrice: pkgItem?.unitPrice ?? 0,
+              addonNames: o.items.flatMap((i) => [
+                ...i.addons.map((a) => a.name),
+                ...(i.billing === "monthly" ? [i.name] : []),
+              ]),
+              details: o.details,
+              files: o.files,
+            };
+          })() : null}
           onClose={() => { setWizardFor(null); void reload(); }}
           onSubmitted={() => void reload()}
         />

@@ -10,8 +10,9 @@ import { useAuth } from "../lib/auth";
 import { attachFiles, cartToOrderItems, claimOrders, createOrder } from "../lib/backend";
 import { auth as fbAuth, firebaseReady } from "../lib/firebase";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
-import { IntakeWizard } from "../components/IntakeWizard";
-import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type IntakePackage } from "../lib/intake";
+import { IntakeWizard, type IntakeOrderContext } from "../components/IntakeWizard";
+import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type IntakePackage, type ClientProfile } from "../lib/intake";
+import { useContent } from "../lib/content";
 import { sendEmail, orderConfirmationEmail, adminNewOrderEmail } from "../lib/email";
 
 /* ------------------------------------------------------------------
@@ -34,7 +35,10 @@ const GoogleIcon = () => (
   </svg>
 );
 
-interface Details { name: string; company: string; email: string; phone: string; website: string; industry: string; audience: string; goals: string; deadline: string; colors: string; style: string; extra: string }
+/* 2026: checkout = payment, not interrogation. Contact basics only —
+   the per-package project brief (goals, pages, colours, style) owns the
+   deep questions right after payment, prefilled from what we know here. */
+interface Details { name: string; company: string; email: string; phone: string; extra: string }
 
 export default function Checkout() {
   useDepartment(null);
@@ -43,7 +47,7 @@ export default function Checkout() {
   const payMode = "full" as const;
   const [promoInput, setPromoInput] = useState("");
   const [promoError, setPromoError] = useState<string | null>(null);
-  const [details, setDetails] = useState<Details>({ name: "", company: "", email: "", phone: "", website: "", industry: "", audience: "", goals: "", deadline: "", colors: "", style: "", extra: "" });
+  const [details, setDetails] = useState<Details>({ name: "", company: "", email: "", phone: "", extra: "" });
   const [errors, setErrors] = useState<Partial<Record<keyof Details, string>>>({});
   const [files, setFiles] = useState<{ file: File; name: string; size: number }[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -58,11 +62,15 @@ export default function Checkout() {
   const [googleBusy, setGoogleBusy] = useState(false);
   const [magicSent, setMagicSent] = useState(false);
   const [saveDetails, setSaveDetails] = useState(true);
+  const [savedProfile, setSavedProfile] = useState<ClientProfile | null>(null);
   const [intakePkg, setIntakePkg] = useState<IntakePackage | null>(null);
   const [intakeOrderId, setIntakeOrderId] = useState<string | null>(null);
+  const [intakeOrderCtx, setIntakeOrderCtx] = useState<IntakeOrderContext | null>(null);
   const [intakeOpen, setIntakeOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const { user, signUp, signInGoogle, sendMagicLink } = useAuth();
+  const { services } = useContent();
+  const priceFor = (slug: string) => services.find((s) => s.slug === slug)?.price ?? 0;
 
   // 2026 best practice: signed-in customers never retype saved details —
   // prefill from their account profile, only into fields still empty.
@@ -71,14 +79,13 @@ export default function Checkout() {
     setDetails((d) => (d.email ? d : { ...d, email: user.email ?? d.email }));
     getProfile(user.uid).then((p) => {
       if (!p) return;
+      setSavedProfile(p);
       setDetails((d) => ({
         ...d,
         name: d.name || p.name,
         company: d.company || p.company,
         email: d.email || p.email,
         phone: d.phone || p.phone,
-        website: d.website || p.website,
-        industry: d.industry || p.industry,
       }));
     });
   }, [user]);
@@ -104,7 +111,6 @@ export default function Checkout() {
     const e: typeof errors = {};
     if (!details.name.trim()) e.name = "Your name is required.";
     if (!/.+@.+\..+/.test(details.email)) e.email = "A valid email is required.";
-    if (!details.goals.trim()) e.goals = "Tell us the goal in a sentence or two.";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -177,20 +183,35 @@ export default function Checkout() {
     }
 
     // save details to the account for one-tap future checkouts (opt-out checkbox)
+    // merge-safe: never clobbers profile fields checkout doesn't collect
     if (user && saveDetails) {
+      const base = savedProfile;
       void saveProfile(user.uid, {
         name: details.name, company: details.company, email: details.email,
-        phone: details.phone, website: details.website, industry: details.industry,
-        address: "", city: "", country: "",
+        phone: details.phone,
+        website: base?.website ?? "", industry: base?.industry ?? "",
+        address: base?.address ?? "", city: base?.city ?? "", country: base?.country ?? "",
       });
     }
 
     // website packages → the intake brief doubles as the project agreement;
-    // pop it immediately post-purchase (highest-intent moment)
+    // pop it immediately post-purchase (highest-intent moment).
+    // Snapshot the order BEFORE clear() so the brief can prefill + detect scope shifts.
     const webItem = items.find((i) => isIntakePackage(i.serviceSlug));
     if (webItem) {
       setIntakePkg(intakePackageFor(webItem.serviceSlug));
       setIntakeOrderId(finalOid);
+      setIntakeOrderCtx({
+        id: finalOid,
+        amountPaid: dueToday,
+        packageUnitPrice: webItem.unitPrice,
+        addonNames: items.flatMap((i) => [
+          ...i.addons.map((a) => a.name),
+          ...(i.billing === "monthly" ? [i.name] : []),
+        ]),
+        details: { ...details },
+        files: files.map((f) => ({ name: f.name, size: f.size })),
+      });
     }
 
     // transactional email: client receipt + studio alert (fire-and-forget, never blocks)
@@ -324,7 +345,7 @@ export default function Checkout() {
           </div>
         )}
 
-        {/* STEP 2 — client information + project questionnaire */}
+        {/* STEP 2 — client information (the full project brief comes after payment) */}
         {step === 1 && (
           <form onSubmit={(e) => { e.preventDefault(); if (validateDetails()) setStep(2); }} noValidate>
             <div className="grid sm:grid-cols-2 gap-5">
@@ -340,22 +361,16 @@ export default function Checkout() {
                 {errors.email && <p id="e-email" className="font-meta text-[10px] text-red-600 mt-1" role="alert">{errors.email}</p>}
               </div>
               <div><label className={labelCls} htmlFor="f-phone">Phone</label><input id="f-phone" type="tel" className={inputCls} value={details.phone} onChange={set("phone")} /></div>
-              <div><label className={labelCls} htmlFor="f-website">Current website</label><input id="f-website" type="url" className={inputCls} value={details.website} onChange={set("website")} placeholder="https://" /></div>
-              <div><label className={labelCls} htmlFor="f-industry">Industry</label><input id="f-industry" className={inputCls} value={details.industry} onChange={set("industry")} /></div>
-              <div><label className={labelCls} htmlFor="f-audience">Target audience</label><input id="f-audience" className={inputCls} value={details.audience} onChange={set("audience")} /></div>
-              <div><label className={labelCls} htmlFor="f-deadline">Required deadline</label><input id="f-deadline" type="date" className={inputCls} value={details.deadline} onChange={set("deadline")} /></div>
-              <div><label className={labelCls} htmlFor="f-colors">Preferred colors</label><input id="f-colors" className={inputCls} value={details.colors} onChange={set("colors")} placeholder="e.g. navy + gold, brand palette" /></div>
-              <div><label className={labelCls} htmlFor="f-style">Preferred style / references</label><input id="f-style" className={inputCls} value={details.style} onChange={set("style")} placeholder="e.g. minimal, bold, like example.com" /></div>
               <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="f-goals">Project goals *</label>
-                <textarea id="f-goals" rows={3} className={inputCls} value={details.goals} onChange={set("goals")} aria-invalid={!!errors.goals} aria-describedby={errors.goals ? "e-goals" : undefined} placeholder="What should this project achieve for the business?" />
-                {errors.goals && <p id="e-goals" className="font-meta text-[10px] text-red-600 mt-1" role="alert">{errors.goals}</p>}
-              </div>
-              <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="f-extra">Competitors, preferred style, anything else</label>
-                <textarea id="f-extra" rows={3} className={inputCls} value={details.extra} onChange={set("extra")} />
+                <label className={labelCls} htmlFor="f-extra">Anything we should know? <span className="text-[var(--muted)]">(optional)</span></label>
+                <textarea id="f-extra" rows={2} className={inputCls} value={details.extra} onChange={set("extra")} placeholder="Quick notes only — your full project brief comes right after payment." />
               </div>
             </div>
+            {items.some((i) => isIntakePackage(i.serviceSlug)) && (
+              <p className="mt-5 border border-[var(--dept)] px-4 py-3 font-meta text-[10px]" style={{ background: "var(--dept-soft)" }}>
+                ✓ GOALS, PAGES, COLOURS &amp; STYLE come next — your website project brief opens right after payment, prefilled with these details. It doubles as your signed project agreement.
+              </p>
+            )}
             {user && (
               <label className="mt-5 flex items-center gap-3 cursor-pointer text-[13px]">
                 <input type="checkbox" className="w-4 h-4 accent-[var(--dept)]" checked={saveDetails} onChange={(e) => setSaveDetails(e.target.checked)} />
@@ -579,6 +594,9 @@ export default function Checkout() {
           pkg={intakePkg}
           orderId={intakeOrderId}
           prefill={{ name: details.name, email: details.email, business: details.company }}
+          order={intakeOrderCtx}
+          profile={savedProfile}
+          priceFor={priceFor}
           onClose={() => setIntakeOpen(false)}
         />
       )}

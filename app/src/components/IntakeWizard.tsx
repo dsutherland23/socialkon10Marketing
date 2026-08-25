@@ -7,21 +7,29 @@ import { track } from "../lib/seo";
 import { sendEmail, intakeReceivedEmail, adminIntakeEmail } from "../lib/email";
 import {
   CONTRACT_VERSION,
+  EMPTY_PROFILE,
   INTAKE_ADDONS,
   RECURRING_SERVICES,
   buildContractText,
   buildScopeSections,
   computeEstimate,
   computeLeadScore,
+  coveredByOrder,
+  detectScopeShift,
   fieldVisible,
+  intakePackageFor,
   intakeSteps,
   recommendedAddons,
+  resolveIntakePrefill,
   saveIntake,
+  saveProfile,
   uploadIntakeAsset,
   validateIntakeFile,
+  type ClientProfile,
   type IntakeField,
   type IntakePackage,
   type IntakeRecord,
+  type PaymentLedger,
 } from "../lib/intake";
 
 /* ------------------------------------------------------------------
@@ -43,31 +51,52 @@ const COLOR_PRESETS: { name: string; colors: string[] }[] = [
   { name: "Berry Punch", colors: ["#6A0572", "#AB83A1", "#F15BB5"] },
 ];
 
+/** What the wizard needs to know about the paid order (no re-asking, no double-billing). */
+export interface IntakeOrderContext {
+  id: string;
+  amountPaid: number;          // USD received with the order
+  packageUnitPrice: number;    // USD the website package line itself cost
+  addonNames: string[];        // configurator add-on names already purchased
+  details?: Record<string, string>;
+  files?: { name: string; size: number }[];
+}
+
 export interface IntakeWizardProps {
   user: User | null;
   pkg: IntakePackage;
   orderId?: string | null;
   existing?: IntakeRecord | null;   // resume a draft, or view a submitted brief
   prefill?: { name?: string; email?: string; business?: string };
+  order?: IntakeOrderContext | null;
+  profile?: ClientProfile | null;
+  priceFor?: (slug: string) => number;   // live CMS-aware package prices
   onClose: () => void;
   onSubmitted?: (rec: { id: string }) => void;
 }
 
 type Answers = Record<string, string | string[]>;
 
-export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefill, onClose, onSubmitted }: IntakeWizardProps) {
+export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefill, order = null, profile = null, priceFor, onClose, onSubmitted }: IntakeWizardProps) {
   const readOnly = !!existing && existing.status !== "draft";
   const money = useMoney();
   const steps = useMemo(() => intakeSteps(pkg), [pkg]);
   const TOTAL = steps.length + 2; // + add-ons + review
 
+  // zero-repeat: resolve everything the system already knows (order → profile → account)
+  const pre = useMemo(
+    () => resolveIntakePrefill({ orderDetails: order?.details, profile, user }),
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const prefilledIds = useMemo(() => new Set(pre.prefilled), [pre]);
+
   const [stepIdx, setStepIdx] = useState(() => (existing && existing.status === "draft" ? Math.min(existing.step, TOTAL - 2) : 0));
   const [answers, setAnswers] = useState<Answers>(() => ({
+    ...pre.answers,
+    business_name: prefill?.business || pre.answers.business_name || "",
+    contact_name: prefill?.name || pre.answers.contact_name || user?.displayName || "",
+    email: prefill?.email || pre.answers.email || user?.email || "",
+    website_type: pkg.defaultType,
     ...(existing?.answers ?? {}),
-    business_name: existing?.answers.business_name ?? prefill?.business ?? "",
-    contact_name: existing?.answers.contact_name ?? prefill?.name ?? user?.displayName ?? "",
-    email: existing?.answers.email ?? prefill?.email ?? user?.email ?? "",
-    website_type: existing?.answers.website_type ?? pkg.defaultType,
   }));
   const [colors, setColors] = useState<string[]>(() => {
     const raw = existing?.answers.brand_colors_hex;
@@ -82,6 +111,7 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const [shiftAck, setShiftAck] = useState(false);
   const [signedName, setSignedName] = useState("");
   const [uploadingKind, setUploadingKind] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -92,11 +122,41 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
 
   const websiteType = String(answers.website_type ?? pkg.defaultType);
   const recommended = useMemo(() => recommendedAddons(pkg, websiteType), [pkg, websiteType]);
-  const estimate = useMemo(() => computeEstimate(pkg, addons, recurring), [pkg, addons, recurring]);
-  const scope = useMemo(() => buildScopeSections(pkg, answers, addons, recurring), [pkg, answers, addons, recurring]);
+
+  /* ----- scope-shift engine: paid package vs chosen website_type ----- */
+  const shift = useMemo(
+    () => detectScopeShift(pkg.slug, websiteType, priceFor, order?.packageUnitPrice),
+    [pkg.slug, websiteType, priceFor, order],
+  );
+  // upgrades & custom-quote types: estimate + scope describe the REQUIRED package
+  const scopePkg = useMemo(
+    () => (shift && shift.direction !== "downgrade" ? intakePackageFor(shift.requiredPackage) : pkg),
+    [shift, pkg],
+  );
+  const covered = useMemo(() => coveredByOrder(order?.addonNames ?? []), [order]);
+
+  const estimate = useMemo(() => computeEstimate(scopePkg, addons, recurring), [scopePkg, addons, recurring]);
+  const addonsTotal = useMemo(
+    () => addons.reduce((s, id) => s + (INTAKE_ADDONS.find((a) => a.id === id)?.price ?? 0), 0),
+    [addons],
+  );
+  const scope = useMemo(() => buildScopeSections(pkg, answers, addons, recurring, scopePkg), [pkg, answers, addons, recurring, scopePkg]);
+
+  /* ----- payment ledger: paid / scope difference / estimated balance ----- */
+  const ledger = useMemo<PaymentLedger | null>(() => {
+    if (!order) return null;
+    const difference = shift?.direction === "upgrade" ? shift.difference : 0;
+    return {
+      paid: order.amountPaid,
+      difference,
+      balance: difference + addonsTotal,
+      shiftLabel: shift?.direction === "upgrade" ? `${shift.paidPackageName} → ${shift.requiredPackageName}` : undefined,
+    };
+  }, [order, shift, addonsTotal]);
+
   const contractText = useMemo(
-    () => buildContractText(scope, estimate, String(answers.contact_name ?? ""), String(answers.business_name ?? "")),
-    [scope, estimate, answers.contact_name, answers.business_name],
+    () => buildContractText(scope, estimate, String(answers.contact_name ?? ""), String(answers.business_name ?? ""), ledger),
+    [scope, estimate, answers.contact_name, answers.business_name, ledger],
   );
 
   /* ---------- autosave (spec §ux autosave + save_and_continue) ---------- */
@@ -116,6 +176,9 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
         selectedAddons: addons,
         selectedRecurring: recurring,
         estimate: { ...estimate, currency: "USD" },
+        scopeShift: shift
+          ? { ...shift, ...(shiftAck ? { acknowledgedAt: new Date().toISOString() } : {}) }
+          : null,
         leadScore: lead.score,
         leadCategory: lead.category,
         assets,
@@ -125,7 +188,7 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
       setIntakeId(id);
       return id;
     },
-    [answers, addons, recurring, assets, colors, estimate, existing, intakeId, orderId, pkg, prefill, user],
+    [answers, addons, recurring, assets, colors, estimate, existing, intakeId, orderId, pkg, prefill, user, shift, shiftAck],
   );
 
   // debounced draft autosave while editing
@@ -216,7 +279,9 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
 
   /* ---------- submit (sign the agreement) ---------- */
   const signatureOk = signedName.trim().length >= 3;
-  const canSubmit = agreed && signatureOk && !submitting;
+  // a paid client who chose a higher tier must acknowledge the scope change before signing
+  const needsShiftAck = !!order && shift?.direction === "upgrade" && !readOnly;
+  const canSubmit = agreed && signatureOk && !submitting && (!needsShiftAck || shiftAck);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -231,23 +296,41 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
     const id = await persist("submitted", TOTAL - 1, contract);
     setSubmitting(false);
     setDone(true);
-    track("intake_submitted", { package: pkg.slug, value: estimate.oneTime, monthly: estimate.monthly, addons: addons.length });
+    track("intake_submitted", { package: pkg.slug, value: estimate.oneTime, monthly: estimate.monthly, addons: addons.length, scope_shift: shift?.direction ?? "none" });
     toast.success("Project brief submitted — agreement signed.");
     onSubmitted?.({ id });
+
+    // write confirmed details back to the saved profile (one home, kept fresh — never clobbers)
+    if (user) {
+      const keep = (v: unknown, old: string) => (String(v ?? "").trim() ? String(v ?? "").trim() : old);
+      const base = profile ?? { ...EMPTY_PROFILE };
+      void saveProfile(user.uid, {
+        name: keep(answers.contact_name, base.name),
+        company: keep(answers.business_name, base.company),
+        email: keep(answers.email, base.email),
+        phone: keep(answers.phone, base.phone),
+        website: keep(answers.existing_website, base.website),
+        industry: keep(answers.industry, base.industry),
+        address: base.address, city: base.city, country: base.country,
+      });
+    }
 
     // transactional email: client confirmation + studio alert (fire-and-forget)
     const portalUrl = `${window.location.origin}/client`;
     const lead = computeLeadScore(answers, addons, recurring);
+    const shiftInfo = shift && order
+      ? { direction: shift.direction, summary: `${shift.paidPackageName} → ${shift.requiredPackageName}`, difference: shift.difference }
+      : undefined;
     void sendEmail(intakeReceivedEmail({
       to: String(answers.email ?? ""), name: String(answers.contact_name ?? ""),
-      packageName: pkg.name, intakeId: id, portalUrl,
+      packageName: pkg.name, intakeId: id, portalUrl, scopeShift: shiftInfo,
     }));
     void sendEmail(adminIntakeEmail({
       business: String(answers.business_name ?? ""), contact: String(answers.contact_name ?? ""),
       email: String(answers.email ?? ""), packageName: pkg.name, websiteType,
       oneTime: estimate.oneTime, monthly: estimate.monthly,
       leadScore: lead.score, leadCategory: lead.category, intakeId: id,
-      adminUrl: `${window.location.origin}/admin`,
+      adminUrl: `${window.location.origin}/admin`, scopeShift: shiftInfo,
     }));
   };
 
@@ -275,6 +358,9 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
       <div key={f.id} className={f.kind === "textarea" || f.kind === "cards" || f.kind === "multicards" ? "sm:col-span-2" : ""}>
         <label className={labelCls} htmlFor={`in-${f.id}`}>
           {f.label} {f.required && <span className="dept-accent">*</span>}
+          {prefilledIds.has(f.id) && str && !readOnly && (
+            <span className="dept-accent ml-2 text-[8px]">✓ FROM YOUR ORDER</span>
+          )}
         </label>
 
         {f.kind === "textarea" ? (
@@ -398,9 +484,65 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
             <div>
               <h2 className="display-sub">{steps[stepIdx].title}</h2>
               <p className="text-sm text-[var(--muted)] mt-2 mb-6">{steps[stepIdx].sub}</p>
+
+              {/* zero-repeat banner: prefilled from the order / account — confirm, don't retype */}
+              {steps[stepIdx].id === "business" && prefilledIds.size > 0 && !readOnly && (
+                <p className="mb-5 border border-[var(--dept)] px-4 py-3 font-meta text-[10px]" style={{ background: "var(--dept-soft)" }} data-prefill-banner>
+                  ✓ WE PREFILLED WHAT WE ALREADY KNOW from your order and account — confirm or adjust below. Nothing to retype.
+                </p>
+              )}
+
               <div className="grid sm:grid-cols-2 gap-5">
                 {visibleFields(steps[stepIdx].fields).map(renderField)}
               </div>
+
+              {/* scope-shift card: surface the price implication at the moment of choice */}
+              {steps[stepIdx].id === "project" && shift && (
+                <div
+                  className={`mt-6 border px-5 py-4 ${shift.direction === "upgrade" ? "border-amber-500/50 bg-amber-500/10" : "border-[var(--dept)]"}`}
+                  style={shift.direction !== "upgrade" ? { background: "var(--dept-soft)" } : undefined}
+                  role="status"
+                  data-scope-shift={shift.direction}
+                >
+                  {shift.direction === "upgrade" && (
+                    <>
+                      <p className="font-meta text-[10px] font-bold text-amber-700 dark:text-amber-300">HEADS-UP — THIS CHANGES YOUR PROJECT SCOPE</p>
+                      <p className="text-sm mt-2 leading-relaxed">
+                        A <strong>{websiteType}</strong> is scoped as our <strong>{shift.requiredPackageName} ({money(shift.requiredBase)})</strong>.
+                        {order ? (
+                          <> You've already paid <strong>{money(shift.paidBase)}</strong> for the {shift.paidPackageName} — the <strong>{money(shift.difference)} difference</strong> will be itemised in your final proposal. <strong>Nothing is charged now</strong>, and your payment is credited in full.</>
+                        ) : (
+                          <> Your estimate on the next steps now reflects that package.</>
+                        )}
+                      </p>
+                      {order && (
+                        <p className="font-meta text-[9px] text-[var(--muted)] mt-2">
+                          Prefer to stay with your paid package? Re-select {pkg.defaultType} above.
+                        </p>
+                      )}
+                    </>
+                  )}
+                  {shift.direction === "downgrade" && (
+                    <>
+                      <p className="font-meta text-[10px] font-bold dept-accent">ALREADY COVERED BY YOUR PACKAGE</p>
+                      <p className="text-sm mt-2 leading-relaxed">
+                        Your paid <strong>{shift.paidPackageName}</strong> already covers a {websiteType.toLowerCase()} build.
+                        The studio will confirm added value (extra pages or features) or a credit in your proposal — payments are never auto-refunded.
+                      </p>
+                    </>
+                  )}
+                  {shift.direction === "custom-quote" && (
+                    <>
+                      <p className="font-meta text-[10px] font-bold dept-accent">CUSTOM-SCOPED PROJECT</p>
+                      <p className="text-sm mt-2 leading-relaxed">
+                        {websiteType === "Custom" ? "A unique build" : `A ${websiteType.toLowerCase()}`} is scoped individually with the studio.
+                        {order ? <> Your paid <strong>{money(shift.paidBase)}</strong> is credited in full toward the final proposal.</> : null}
+                        {" "}The estimate shown is indicative — the final proposal governs scope and price.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* design step extras: colour picker + uploads */}
               {steps[stepIdx].id === "design" && (
@@ -448,6 +590,20 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
 
                   <div className="mt-8 pt-6 rule-t">
                     <span className={labelCls}>Files &amp; materials — logo, photos, brand guide, content docs</span>
+                    {(order?.files?.length ?? 0) > 0 && (
+                      <div className="mb-3 border border-[var(--line)] px-4 py-3" style={{ background: "var(--panel)" }} data-order-files>
+                        <p className="font-meta text-[9px] dept-accent">✓ ALREADY RECEIVED WITH YOUR ORDER</p>
+                        <ul className="mt-1.5 flex flex-col gap-1">
+                          {order!.files!.map((f, i) => (
+                            <li key={`${f.name}-${i}`} className="flex justify-between gap-3 text-[12px]">
+                              <span className="truncate">{f.name}</span>
+                              <span className="font-meta text-[9px] text-[var(--muted)] whitespace-nowrap">{(f.size / 1024 / 1024).toFixed(1)}MB</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="font-meta text-[8.5px] text-[var(--muted)] mt-2">No need to upload these again — add anything new below.</p>
+                      </div>
+                    )}
                     <div className="grid sm:grid-cols-2 gap-3 mt-2">
                       {[
                         { kind: "logo", title: "Logo & brand assets", sub: "Logo files, brand guide, fonts" },
@@ -521,25 +677,27 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                       }).map((a) => {
                         const active = addons.includes(a.id);
                         const isRec = recommended.includes(a.id);
+                        const isCovered = covered.addons.includes(a.id);
                         return (
-                          <button key={a.id} type="button" disabled={readOnly} aria-pressed={active}
+                          <button key={a.id} type="button" disabled={readOnly || isCovered} aria-pressed={active}
                             onClick={() => { setAddons((xs) => active ? xs.filter((x) => x !== a.id) : [...xs, a.id]); mark(); }}
-                            className="flex items-center justify-between gap-4 border px-4 py-3 text-left transition-colors"
+                            className="flex items-center justify-between gap-4 border px-4 py-3 text-left transition-colors disabled:cursor-default"
                             style={active ? { borderColor: "var(--dept)", background: "var(--dept-soft)" } : { borderColor: "var(--line)" }}>
                             <span className="flex items-start gap-3">
                               <span className="mt-0.5 w-4 h-4 border flex items-center justify-center text-[10px] shrink-0"
-                                style={active ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line-strong)" }}>
-                                {active ? "✓" : ""}
+                                style={active || isCovered ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line-strong)" }}>
+                                {active || isCovered ? "✓" : ""}
                               </span>
                               <span>
                                 <span className="font-display text-[13px] font-bold uppercase flex items-center gap-2 flex-wrap">
                                   <span>{a.name}</span>
-                                  {isRec && <span className="dept-bg font-meta text-[8px] px-2 py-0.5">Recommended</span>}
+                                  {isCovered && <span className="dept-bg font-meta text-[8px] px-2 py-0.5" data-covered>In your order ✓</span>}
+                                  {!isCovered && isRec && <span className="dept-bg font-meta text-[8px] px-2 py-0.5">Recommended</span>}
                                 </span>
                                 <span className="font-meta text-[9px] text-[var(--muted)] block mt-0.5">{a.desc}</span>
                               </span>
                             </span>
-                            <span className="font-meta text-[10px] whitespace-nowrap">+{money(a.price)}</span>
+                            {!isCovered && <span className="font-meta text-[10px] whitespace-nowrap">+{money(a.price)}</span>}
                           </button>
                         );
                       })}
@@ -551,22 +709,26 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                     <div className="flex flex-col gap-2">
                       {RECURRING_SERVICES.map((r) => {
                         const active = recurring.includes(r.id);
+                        const isCovered = covered.recurring.includes(r.id);
                         return (
-                          <button key={r.id} type="button" disabled={readOnly} aria-pressed={active}
+                          <button key={r.id} type="button" disabled={readOnly || isCovered} aria-pressed={active}
                             onClick={() => { setRecurring((xs) => active ? xs.filter((x) => x !== r.id) : [...xs, r.id]); mark(); }}
-                            className="flex items-center justify-between gap-4 border px-4 py-3 text-left transition-colors"
+                            className="flex items-center justify-between gap-4 border px-4 py-3 text-left transition-colors disabled:cursor-default"
                             style={active ? { borderColor: "var(--dept)", background: "var(--dept-soft)" } : { borderColor: "var(--line)" }}>
                             <span className="flex items-start gap-3">
                               <span className="mt-0.5 w-4 h-4 border flex items-center justify-center text-[10px] shrink-0"
-                                style={active ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line-strong)" }}>
-                                {active ? "✓" : ""}
+                                style={active || isCovered ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line-strong)" }}>
+                                {active || isCovered ? "✓" : ""}
                               </span>
                               <span>
-                                <span className="font-display text-[13px] font-bold uppercase">{r.name}</span>
+                                <span className="font-display text-[13px] font-bold uppercase flex items-center gap-2 flex-wrap">
+                                  <span>{r.name}</span>
+                                  {isCovered && <span className="dept-bg font-meta text-[8px] px-2 py-0.5" data-covered>In your order ✓</span>}
+                                </span>
                                 <span className="font-meta text-[9px] text-[var(--muted)] block mt-0.5">{r.desc}</span>
                               </span>
                             </span>
-                            <span className="font-meta text-[10px] whitespace-nowrap">+{money(r.monthly)}/mo</span>
+                            {!isCovered && <span className="font-meta text-[10px] whitespace-nowrap">+{money(r.monthly)}/mo</span>}
                           </button>
                         );
                       })}
@@ -574,15 +736,49 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                   </div>
                 </div>
 
-                {/* live estimate */}
+                {/* live estimate — a payment ledger when the package is already paid */}
                 <aside className="border border-[var(--line-strong)] p-5 lg:sticky lg:top-0" style={{ background: "var(--panel)" }} aria-live="polite">
                   <span className="idx">/estimate</span>
-                  <p className="font-display-wide text-3xl font-bold mt-3">{money(estimate.oneTime)}</p>
-                  <span className="font-meta text-[9px] text-[var(--muted)]">one-time project estimate</span>
-                  {estimate.monthly > 0 && (
+                  {order ? (
+                    <div className="mt-3 flex flex-col gap-2 text-sm" data-ledger>
+                      <div className="flex justify-between gap-3">
+                        <span className="text-[var(--muted)]">Paid with your order</span>
+                        <span className="font-display font-bold">{money(order.amountPaid)} ✓</span>
+                      </div>
+                      {(ledger?.difference ?? 0) > 0 && (
+                        <div className="flex justify-between gap-3">
+                          <span className="text-amber-700 dark:text-amber-300">Scope upgrade difference</span>
+                          <span className="font-display font-bold text-amber-700 dark:text-amber-300" data-ledger-difference>+{money(ledger!.difference)}</span>
+                        </div>
+                      )}
+                      {addonsTotal > 0 && (
+                        <div className="flex justify-between gap-3">
+                          <span className="text-[var(--muted)]">New add-ons selected</span>
+                          <span className="font-display font-bold">+{money(addonsTotal)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-3 rule-t pt-2 mt-1">
+                        <span className="font-meta text-[10px]">ESTIMATED BALANCE</span>
+                        <span className="font-display-wide text-2xl font-bold" data-ledger-balance>{money(ledger?.balance ?? 0)}</span>
+                      </div>
+                      <span className="font-meta text-[8.5px] text-[var(--muted)]">payable only on approval of the final proposal — nothing is charged now</span>
+                      {estimate.monthly > 0 && (
+                        <div className="flex justify-between gap-3 rule-t pt-2 mt-1">
+                          <span className="text-[var(--muted)]">Recurring services</span>
+                          <span className="font-display font-bold">{money(estimate.monthly)}/mo</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
                     <>
-                      <p className="font-display text-xl font-bold mt-4">{money(estimate.monthly)}<span className="text-xs font-meta font-normal text-[var(--muted)]">/mo</span></p>
-                      <span className="font-meta text-[9px] text-[var(--muted)]">recurring services</span>
+                      <p className="font-display-wide text-3xl font-bold mt-3" data-estimate-total>{money(estimate.oneTime)}</p>
+                      <span className="font-meta text-[9px] text-[var(--muted)]">one-time project estimate{scopePkg.slug !== pkg.slug ? ` — reflects ${scopePkg.name}` : ""}</span>
+                      {estimate.monthly > 0 && (
+                        <>
+                          <p className="font-display text-xl font-bold mt-4">{money(estimate.monthly)}<span className="text-xs font-meta font-normal text-[var(--muted)]">/mo</span></p>
+                          <span className="font-meta text-[9px] text-[var(--muted)]">recurring services</span>
+                        </>
+                      )}
                     </>
                   )}
                   <p className="font-meta text-[8.5px] text-[var(--muted)] mt-4 leading-relaxed">
@@ -612,10 +808,35 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                     </div>
                   ))}
                   <div className="border border-[var(--line-strong)] p-5" style={{ background: "var(--panel)" }}>
-                    <div className="flex justify-between items-baseline">
-                      <span className="font-meta text-[10px] text-[var(--muted)]">ESTIMATED PROJECT VALUE</span>
-                      <span className="font-display text-xl font-bold">{formatMoney(estimate.oneTime, "USD")}</span>
-                    </div>
+                    {order ? (
+                      <div className="flex flex-col gap-1.5 text-sm" data-review-ledger>
+                        <div className="flex justify-between items-baseline">
+                          <span className="font-meta text-[10px] text-[var(--muted)]">PAID TO DATE</span>
+                          <span className="font-display font-bold">{formatMoney(order.amountPaid, "USD")} ✓</span>
+                        </div>
+                        {(ledger?.difference ?? 0) > 0 && (
+                          <div className="flex justify-between items-baseline">
+                            <span className="font-meta text-[10px] text-amber-700 dark:text-amber-300">SCOPE UPGRADE ({ledger!.shiftLabel})</span>
+                            <span className="font-display font-bold text-amber-700 dark:text-amber-300">{formatMoney(ledger!.difference, "USD")}</span>
+                          </div>
+                        )}
+                        {addonsTotal > 0 && (
+                          <div className="flex justify-between items-baseline">
+                            <span className="font-meta text-[10px] text-[var(--muted)]">NEW ADD-ONS</span>
+                            <span className="font-display font-bold">{formatMoney(addonsTotal, "USD")}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-baseline rule-t pt-2 mt-1">
+                          <span className="font-meta text-[10px]">ESTIMATED BALANCE DUE</span>
+                          <span className="font-display text-xl font-bold" data-review-balance>{formatMoney(ledger?.balance ?? 0, "USD")}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between items-baseline">
+                        <span className="font-meta text-[10px] text-[var(--muted)]">ESTIMATED PROJECT VALUE</span>
+                        <span className="font-display text-xl font-bold">{formatMoney(estimate.oneTime, "USD")}</span>
+                      </div>
+                    )}
                     {estimate.monthly > 0 && (
                       <div className="flex justify-between items-baseline mt-1">
                         <span className="font-meta text-[10px] text-[var(--muted)]">RECURRING</span>
@@ -641,6 +862,17 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
 
                   {!readOnly && (
                     <div className="mt-4 flex flex-col gap-3">
+                      {needsShiftAck && (
+                        <label className="flex items-start gap-3 cursor-pointer text-[13px] border border-amber-500/50 bg-amber-500/10 px-4 py-3" data-shift-ack>
+                          <input type="checkbox" className="mt-0.5 w-4 h-4 accent-[var(--dept)]"
+                            checked={shiftAck} onChange={(e) => setShiftAck(e.target.checked)} />
+                          <span>
+                            I understand this brief changes my project scope from <strong>{shift!.paidPackageName}</strong> to <strong>{shift!.requiredPackageName}</strong>,
+                            and the <strong>{formatMoney(shift!.difference, "USD")}</strong> difference (plus any new add-ons) will be proposed by the studio before work begins.
+                            Nothing is charged without my approval.
+                          </span>
+                        </label>
+                      )}
                       <label className="flex items-start gap-3 cursor-pointer text-[13px]">
                         <input type="checkbox" className="mt-0.5 w-4 h-4 accent-[var(--dept)]"
                           checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />

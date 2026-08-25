@@ -1177,7 +1177,9 @@ function HistoryReport({ orders }: { orders: OrderRecord[] }) {
 function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () => void }) {
   const addonsTotal = intake.selectedAddons.reduce((s, id) => s + (INTAKE_ADDONS.find((a) => a.id === id)?.price ?? 0), 0);
   const isAddonOnly = !!intake.orderId; // package already paid → bill only the extras
-  const defaultAmount = isAddonOnly ? addonsTotal : (intake.estimate?.oneTime ?? 0);
+  // scope-shift: client chose a higher tier in the brief — the difference is part of the proposal
+  const shiftDiff = intake.scopeShift?.direction === "upgrade" ? intake.scopeShift.difference : 0;
+  const defaultAmount = isAddonOnly ? addonsTotal + shiftDiff : (intake.estimate?.oneTime ?? 0);
   const monthly = intake.estimate?.monthly ?? 0;
   const [amount, setAmount] = useState(String(defaultAmount));
   const [busy, setBusy] = useState(false);
@@ -1190,7 +1192,7 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
       </p>
     );
   }
-  if (isAddonOnly && addonsTotal === 0 && intake.status !== "quoted") {
+  if (isAddonOnly && addonsTotal === 0 && shiftDiff === 0 && intake.status !== "quoted") {
     return (
       <p className="mt-4 font-meta text-[9px] text-[var(--muted)]">
         Package already paid via linked order — no add-ons selected, nothing further to bill.
@@ -1203,8 +1205,11 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
     if (amt <= 0) { toast.error("Enter a valid proposal amount."); return; }
     setBusy(true);
     try {
+      const shiftLabel = shiftDiff > 0 && intake.scopeShift
+        ? `Scope upgrade ${intake.scopeShift.paidPackageName} → ${intake.scopeShift.requiredPackageName} (${formatMoney(shiftDiff, "USD")})`
+        : null;
       const desc = isAddonOnly
-        ? `Add-ons per signed brief — ${intake.packageName}`
+        ? [shiftLabel, addonsTotal > 0 ? `Add-ons per signed brief (${formatMoney(addonsTotal, "USD")})` : null].filter(Boolean).join(" + ") + ` — ${intake.packageName}`
         : `Website project per signed brief — ${intake.packageName}`;
       const oid = await createOrder({
         email: intake.email,
@@ -1245,7 +1250,9 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
       <span className={labelCls}>FINAL PROPOSAL — admin-approved quote</span>
       <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
         {isAddonOnly
-          ? "Client already paid the package — this bills the selected add-ons only."
+          ? shiftDiff > 0
+            ? `Client paid the package — this bills the scope-upgrade difference (${formatMoney(shiftDiff, "USD")})${addonsTotal > 0 ? ` + selected add-ons (${formatMoney(addonsTotal, "USD")})` : ""}.`
+            : "Client already paid the package — this bills the selected add-ons only."
           : "No payment linked yet — this bills the full project estimate."}
         {monthly > 0 && ` Recurring (${formatMoney(monthly)}/mo) is noted on the order, not charged here.`}
       </p>
@@ -1356,6 +1363,22 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
           <div className="flex justify-between text-sm"><span className="text-[var(--muted)]">Estimated one-time</span><span className="font-display font-bold">{formatMoney(intake.estimate?.oneTime ?? 0, "USD")}</span></div>
           {(intake.estimate?.monthly ?? 0) > 0 && (
             <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Recurring</span><span className="font-display font-bold">{formatMoney(intake.estimate!.monthly, "USD")}/mo</span></div>
+          )}
+          {intake.scopeShift && (
+            <div className={`mt-2 border px-3 py-2 ${intake.scopeShift.direction === "upgrade" ? "border-amber-500/50 bg-amber-500/10" : "border-[var(--line-strong)]"}`} data-admin-shift={intake.scopeShift.direction}>
+              <p className={`font-meta text-[9px] font-bold ${intake.scopeShift.direction === "upgrade" ? "text-amber-700 dark:text-amber-300" : ""}`}>
+                {intake.scopeShift.direction === "upgrade" ? "⚠ SCOPE SHIFT — UPGRADE" : intake.scopeShift.direction === "downgrade" ? "⚠ SCOPE SHIFT — DOWNGRADE (REVIEW CREDIT/VALUE)" : "CUSTOM-QUOTE SCOPE"}
+              </p>
+              <p className="font-meta text-[10px] mt-1">
+                {intake.scopeShift.paidPackageName} (paid {formatMoney(intake.scopeShift.paidBase, "USD")}) → {intake.scopeShift.requiredPackageName}
+                {intake.scopeShift.direction === "upgrade" && <> · difference <strong>{formatMoney(intake.scopeShift.difference, "USD")}</strong></>}
+              </p>
+              <p className="font-meta text-[8.5px] text-[var(--muted)] mt-0.5">
+                {intake.scopeShift.acknowledgedAt
+                  ? `Client acknowledged ${new Date(intake.scopeShift.acknowledgedAt).toLocaleString()}`
+                  : "Client acknowledgment on file at signing"}
+              </p>
+            </div>
           )}
           <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Lead score</span>
             <span className="font-meta text-[10px] px-2 py-0.5 text-white" style={{ background: LEAD_BADGE[intake.leadCategory] ?? "#6b7280" }}>
@@ -1468,6 +1491,16 @@ function IntakesManager() {
                     {String(x.answers?.contact_name ?? "")} · {x.email} · {x.packageName}
                     {x.answers?.website_type ? ` · ${x.answers.website_type}` : ""}
                   </p>
+                  {x.scopeShift?.direction === "upgrade" && (
+                    <span className="inline-block mt-1 font-meta text-[8px] px-2 py-0.5 border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300" data-shift-badge>
+                      ⚠ SCOPE SHIFT +{formatMoney(x.scopeShift.difference, "USD")}
+                    </span>
+                  )}
+                  {x.scopeShift?.direction === "downgrade" && (
+                    <span className="inline-block mt-1 font-meta text-[8px] px-2 py-0.5 border border-red-500/50 bg-red-500/10 text-red-600" data-shift-badge>
+                      ⚠ DOWNGRADE — REVIEW
+                    </span>
+                  )}
                 </div>
                 <span className="font-meta text-[10px]">
                   {x.status === "draft" ? "Draft in progress" : `${formatMoney(x.estimate?.oneTime ?? 0, "USD")}${(x.estimate?.monthly ?? 0) > 0 ? ` + ${formatMoney(x.estimate!.monthly, "USD")}/mo` : ""}`}
