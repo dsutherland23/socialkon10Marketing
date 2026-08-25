@@ -51,6 +51,7 @@ function CurrencySelect() {
       <select
         value={currency}
         onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+        aria-label="Display currency"
         className="bg-transparent border border-[var(--line)] px-2 py-1 cursor-pointer hover:border-[var(--dept)] transition-colors"
       >
         {CURRENCIES.map((c) => <option key={c.code} value={c.code} className="text-black">{c.code}</option>)}

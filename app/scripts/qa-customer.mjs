@@ -201,6 +201,23 @@ try {
   });
   await new Promise(r => setTimeout(r, 400));
 
+  /* 9 — currency: visitor switches USD → JMD and prices follow site-wide */
+  console.log('\ncurrency conversion');
+  await page.goto(`http://localhost:${PORT}/packages`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await new Promise(r => setTimeout(r, 1500));
+  const hasSelector = await page.evaluate(() => !!document.querySelector('select[aria-label="Display currency"]'));
+  ok('currency selector present in header', hasSelector);
+  await page.select('select[aria-label="Display currency"]', 'JMD');
+  await new Promise(r => setTimeout(r, 700));
+  let txt = await page.evaluate(() => document.body.innerText);
+  ok('JMD prices render after switch (J$ shown)', /J\$[\d,]+/.test(txt));
+  const jmdPersisted = await page.evaluate(() => localStorage.getItem('sk-currency'));
+  ok('currency choice persists (localStorage)', jmdPersisted === 'JMD', String(jmdPersisted));
+  await page.select('select[aria-label="Display currency"]', 'USD');
+  await new Promise(r => setTimeout(r, 700));
+  txt = await page.evaluate(() => document.body.innerText);
+  ok('switching back restores USD prices', !/J\$[\d,]+/.test(txt) && /\$[\d,]+/.test(txt));
+
   /* summary */
   console.log('\n' + '—'.repeat(20));
   ok('zero page errors during the whole run', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));

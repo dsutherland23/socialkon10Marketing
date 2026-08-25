@@ -20,6 +20,8 @@ import {
   type OrderStatus,
 } from "../lib/backend";
 import { activeProviders } from "../lib/payments";
+import { useMoney } from "../lib/money";
+import { useShop } from "../lib/shop";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
 import { IntakeWizard } from "../components/IntakeWizard";
@@ -136,12 +138,14 @@ function SignIn() {
 function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void }) {
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const money = useMoney();
+  const { currency } = useShop();
   const provider = activeProviders()[0];
   if (!provider || order.balanceDue <= 0) return null;
 
   const label = order.amountPaid === 0
-    ? `Pay deposit — ${formatMoney(Math.round(order.total * 0.5))}`
-    : `Pay balance — ${formatMoney(order.balanceDue)}`;
+    ? `Pay deposit — ${money(Math.round(order.total * 0.5))}`
+    : `Pay balance — ${money(order.balanceDue)}`;
 
   const pay = async () => {
     setPaying(true); setError(null);
@@ -172,6 +176,11 @@ function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void 
       <button className="btn btn-dept !py-2.5" onClick={pay} disabled={paying}>
         {paying ? "Processing…" : label} <span className="btn-arrow" aria-hidden>→</span>
       </button>
+      {currency !== "USD" && (
+        <p className="font-meta text-[9px] text-[var(--muted)] mt-1.5">
+          Shown in {currency} for reference — card is charged {formatMoney(order.amountPaid === 0 ? Math.round(order.total * 0.5) : order.balanceDue, "USD")} USD.
+        </p>
+      )}
       {error && <p className="font-meta text-[10px] text-red-600 mt-2" role="alert">{error}</p>}
     </div>
   );
@@ -202,7 +211,7 @@ function ReceiptModal({ order, onClose }: { order: OrderRecord; onClose: () => v
             <p className="font-display font-bold text-lg">SOCIAL KON10 MARKETING</p>
             <p className="font-meta text-[9px] text-[var(--muted)] mt-1">{CONTACT.email} · {CONTACT.phone} · {CONTACT.location}</p>
           </div>
-          <span className="font-meta text-[10px]">RECEIPT</span>
+          <span className="font-meta text-[10px]">RECEIPT · USD</span>
         </div>
         <div className="rule-t mt-6 pt-4 grid grid-cols-2 gap-4 text-sm">
           <div><span className="font-meta text-[9px] text-[var(--muted)] block">Order</span><strong>#{order.id.slice(0, 8).toUpperCase()}</strong></div>
@@ -233,6 +242,7 @@ function ReceiptModal({ order, onClose }: { order: OrderRecord; onClose: () => v
           <p className="font-meta text-[10px] mt-2" style={{ color: order.balanceDue <= 0 ? "var(--dept)" : "var(--muted)" }}>
             {order.balanceDue <= 0 ? "PAID IN FULL" : `PAID ${formatMoney(order.amountPaid)} — BALANCE ${formatMoney(order.balanceDue)}`}
           </p>
+          <p className="font-meta text-[8.5px] text-[var(--muted)] mt-1">All amounts in USD — the currency of record for this transaction.</p>
         </div>
         <div className="sk-no-print flex gap-2 mt-8">
           <button className="btn btn-dept !py-2.5 grow justify-center" onClick={() => window.print()}>Print / Save PDF</button>
@@ -937,6 +947,8 @@ function DeliverableFileItem({ file }: { file: { name: string; size: number; pat
 
 function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onReload: () => void }) {
   const { user } = useAuth();
+  const money = useMoney();
+  const { currency } = useShop();
   const [selectedId, setSelectedId] = useState<string>(orders[0]?.id ?? "");
   const [filter, setFilter] = useState<"all" | "active" | "review" | "history">("all");
   const [search, setSearch] = useState("");
@@ -1185,7 +1197,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                   <span>Step {sIdx + 1}/8 · {pct}%</span>
                   <span className="font-semibold text-[var(--ink)]">
                     {o.balanceDue > 0 ? (
-                      <span className="text-amber-600">Balance {formatMoney(o.balanceDue)}</span>
+                      <span className="text-amber-600">Balance {money(o.balanceDue)}</span>
                     ) : (
                       <span className="dept-accent">Paid in Full</span>
                     )}
@@ -1236,7 +1248,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                   onClick={() => setCockpitTab("overview")}
                   className="btn btn-dept !py-2 !px-3 font-meta text-[10px]"
                 >
-                  Pay Balance ({formatMoney(current.balanceDue)}) →
+                  Pay Balance ({money(current.balanceDue)}) →
                 </button>
               )}
             </div>
@@ -1375,7 +1387,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                             </p>
                           )}
                         </div>
-                        <span className="font-display font-bold">{formatMoney(it.unitPrice)}</span>
+                        <span className="font-display font-bold">{money(it.unitPrice)}</span>
                       </div>
                     ))}
                   </div>
@@ -1387,21 +1399,21 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                   <div className="border border-[var(--line)] p-4 rounded-lg bg-[var(--bg)] space-y-2 text-xs">
                     <div className="flex justify-between text-[var(--muted)]">
                       <span>Subtotal</span>
-                      <span>{formatMoney(current.subtotal)}</span>
+                      <span>{money(current.subtotal)}</span>
                     </div>
                     {current.discount > 0 && (
                       <div className="flex justify-between text-emerald-600">
                         <span>Discount {current.promo ? `(${current.promo})` : ""}</span>
-                        <span>−{formatMoney(current.discount)}</span>
+                        <span>−{money(current.discount)}</span>
                       </div>
                     )}
                     <div className="flex justify-between font-bold text-sm pt-2 border-t border-[var(--line)]">
                       <span>Total Engagement</span>
-                      <span>{formatMoney(current.total)}</span>
+                      <span>{money(current.total)}</span>
                     </div>
                     <div className="flex justify-between text-[var(--muted)] pt-1">
                       <span>Amount Paid</span>
-                      <span className="text-emerald-600 font-bold">{formatMoney(current.amountPaid)}</span>
+                      <span className="text-emerald-600 font-bold">{money(current.amountPaid)}</span>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t border-[var(--line)]">
                       <div>
@@ -1409,11 +1421,16 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
                         <p className="font-meta text-[9px] text-[var(--muted)]">Due upon final deliverable approval</p>
                       </div>
                       <span className="font-display text-base font-bold text-[var(--ink)]">
-                        {current.balanceDue > 0 ? formatMoney(current.balanceDue) : "PAID IN FULL"}
+                        {current.balanceDue > 0 ? money(current.balanceDue) : "PAID IN FULL"}
                       </span>
                     </div>
 
                     <PayBalance order={current} onPaid={onReload} />
+                    {currency !== "USD" && (
+                      <p className="font-meta text-[8.5px] text-[var(--muted)] pt-2 border-t border-[var(--line)]">
+                        Amounts shown in {currency} for reference — invoices and charges are settled in USD.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

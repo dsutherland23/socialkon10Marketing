@@ -41,6 +41,18 @@ const ShopCtx = createContext<ShopState | null>(null);
 const CART_KEY = "sk-cart";
 const CUR_KEY = "sk-currency";
 
+/** First-visit currency guess from timezone/locale — the selector always wins afterwards. */
+function guessCurrency(): CurrencyCode {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+    const lang = (navigator.language ?? "").toUpperCase();
+    if (tz.includes("Jamaica") || lang.endsWith("-JM")) return "JMD";
+    if (tz.includes("Bermuda") || lang.endsWith("-BM")) return "BMD";
+    if (/^(America\/(Toronto|Vancouver|Montreal|Winnipeg|Halifax|Edmonton|Regina))/.test(tz) || lang.endsWith("-CA")) return "CAD";
+  } catch { /* fall through to USD */ }
+  return "USD";
+}
+
 export function ShopProvider({ children }: { children: ReactNode }) {
   const { promos: managedPromos } = useContent();
   // shipped defaults + admin-managed codes (PRD §34/§85)
@@ -48,7 +60,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>(() => {
     try { return JSON.parse(localStorage.getItem(CART_KEY) || "[]"); } catch { return []; }
   });
-  const [currency, setCurrency] = useState<CurrencyCode>(() => (localStorage.getItem(CUR_KEY) as CurrencyCode) || "USD");
+  const [currency, setCurrency] = useState<CurrencyCode>(() => (localStorage.getItem(CUR_KEY) as CurrencyCode) || guessCurrency());
   const [promo, setPromo] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ pct: number; expiresAt: number } | null>(() => {
     // survives page reloads — the 2-minute clock keeps running (PRD: session-scoped)

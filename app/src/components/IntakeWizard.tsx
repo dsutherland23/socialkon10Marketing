@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { toast } from "sonner";
 import { formatMoney } from "../lib/data";
+import { useMoney } from "../lib/money";
 import { track } from "../lib/seo";
 import { sendEmail, intakeReceivedEmail, adminIntakeEmail } from "../lib/email";
 import {
@@ -56,6 +57,7 @@ type Answers = Record<string, string | string[]>;
 
 export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefill, onClose, onSubmitted }: IntakeWizardProps) {
   const readOnly = !!existing && existing.status !== "draft";
+  const money = useMoney();
   const steps = useMemo(() => intakeSteps(pkg), [pkg]);
   const TOTAL = steps.length + 2; // + add-ons + review
 
@@ -537,7 +539,7 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                                 <span className="font-meta text-[9px] text-[var(--muted)] block mt-0.5">{a.desc}</span>
                               </span>
                             </span>
-                            <span className="font-meta text-[10px] whitespace-nowrap">+{formatMoney(a.price, "USD")}</span>
+                            <span className="font-meta text-[10px] whitespace-nowrap">+{money(a.price)}</span>
                           </button>
                         );
                       })}
@@ -564,7 +566,7 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                                 <span className="font-meta text-[9px] text-[var(--muted)] block mt-0.5">{r.desc}</span>
                               </span>
                             </span>
-                            <span className="font-meta text-[10px] whitespace-nowrap">+{formatMoney(r.monthly, "USD")}/mo</span>
+                            <span className="font-meta text-[10px] whitespace-nowrap">+{money(r.monthly)}/mo</span>
                           </button>
                         );
                       })}
@@ -575,11 +577,11 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                 {/* live estimate */}
                 <aside className="border border-[var(--line-strong)] p-5 lg:sticky lg:top-0" style={{ background: "var(--panel)" }} aria-live="polite">
                   <span className="idx">/estimate</span>
-                  <p className="font-display-wide text-3xl font-bold mt-3">{formatMoney(estimate.oneTime, "USD")}</p>
+                  <p className="font-display-wide text-3xl font-bold mt-3">{money(estimate.oneTime)}</p>
                   <span className="font-meta text-[9px] text-[var(--muted)]">one-time project estimate</span>
                   {estimate.monthly > 0 && (
                     <>
-                      <p className="font-display text-xl font-bold mt-4">{formatMoney(estimate.monthly, "USD")}<span className="text-xs font-meta font-normal text-[var(--muted)]">/mo</span></p>
+                      <p className="font-display text-xl font-bold mt-4">{money(estimate.monthly)}<span className="text-xs font-meta font-normal text-[var(--muted)]">/mo</span></p>
                       <span className="font-meta text-[9px] text-[var(--muted)]">recurring services</span>
                     </>
                   )}
@@ -621,7 +623,7 @@ export function IntakeWizard({ user, pkg, orderId = null, existing = null, prefi
                       </div>
                     )}
                     <p className="font-meta text-[8.5px] text-[var(--muted)] mt-3 leading-relaxed">
-                      Subject to final project review. Third-party software, hosting, payment processing, subscriptions and external service fees are not included unless specifically stated.
+                      Agreement figures are quoted in USD — your currency selector converts for display only. Subject to final project review. Third-party software, hosting, payment processing, subscriptions and external service fees are not included unless specifically stated.
                     </p>
                   </div>
                 </div>
