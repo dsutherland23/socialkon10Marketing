@@ -33,7 +33,7 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (signedIn()
             && resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes', 'lastClientMessageAt', 'lastClientMessageBy', 'completedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes', 'lastClientMessageAt', 'lastClientMessageBy', 'clientReadAt', 'completedAt'])
             && (request.resource.data.status == resource.data.status
                 || request.resource.data.status in ['REVISION', 'FINAL APPROVAL', 'CLIENT REVIEW']))
         || (signedIn()

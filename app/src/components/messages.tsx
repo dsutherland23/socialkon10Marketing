@@ -5,6 +5,8 @@ import {
   postMessage,
   deleteMessage,
   uploadChatAttachment,
+  markThreadReadForClient,
+  markThreadReadForStudio,
   type MessageAttachment,
   type MessageRecord,
 } from "../lib/backend";
@@ -57,6 +59,14 @@ export function MessageThread({
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const prevCount = useRef(0);
+  const markRead = () => {
+    if (from === "client") {
+      void markThreadReadForClient(orderId);
+    } else {
+      void markThreadReadForStudio(orderId);
+    }
+  };
+
   const reload = () => listMessages(orderId).then((msgs) => {
     if (msgs.length > prevCount.current && prevCount.current > 0) {
       playMessageNotificationSound();
@@ -64,8 +74,12 @@ export function MessageThread({
     }
     prevCount.current = msgs.length;
     setMessages(msgs);
+    markRead();
   });
-  useEffect(() => { reload(); }, [orderId]);
+  useEffect(() => {
+    reload();
+    markRead();
+  }, [orderId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "nearest" }); }, [messages.length, pendingFiles.length]);
 
   // Handle drag-and-drop over the chat thread

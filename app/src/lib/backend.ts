@@ -43,6 +43,10 @@ export interface OrderRecord {
   lastClientMessageAt?: string;
   lastClientMessageBy?: string;
   studioReadAt?: string;
+  /** chat read-tracking: set when the studio posts; clientReadAt when the client views the thread */
+  lastStudioMessageAt?: string;
+  lastStudioMessageBy?: string;
+  clientReadAt?: string;
 }
 
 export interface LeadRecord {
@@ -191,6 +195,10 @@ const tsToIso = (v: unknown): string | undefined => {
 export const orderHasUnreadClientMessage = (o: OrderRecord): boolean =>
   !!o.lastClientMessageAt && (!o.studioReadAt || o.lastClientMessageAt > o.studioReadAt);
 
+/** True when the studio has posted in the project chat since the client last viewed it. */
+export const orderHasUnreadStudioMessage = (o: OrderRecord): boolean =>
+  !!o.lastStudioMessageAt && (!o.clientReadAt || o.lastStudioMessageAt > o.clientReadAt);
+
 function normalizeOrder(id: string, data: Record<string, unknown>): OrderRecord {
   const rec: OrderRecord = {
     ...(data as unknown as OrderRecord),
@@ -200,8 +208,12 @@ function normalizeOrder(id: string, data: Record<string, unknown>): OrderRecord 
   };
   const lc = tsToIso(data.lastClientMessageAt);
   const sr = tsToIso(data.studioReadAt);
+  const ls = tsToIso(data.lastStudioMessageAt);
+  const cr = tsToIso(data.clientReadAt);
   if (lc) rec.lastClientMessageAt = lc; else delete rec.lastClientMessageAt;
   if (sr) rec.studioReadAt = sr; else delete rec.studioReadAt;
+  if (ls) rec.lastStudioMessageAt = ls; else delete rec.lastStudioMessageAt;
+  if (cr) rec.clientReadAt = cr; else delete rec.clientReadAt;
   const ca = tsToIso(data.completedAt);
   if (ca) rec.completedAt = ca; else delete rec.completedAt;
   return rec;
@@ -1196,16 +1208,24 @@ export async function postMessage(
     createdAt: new Date().toISOString(),
   };
 
-  // stamp the order so the studio alert center can see unread client messages
+  // stamp the order so both studio and client alert centers can see unread messages
   const touchLocalOrder = async () => {
-    if (from !== "client") return;
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     await idbSet(
       "sk-demo-orders",
       orders.map((o) =>
-        o.id === orderId ? { ...o, lastClientMessageAt: new Date().toISOString(), lastClientMessageBy: author } : o
+        o.id === orderId
+          ? from === "client"
+            ? { ...o, lastClientMessageAt: new Date().toISOString(), lastClientMessageBy: author }
+            : { ...o, lastStudioMessageAt: new Date().toISOString(), lastStudioMessageBy: author }
+          : o
       )
     );
+  };
+
+  const dispatchEvents = () => {
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
+    window.dispatchEvent(new CustomEvent("sk-message-received", { detail: { orderId, from, text, author } }));
   };
 
   if (!firebaseReady || !db) {
@@ -1213,6 +1233,7 @@ export async function postMessage(
     xs.push(localEntry);
     await idbSet("sk-demo-messages", xs);
     await touchLocalOrder();
+    dispatchEvents();
     return;
   }
 
@@ -1222,19 +1243,27 @@ export async function postMessage(
       try {
         await updateDoc(doc(db, "orders", orderId), { lastClientMessageAt: serverTimestamp(), lastClientMessageBy: author });
       } catch (touchErr) {
-        console.warn("Order unread-stamp failed (message was posted):", touchErr);
+        console.warn("Order client unread-stamp failed (message was posted):", touchErr);
+      }
+    } else if (from === "studio") {
+      try {
+        await updateDoc(doc(db, "orders", orderId), { lastStudioMessageAt: serverTimestamp(), lastStudioMessageBy: author });
+      } catch (touchErr) {
+        console.warn("Order studio unread-stamp failed (message was posted):", touchErr);
       }
     }
+    dispatchEvents();
   } catch (err) {
     console.warn("Firestore addDoc error, saving locally:", err);
     const xs = (await idbGet<MessageRecord[]>("sk-demo-messages")) || [];
     xs.push(localEntry);
     await idbSet("sk-demo-messages", xs);
     await touchLocalOrder();
+    dispatchEvents();
   }
 }
 
-/** Mark a project thread as read by the studio (clears the unread-message alert). */
+/** Mark a project thread as read by the studio (clears the unread-message alert for studio). */
 export async function markThreadReadForStudio(orderId: string): Promise<void> {
   if (!firebaseReady || !db) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
@@ -1242,12 +1271,33 @@ export async function markThreadReadForStudio(orderId: string): Promise<void> {
       "sk-demo-orders",
       orders.map((o) => (o.id === orderId ? { ...o, studioReadAt: new Date().toISOString() } : o))
     );
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
   try {
     await updateDoc(doc(db, "orders", orderId), { studioReadAt: serverTimestamp() });
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
   } catch (err) {
     console.warn("markThreadReadForStudio failed:", err);
+  }
+}
+
+/** Mark a project thread as read by the client (clears the unread-message alert for client). */
+export async function markThreadReadForClient(orderId: string): Promise<void> {
+  if (!firebaseReady || !db) {
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet(
+      "sk-demo-orders",
+      orders.map((o) => (o.id === orderId ? { ...o, clientReadAt: new Date().toISOString() } : o))
+    );
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
+    return;
+  }
+  try {
+    await updateDoc(doc(db, "orders", orderId), { clientReadAt: serverTimestamp() });
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
+  } catch (err) {
+    console.warn("markThreadReadForClient failed:", err);
   }
 }
 

@@ -9,6 +9,7 @@ import { useTheme } from "../lib/theme";
 import { ShuffleText } from "../lib/motion";
 import { useAuth } from "../lib/auth";
 import { firebaseReady } from "../lib/firebase";
+import { subscribeMyOrders, orderHasUnreadStudioMessage } from "../lib/backend";
 
 
 function Wordmark() {
@@ -361,6 +362,18 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
     return () => { document.body.style.overflow = ""; };
   }, [mobileOpen]);
 
+  const [hasUnreadClientMsg, setHasUnreadClientMsg] = useState(false);
+  useEffect(() => {
+    if (!user || isAdmin) {
+      setHasUnreadClientMsg(false);
+      return;
+    }
+    const unsub = subscribeMyOrders(user, (ords) => {
+      setHasUnreadClientMsg(ords.some(orderHasUnreadStudioMessage));
+    });
+    return unsub;
+  }, [user, isAdmin]);
+
   const navCls = ({ isActive }: { isActive: boolean }) =>
     `u-line font-meta text-[11px] whitespace-nowrap ${isActive ? "text-[var(--dept)]" : ""}`;
 
@@ -443,9 +456,12 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
               user ? (
                 <Link
                   to={isAdmin ? "/admin" : "/client"}
-                  className="hidden sm:inline-flex font-meta text-[10px] px-2 py-1 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors items-center gap-1"
+                  className="hidden sm:inline-flex font-meta text-[10px] px-2 py-1 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors items-center gap-1.5"
                   title={user.email ?? "My account"}
                 >
+                  {hasUnreadClientMsg && (
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                  )}
                   {isAdmin ? "Studio" : "Account"}
                 </Link>
               ) : (
@@ -566,9 +582,22 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
                 <Link
                   to={user ? (isAdmin ? "/admin" : "/client") : "/auth"}
                   onClick={() => setMobileOpen(false)}
-                  className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
+                  className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider inline-flex items-center gap-1.5"
                 >
-                  {user ? (isAdmin ? "Studio admin" : "My account") : "Sign in"}
+                  {user ? (
+                    isAdmin ? (
+                      "Studio admin"
+                    ) : (
+                      <>
+                        {hasUnreadClientMsg && (
+                          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                        )}
+                        My account
+                      </>
+                    )
+                  ) : (
+                    "Sign in"
+                  )}
                 </Link>
               )}
               <Link

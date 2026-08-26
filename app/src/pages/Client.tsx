@@ -15,6 +15,8 @@ import {
   getFileUrl,
   attachFiles,
   postMessage,
+  markThreadReadForClient,
+  orderHasUnreadStudioMessage,
   ORDER_STATUSES,
   isOrderHistory,
   type OrderRecord,
@@ -971,6 +973,30 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     }
   }, [orders, selectedId]);
 
+  const unreadStudioOrders = orders.filter(orderHasUnreadStudioMessage);
+
+  // Listen for real-time incoming messages and display instant alert toast
+  useEffect(() => {
+    const onMsg = (e: Event) => {
+      const detail = (e as CustomEvent<{ orderId: string; from: string; text: string; author: string }>).detail;
+      if (detail && detail.from === "studio") {
+        toast.info(`💬 New message from Designer (${detail.author}): "${detail.text.slice(0, 45)}${detail.text.length > 45 ? "…" : ""}"`, {
+          description: `Project #${detail.orderId.slice(0, 7).toUpperCase()}`,
+          action: {
+            label: "View Chat",
+            onClick: () => {
+              setSelectedId(detail.orderId);
+              setCockpitTab("chat");
+            },
+          },
+          duration: 8000,
+        });
+      }
+    };
+    window.addEventListener("sk-message-received", onMsg);
+    return () => window.removeEventListener("sk-message-received", onMsg);
+  }, []);
+
   // Active = everything not yet COMPLETED. History = auto-archive of completed projects.
   const activeOrders = orders.filter((o) => !isOrderHistory(o));
   const reviewOrders = orders.filter((o) => ["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status));
@@ -991,6 +1017,13 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
   });
 
   const current = orders.find((o) => o.id === selectedId) ?? filteredOrders[0] ?? orders[0];
+
+  // Automatically clear unread status when client views the chat tab
+  useEffect(() => {
+    if (cockpitTab === "chat" && current?.id) {
+      void markThreadReadForClient(current.id);
+    }
+  }, [cockpitTab, current?.id]);
 
   if (!current) {
     return (
@@ -1107,6 +1140,40 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Global Studio Message & Alert Notification Banner */}
+      {unreadStudioOrders.length > 0 && (
+        <div className="p-4 sm:p-5 rounded-xl border border-cyan-500/40 bg-gradient-to-r from-cyan-500/20 via-sky-500/10 to-[var(--panel)] flex flex-wrap items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3.5">
+            <div className="relative flex h-3.5 w-3.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-cyan-500"></span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display text-xs font-bold uppercase tracking-wider text-cyan-400">
+                  New Message From Designer
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-cyan-500 text-black">
+                  {unreadStudioOrders.length} {unreadStudioOrders.length === 1 ? "project" : "projects"}
+                </span>
+              </div>
+              <p className="font-meta text-[11px] text-[var(--muted)] mt-0.5">
+                Your studio team posted an update on {unreadStudioOrders.map((o) => `#ORD-${o.id.slice(0, 7).toUpperCase()}`).join(", ")}.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedId(unreadStudioOrders[0].id);
+              setCockpitTab("chat");
+            }}
+            className="btn btn-dept !py-2 !px-4 font-meta text-[10px] bg-cyan-500 hover:bg-cyan-400 text-black font-bold flex items-center gap-1.5 shadow"
+          >
+            <span>💬</span> Open Chat & Materials →
+          </button>
+        </div>
+      )}
+
       {/* Search & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter projects and orders">
@@ -1164,22 +1231,33 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
         <div className="lg:col-span-4 flex flex-col gap-2.5 max-h-[750px] overflow-y-auto pr-1">
           {filteredOrders.map((o) => {
             const isSelected = o.id === current.id;
+            const hasUnread = orderHasUnreadStudioMessage(o);
             const sIdx = ORDER_STATUSES.indexOf(o.status);
             const pct = Math.round(((sIdx + 1) / ORDER_STATUSES.length) * 100);
             return (
               <div
                 key={o.id}
                 onClick={() => setSelectedId(o.id)}
-                className={`p-4 border text-left cursor-pointer transition-all duration-150 rounded-lg ${
+                className={`p-4 border text-left cursor-pointer transition-all duration-150 rounded-lg relative ${
                   isSelected
                     ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-sm"
-                    : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                    : hasUnread
+                      ? "border-cyan-500/60 bg-[var(--panel)] ring-1 ring-cyan-500/30 hover:border-cyan-400"
+                      : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
                 }`}
               >
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <span className="font-meta text-[9px] text-[var(--muted)]">
-                    #ORD-{o.id.slice(0, 7).toUpperCase()}
-                  </span>
+                <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-meta text-[9px] text-[var(--muted)]">
+                      #ORD-{o.id.slice(0, 7).toUpperCase()}
+                    </span>
+                    {hasUnread && (
+                      <span className="inline-flex items-center gap-1 font-meta text-[8px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 font-bold animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block"></span>
+                        NEW MSG
+                      </span>
+                    )}
+                  </div>
                   <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded-full border ${getStatusColor(o.status)}`}>
                     {o.status}
                   </span>
@@ -1353,11 +1431,16 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
             </button>
             <button
               onClick={() => setCockpitTab("chat")}
-              className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
+              className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors flex items-center gap-1.5 ${
                 cockpitTab === "chat" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
               }`}
             >
-              💬 Chat & Materials
+              <span>💬 Chat & Materials</span>
+              {orderHasUnreadStudioMessage(current) && (
+                <span className="px-1.5 py-0.5 rounded-full text-[8.5px] bg-cyan-500 text-black font-bold animate-pulse">
+                  NEW
+                </span>
+              )}
             </button>
             <button
               onClick={() => setCockpitTab("vault")}
