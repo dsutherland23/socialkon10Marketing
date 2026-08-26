@@ -1108,14 +1108,14 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     <div className="flex flex-col gap-6">
       {/* Search & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
-        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter projects">
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter projects and orders">
           <button
             onClick={() => setFilter("all")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
               filter === "all" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
-            All ({orders.length})
+            All Orders ({orders.length})
           </button>
           <button
             onClick={() => setFilter("active")}
@@ -1139,7 +1139,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
               filter === "history" ? "bg-emerald-600 text-white border-emerald-600" : "border-[var(--line)] text-[var(--muted)] hover:border-emerald-600"
             }`}
           >
-            History ({historyOrders.length})
+            Purchase History ({historyOrders.length})
           </button>
         </div>
 
@@ -1148,7 +1148,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search projects by name or ID…"
+            placeholder="Search orders & projects by name or ID…"
             className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-60"
           />
           <Link to="/start" className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] shrink-0">
@@ -2100,7 +2100,7 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [intakes, setIntakes] = useState<IntakeRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"Projects" | "Meetings & Calls" | "My Templates" | "My Designs" | "Favorites" | "Account">("Projects");
+  const [tab, setTab] = useState<"Projects & Purchases" | "Meetings & Calls" | "My Templates" | "My Designs" | "Favorites" | "Account">("Projects & Purchases");
   const [wizardFor, setWizardFor] = useState<{ pkg: IntakePackage; orderId: string | null; existing: IntakeRecord | null; order: OrderRecord | null } | null>(null);
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const { services } = useContent();
@@ -2170,12 +2170,12 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
 
       {/* account navigation */}
       <div className="flex flex-wrap gap-2 mb-10" role="tablist" aria-label="Account sections">
-        {(["Projects", "Meetings & Calls", "My Templates", "My Designs", "Favorites", "Account"] as const).map((t) => (
+        {(["Projects & Purchases", "Meetings & Calls", "My Templates", "My Designs", "Favorites", "Account"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
             className="font-meta text-[10px] px-4 py-2 border transition-colors"
             style={tab === t ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
             {t}
-            {t === "Projects" && pendingIntakes.length > 0 && (
+            {t === "Projects & Purchases" && pendingIntakes.length > 0 && (
               <span className="ml-2 dept-bg font-meta text-[8px] px-1.5 py-0.5" aria-label={`${pendingIntakes.length} briefs pending`}>
                 {pendingIntakes.length}
               </span>
@@ -2187,7 +2187,7 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
       {tab === "Account" && <SavedDetailsForm user={user} />}
 
       {/* website project briefs — pending banners + submitted agreements */}
-      {tab === "Projects" && !loading && (pendingIntakes.length > 0 || intakes.length > 0) && (
+      {tab === "Projects & Purchases" && !loading && (pendingIntakes.length > 0 || intakes.length > 0) && (
         <div className="mb-10 flex flex-col gap-3">
           {pendingIntakes.map((o) => {
             const draft = draftForOrder(o);
@@ -2253,12 +2253,12 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
 
       {tab === "My Designs" && <MyDesigns />}
 
-      {tab === "Projects" && (loading ? (
-        <p className="font-meta text-[11px] text-[var(--muted)]">Loading your projects…</p>
+      {tab === "Projects & Purchases" && (loading ? (
+        <p className="font-meta text-[11px] text-[var(--muted)]">Loading your projects & purchases…</p>
       ) : orders.length === 0 ? (
         <div className="border border-[var(--line)] p-10 text-center" style={{ background: "var(--panel)" }}>
-          <p className="font-display text-xl font-bold uppercase">No projects yet</p>
-          <p className="text-sm text-[var(--muted)] mt-2">When you purchase a package, it appears here with live status, files and next steps.</p>
+          <p className="font-display text-xl font-bold uppercase">No purchases or projects yet</p>
+          <p className="text-sm text-[var(--muted)] mt-2">When you purchase a service, template, or package, it appears here with live tracking, receipts, and deliverables.</p>
           <div className="mt-6 flex justify-center gap-4">
             <Link to="/packages" className="btn btn-fill">Browse packages</Link>
             <Link to="/start" className="btn btn-ghost">Start a project</Link>

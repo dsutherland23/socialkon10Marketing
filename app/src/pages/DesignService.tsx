@@ -331,8 +331,8 @@ export default function DesignServicePage() {
 
   const add = (sel: ConfigSelection) => {
     pkg.add(s.slug, sel);
-    toast.success(`${s.name} added — ${pkg.count + 1} item${pkg.count ? "s" : ""} in your package`, {
-      action: { label: "Review package", onClick: () => (window.location.href = "/custom-package") },
+    toast.success(`Added "${s.name}" to package & cart`, {
+      action: { label: "Checkout →", onClick: () => navigate("/checkout") },
     });
   };
 

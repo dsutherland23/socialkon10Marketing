@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   DEPARTMENTS, EVENT_TIERS, SOCIAL_TIERS,
@@ -487,6 +487,7 @@ type BrandTab = (typeof BRAND_TABS)[number]["id"];
 function StorePreview() {
   const { categories, services } = useDesignCatalog();
   const pkg = useDesignPackage();
+  const navigate = useNavigate();
   const [cat, setCat] = useState("all");
   const [raw, setRaw] = useState("");
   const [q, setQ] = useState("");
@@ -510,7 +511,7 @@ function StorePreview() {
 
   const add = (s: DesignService) => {
     pkg.add(s.slug);
-    toast.success(`${s.name} added to your package`, { action: { label: "Review", onClick: () => (window.location.href = "/custom-package") } });
+    toast.success(`Added "${s.name}" to package & cart`, { action: { label: "Checkout →", onClick: () => navigate("/checkout") } });
   };
 
   return (

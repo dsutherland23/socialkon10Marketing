@@ -423,8 +423,13 @@ export default function CustomPackage() {
                     toast.error("Your package is empty — add a service first.");
                   }}
                 >
-                  Continue <span className="btn-arrow" aria-hidden>→</span>
+                  Continue to Brief <span className="btn-arrow" aria-hidden>→</span>
                 </button>
+                {pkg.lines.length > 0 && (
+                  <Link to="/checkout" className="btn btn-ghost w-full justify-center mt-2.5 font-meta text-[10px]">
+                    Proceed to Unified Checkout →
+                  </Link>
+                )}
               </div>
             </div>
           </div>

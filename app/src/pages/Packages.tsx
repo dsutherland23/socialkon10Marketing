@@ -180,7 +180,7 @@ function Bundle() {
 export default function Packages() {
   const [tab, setTab] = useState<DeptId>("brand");
   useDepartment(tab);
-  const { currency } = useShop();
+  const { currency, add } = useShop();
   const { services: allServices } = useContent();
 
   useSEO({
@@ -238,13 +238,31 @@ export default function Packages() {
             <SectionHead index="/01/event-tiers" title={["Event creative", "tiers."]} meta="From first-time launches to festivals and concert tours." />
             <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
               {EVENT_TIERS.map((t) => (
-                <div key={t.id} className="p-6 relative" style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}>
-                  {t.popular && <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">Most popular</span>}
-                  <span className="font-meta text-[9px] text-[var(--muted)] mt-4 block">{t.bestFor}</span>
-                  <h3 className="font-display text-lg font-bold uppercase mt-2">{t.name}</h3>
-                  <p className="font-display-wide text-3xl font-bold mt-4">{formatMoney(t.price, currency)}</p>
-                  <p className="font-meta text-[9px] opacity-60 mt-2">{t.includes.length} deliverables included</p>
-                  <Link to="/services/event-branding" className="font-meta text-[10px] dept-accent inline-block mt-5 u-line">Full breakdown →</Link>
+                <div key={t.id} className="p-6 relative flex flex-col justify-between" style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}>
+                  <div>
+                    {t.popular && <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">Most popular</span>}
+                    <span className="font-meta text-[9px] text-[var(--muted)] mt-4 block">{t.bestFor}</span>
+                    <h3 className="font-display text-lg font-bold uppercase mt-2">{t.name}</h3>
+                    <p className="font-display-wide text-3xl font-bold mt-4">{formatMoney(t.price, currency)}</p>
+                    <p className="font-meta text-[9px] opacity-60 mt-2">{t.includes.length} deliverables included</p>
+                  </div>
+                  <div className="mt-6 flex items-center justify-between gap-2 pt-4 border-t border-[var(--line)]">
+                    <Link to="/services/event-branding" className="font-meta text-[10px] dept-accent u-line">Details →</Link>
+                    <button
+                      className={`btn !py-1.5 !px-3 font-meta text-[10px] ${t.popular ? "btn-dept" : "btn-ghost"}`}
+                      onClick={() =>
+                        add({
+                          serviceSlug: "event-branding",
+                          name: `Event Creative — ${t.name}`,
+                          unitPrice: t.price,
+                          tierLabel: t.name,
+                          addons: [], rush: false, billing: "one_time", depositPct: 50,
+                        })
+                      }
+                    >
+                      Get started
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

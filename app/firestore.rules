@@ -25,7 +25,10 @@ service cloud.firestore {
         && (request.resource.data.uid == null
             || (signedIn() && request.resource.data.uid == request.auth.uid));
       
-      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if isAdmin()
+        || (signedIn()
+            && (resource.data.uid == request.auth.uid
+                || (resource.data.email is string && request.auth.token.email != null && resource.data.email.lower() == request.auth.token.email.lower())));
       
       allow update: if isAdmin()
         || (signedIn()
@@ -34,7 +37,7 @@ service cloud.firestore {
             && (request.resource.data.status == resource.data.status
                 || request.resource.data.status in ['REVISION', 'FINAL APPROVAL', 'CLIENT REVIEW']))
         || (signedIn()
-            && resource.data.uid == null
+            && request.auth.token.email != null
             && resource.data.email.lower() == request.auth.token.email.lower()
             && request.resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid']));
@@ -44,17 +47,17 @@ service cloud.firestore {
       // Project messaging
       match /messages/{messageId} {
         allow read: if isAdmin()
-          || (signedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid);
+          || (signedIn() && (get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid || (get(/databases/$(database)/documents/orders/$(orderId)).data.email is string && request.auth.token.email != null && get(/databases/$(database)/documents/orders/$(orderId)).data.email.lower() == request.auth.token.email.lower())));
         allow create: if signedIn()
           && request.resource.data.text is string
           && request.resource.data.text.size() <= 2000
           && (
             (request.resource.data.from == 'studio' && isAdmin())
             || (request.resource.data.from == 'client'
-                && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid)
+                && (get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid || (get(/databases/$(database)/documents/orders/$(orderId)).data.email is string && request.auth.token.email != null && get(/databases/$(database)/documents/orders/$(orderId)).data.email.lower() == request.auth.token.email.lower())))
           );
         allow update, delete: if isAdmin()
-          || (signedIn() && resource.data.from == 'client' && get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid);
+          || (signedIn() && resource.data.from == 'client' && (get(/databases/$(database)/documents/orders/$(orderId)).data.uid == request.auth.uid || (get(/databases/$(database)/documents/orders/$(orderId)).data.email is string && request.auth.token.email != null && get(/databases/$(database)/documents/orders/$(orderId)).data.email.lower() == request.auth.token.email.lower())));
       }
     }
 
@@ -74,9 +77,13 @@ service cloud.firestore {
         && request.resource.data.email is string
         && (request.resource.data.uid == null
             || (signedIn() && request.resource.data.uid == request.auth.uid));
-      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if isAdmin()
+        || (signedIn()
+            && (resource.data.uid == request.auth.uid
+                || (resource.data.email is string && request.auth.token.email != null && resource.data.email.lower() == request.auth.token.email.lower())));
       allow update: if isAdmin()
         || (signedIn() && resource.data.uid == request.auth.uid)
+        || (signedIn() && resource.data.email.lower() == request.auth.token.email.lower())
         || resource.data.uid == null;
       allow delete: if isAdmin();
     }

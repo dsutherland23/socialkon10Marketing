@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { PROMO_CODES, serviceBySlug, type CurrencyCode, type ServiceProduct } from "./data";
 import { useContent } from "./content";
 import { refreshRates, fxStatus } from "./rates";
@@ -91,6 +92,12 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     const key = `${item.serviceSlug}-${item.tierLabel ?? ""}-${Date.now()}`;
     setItems((xs) => [...xs, { ...item, key }]);
     track("add_to_cart", { service: item.serviceSlug, tier: item.tierLabel, value: item.unitPrice });
+    toast.success(`Added "${item.name}" to cart`, {
+      action: {
+        label: "Checkout →",
+        onClick: () => { window.location.pathname = "/checkout"; },
+      },
+    });
   };
   const remove = (key: string) => setItems((xs) => xs.filter((x) => x.key !== key));
   const clear = () => { setItems([]); setPromo(null); setFlash(null); };

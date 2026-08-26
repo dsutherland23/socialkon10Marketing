@@ -230,43 +230,114 @@ export async function createOrder(
 
 /** Link any orders placed with this email (before sign-up) to the account. */
 export async function claimOrders(user: User): Promise<{ claimed: number; error?: string }> {
-  if (!firebaseReady || !db || !user.email) return { claimed: 0 };
+  let claimed = 0;
+  // 1. Claim local demo orders if any
   try {
-    const emailLower = user.email.toLowerCase();
-    const q1 = query(collection(db, "orders"), where("email", "==", user.email), where("uid", "==", null));
-    const snap1 = await getDocs(q1);
-    const docsToUpdate = new Map<string, typeof snap1.docs[0]>();
-    snap1.docs.forEach((d) => docsToUpdate.set(d.id, d));
+    const demoOrders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    let demoUpdated = false;
+    demoOrders.forEach((o) => {
+      if (user.email && o.email?.toLowerCase() === user.email.toLowerCase() && o.uid !== user.uid) {
+        o.uid = user.uid;
+        demoUpdated = true;
+        claimed++;
+      }
+    });
+    if (demoUpdated) await idbSet("sk-demo-orders", demoOrders);
+  } catch {}
 
-    if (user.email !== emailLower) {
-      const q2 = query(collection(db, "orders"), where("email", "==", emailLower), where("uid", "==", null));
-      const snap2 = await getDocs(q2);
-      snap2.docs.forEach((d) => docsToUpdate.set(d.id, d));
+  // 2. Claim Firestore orders
+  if (firebaseReady && db && user.email) {
+    try {
+      const emailLower = user.email.toLowerCase();
+      const docsToUpdate = new Map<string, any>();
+
+      const q1 = query(collection(db, "orders"), where("email", "==", user.email));
+      const snap1 = await getDocs(q1);
+      snap1.docs.forEach((d) => {
+        const data = d.data();
+        if (data.uid !== user.uid) docsToUpdate.set(d.id, d);
+      });
+
+      if (user.email !== emailLower) {
+        const q2 = query(collection(db, "orders"), where("email", "==", emailLower));
+        const snap2 = await getDocs(q2);
+        snap2.docs.forEach((d) => {
+          const data = d.data();
+          if (data.uid !== user.uid) docsToUpdate.set(d.id, d);
+        });
+      }
+
+      const updates = Array.from(docsToUpdate.values()).map((d) => updateDoc(d.ref, { uid: user.uid }));
+      await Promise.all(updates);
+      claimed += updates.length;
+    } catch (err) {
+      console.warn("claimOrders failed:", err);
     }
-
-    const updates = Array.from(docsToUpdate.values()).map((d) => updateDoc(d.ref, { uid: user.uid }));
-    await Promise.all(updates);
-    return { claimed: updates.length };
-  } catch (err) {
-    console.warn("claimOrders failed:", err);
-    return { claimed: 0, error: err instanceof Error ? err.message : "Failed to claim past orders" };
   }
+  return { claimed };
 }
 
 export async function listMyOrders(user: User | null): Promise<OrderRecord[]> {
-  if (!firebaseReady || !db || !user) {
+  if (!user) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     return orders.map((o) => ({ ...o, files: Array.isArray(o.files) ? o.files : [] }));
   }
-  try {
-    const q = query(collection(db, "orders"), where("uid", "==", user.uid));
-    const snap = await getDocs(q);
-    return snap.docs
-      .map((d) => normalizeOrder(d.id, d.data()))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  } catch {
-    return [];
+
+  const orderMap = new Map<string, OrderRecord>();
+
+  // If Firebase is available, query Firestore by uid and email
+  if (firebaseReady && db) {
+    try {
+      const qUid = query(collection(db, "orders"), where("uid", "==", user.uid));
+      const snapUid = await getDocs(qUid);
+      snapUid.docs.forEach((d) => {
+        const ord = normalizeOrder(d.id, d.data());
+        orderMap.set(d.id, ord);
+      });
+    } catch (err) {
+      console.warn("listMyOrders uid query error:", err);
+    }
+
+    if (user.email) {
+      try {
+        const emailLower = user.email.toLowerCase();
+        const qEmail = query(collection(db, "orders"), where("email", "==", user.email));
+        const snapEmail = await getDocs(qEmail);
+        snapEmail.docs.forEach((d) => {
+          if (!orderMap.has(d.id)) {
+            orderMap.set(d.id, normalizeOrder(d.id, d.data()));
+          }
+        });
+
+        if (emailLower !== user.email) {
+          const qEmailLower = query(collection(db, "orders"), where("email", "==", emailLower));
+          const snapEmailLower = await getDocs(qEmailLower);
+          snapEmailLower.docs.forEach((d) => {
+            if (!orderMap.has(d.id)) {
+              orderMap.set(d.id, normalizeOrder(d.id, d.data()));
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("listMyOrders email query error:", err);
+      }
+    }
   }
+
+  // Also include local demo orders matching user uid or email
+  try {
+    const demoOrders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    demoOrders.forEach((o) => {
+      if (!o.id) return;
+      const matchUid = o.uid && o.uid === user.uid;
+      const matchEmail = user.email && o.email?.toLowerCase() === user.email.toLowerCase();
+      if ((matchUid || matchEmail || !firebaseReady) && !orderMap.has(o.id)) {
+        orderMap.set(o.id, { ...o, files: Array.isArray(o.files) ? o.files : [] });
+      }
+    });
+  } catch {}
+
+  return Array.from(orderMap.values()).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 }
 
 export async function listAllOrders(): Promise<OrderRecord[]> {

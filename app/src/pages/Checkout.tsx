@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { CONTACT, formatMoney } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useShop } from "../lib/shop";
+import { useDesignPackage } from "../lib/design-shop";
 import { activeProviders } from "../lib/payments";
 import { useSEO, track } from "../lib/seo";
 import { Reveal } from "../lib/motion";
@@ -42,7 +43,8 @@ interface Details { name: string; company: string; email: string; phone: string;
 
 export default function Checkout() {
   useDepartment(null);
-  const { items, remove, currency, promo, applyPromo, clearPromo, subtotal, discount, total, clear } = useShop();
+  const { items, remove, currency, promo, applyPromo, clearPromo, subtotal: shopSubtotal, discount: shopDiscount, clear } = useShop();
+  const pkg = useDesignPackage();
   const [step, setStep] = useState(0);
   const payMode = "full" as const;
   const [promoInput, setPromoInput] = useState("");
@@ -72,6 +74,25 @@ export default function Checkout() {
   const { services } = useContent();
   const priceFor = (slug: string) => services.find((s) => s.slug === slug)?.price ?? 0;
 
+  // Unified items and pricing across main cart and custom design packages (2026 unified commerce standard)
+  const hasAnyItems = items.length > 0 || pkg.lines.length > 0;
+  const subtotal = shopSubtotal + pkg.subtotal;
+  const discount = shopDiscount + (pkg.discount?.amount ?? 0);
+  const total = Math.max(0, subtotal - discount);
+  const dueToday = total;
+
+  const pkgOrderItems = pkg.lines.map((l) => ({
+    name: `${l.service.name}${l.tier ? ` (${l.tier.name})` : ""}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""}${l.qty > 1 ? ` × ${l.qty}` : ""}`,
+    tierLabel: "Design package",
+    unitPrice: Math.round((l.unitBase + l.optionsPerDesign) * 100) / 100,
+    addons: [
+      ...l.options.map((o) => ({ name: o.name, price: Math.round(o.amount * 100) / 100 })),
+      ...(l.projectFees > 0 ? [{ name: "Project fees", price: Math.round(l.projectFees * 100) / 100 }] : []),
+    ],
+    rush: l.options.some((o) => o.id === "rush"),
+    billing: "one_time" as const,
+  }));
+
   // 2026 best practice: signed-in customers never retype saved details —
   // prefill from their account profile, only into fields still empty.
   useEffect(() => {
@@ -94,15 +115,13 @@ export default function Checkout() {
   // Skip the summary step, but NEVER skip contact details — an order without
   // name/email is anonymous and unfulfillable, and breaks guest order claiming.
   useEffect(() => {
-    if (sessionStorage.getItem("sk_quick_checkout") === "1" && items.length > 0) {
+    if (sessionStorage.getItem("sk_quick_checkout") === "1" && hasAnyItems) {
       sessionStorage.removeItem("sk_quick_checkout");
       setStep(1); // straight to Your details
     }
-  }, [items.length]);
+  }, [hasAnyItems]);
 
   useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure and complete payment for your project or template.", path: "/checkout" });
-
-  const dueToday = total;
 
   const set = (k: keyof Details) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setDetails((d) => ({ ...d, [k]: e.target.value }));
@@ -140,10 +159,11 @@ export default function Checkout() {
     setPayError(null);
     track("payment_start", { value: dueToday, mode: payMode });
     const provider = activeProviders()[0];
+    const allItemNames = [...items.map((i) => i.name), ...pkg.lines.map((l) => `${l.service.name}${l.sizeLabel ? ` (${l.sizeLabel})` : ""}`)];
     const res = await provider.pay({
       orderId: `SK-${Date.now()}`,
       amountUsd: dueToday,
-      description: items.map((i) => i.name).join(", "),
+      description: allItemNames.join(", ") || "Services and design package",
       kind: "full",
     });
     if (!res.ok) {
@@ -155,20 +175,24 @@ export default function Checkout() {
     // persist the order (Firestore when configured, local demo otherwise)
     let finalOid = `SK-${String(Date.now()).slice(-6)}`;
     try {
+      const allOrderItems = [
+        ...cartToOrderItems(items),
+        ...pkgOrderItems,
+      ];
       const oid = await createOrder(
         {
           email: details.email,
           name: details.name,
           company: details.company,
-          items: cartToOrderItems(items),
-          subtotal,
-          discount,
-          total,
+          items: allOrderItems,
+          subtotal: Math.round(subtotal * 100) / 100,
+          discount: Math.round(discount * 100) / 100,
+          total: Math.round(total * 100) / 100,
           payMode,
           amountPaid: dueToday,
-          balanceDue: Math.max(0, total - dueToday),
-          promo,
-          details: { ...details },
+          balanceDue: Math.max(0, Math.round((total - dueToday) * 100) / 100),
+          promo: promo ? promo : (pkg.discount ? `PACKAGE:${pkg.discount.name}` : null),
+          details: { ...details, hasDesignPackage: pkg.lines.length > 0 ? "true" : "false" },
           files: files.map((f) => ({ name: f.name, size: f.size })),
         },
         user
@@ -216,10 +240,16 @@ export default function Checkout() {
 
     // transactional email: client receipt + studio alert (fire-and-forget, never blocks)
     const portalUrl = `${window.location.origin}/client`;
-    const lineItems = items.map((i) => ({
-      name: i.name,
-      price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
-    }));
+    const lineItems = [
+      ...items.map((i) => ({
+        name: i.name,
+        price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
+      })),
+      ...pkg.lines.map((l) => ({
+        name: `${l.service.name}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""}${l.qty > 1 ? ` × ${l.qty}` : ""}`,
+        price: Math.round(l.lineTotal),
+      })),
+    ];
     void sendEmail(orderConfirmationEmail({
       to: details.email, name: details.name, orderId: finalOid,
       items: lineItems, total: dueToday, portalUrl,
@@ -241,6 +271,7 @@ export default function Checkout() {
     setStep(4);
     if (webItem) setIntakeOpen(true);
     clear();
+    pkg.clear();
   };
 
   /** Post-purchase: create the client account with email + password and claim this order. */
@@ -293,35 +324,79 @@ export default function Checkout() {
         {/* STEP 1 — project summary */}
         {step === 0 && (
           <div>
-            {items.length === 0 ? (
+            {!hasAnyItems ? (
               <div className="border border-[var(--line)] p-10 text-center" style={{ background: "var(--panel)" }}>
                 <p className="font-display text-xl font-bold uppercase">Your cart is empty</p>
-                <p className="text-sm text-[var(--muted)] mt-2">Browse packages or build your own — prices are published, no surprises.</p>
+                <p className="text-sm text-[var(--muted)] mt-2">Browse packages or build your custom design package — transparent pricing, no surprises.</p>
                 <div className="mt-6 flex justify-center gap-4">
                   <Link to="/packages" className="btn btn-fill">Browse packages</Link>
-                  <Link to="/start?intent=quote" className="btn btn-ghost">Request a quote</Link>
+                  <Link to="/custom-package" className="btn btn-ghost">Build a package</Link>
                 </div>
               </div>
             ) : (
               <>
-                <ul>
-                  {items.map((i) => (
-                    <li key={i.key} className="file-row grid-cols-[1fr_auto_auto]">
-                      <div>
-                        <span className="font-display text-base font-bold uppercase">{i.name}</span>
-                        <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
-                          {i.addons.length > 0 && `+ ${i.addons.map((a) => a.name).join(", ")} · `}
-                          {i.rush && "Rush +25% · "}
-                          {i.billing === "monthly" ? "Monthly retainer" : "Full payment upfront"}
-                        </span>
+                {items.length > 0 && (
+                  <div>
+                    {pkg.lines.length > 0 && <span className="idx block mb-3">/agency-services</span>}
+                    <ul>
+                      {items.map((i) => (
+                        <li key={i.key} className="file-row grid-cols-[1fr_auto_auto]">
+                          <div>
+                            <span className="font-display text-base font-bold uppercase">{i.name}</span>
+                            <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
+                              {i.addons.length > 0 && `+ ${i.addons.map((a) => a.name).join(", ")} · `}
+                              {i.rush && "Rush +25% · "}
+                              {i.billing === "monthly" ? "Monthly retainer" : "Full payment upfront"}
+                            </span>
+                          </div>
+                          <span className="font-display font-bold">
+                            {formatMoney((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1), currency)}
+                          </span>
+                          <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => remove(i.key)} aria-label={`Remove ${i.name}`}>Remove</button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {pkg.lines.length > 0 && (
+                  <div className={items.length > 0 ? "mt-8 pt-8 rule-t" : ""}>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                      <span className="idx">/custom-design-package</span>
+                      <Link to="/custom-package" className="font-meta text-[9px] dept-accent u-line">
+                        Customize in Package Builder ({pkg.lines.length} service{pkg.lines.length === 1 ? "" : "s"}) →
+                      </Link>
+                    </div>
+                    <ul>
+                      {pkg.lines.map((l) => (
+                        <li key={l.key} className="file-row grid-cols-[1fr_auto_auto]">
+                          <div>
+                            <span className="font-display text-base font-bold uppercase">{l.service.name}</span>
+                            <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
+                              {[
+                                l.tier ? `${l.tier.name} tier` : null,
+                                l.sizeLabel ? `Size: ${l.sizeLabel}` : null,
+                                l.qty > 1 ? `Qty: ${l.qty}` : null,
+                                l.options.length > 0 ? `+ ${l.options.map((o) => o.name).join(", ")}` : null,
+                                l.turnaround,
+                              ].filter(Boolean).join(" · ")}
+                            </span>
+                          </div>
+                          <span className="font-display font-bold">
+                            {formatMoney(l.lineTotal, currency)}
+                          </span>
+                          <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => pkg.remove(l.key)} aria-label={`Remove ${l.service.name}`}>Remove</button>
+                        </li>
+                      ))}
+                    </ul>
+                    {pkg.discount && (
+                      <div className="mt-3 flex items-center justify-between border border-[var(--dept)] px-4 py-2 text-xs" style={{ background: "var(--dept-soft)" }}>
+                        <span className="font-meta text-[10px] dept-accent uppercase tracking-wider">✓ Automatic Bundle Discount</span>
+                        <span className="font-semibold">{pkg.discount.name} (−{formatMoney(pkg.discount.amount, currency)})</span>
                       </div>
-                      <span className="font-display font-bold">
-                        {formatMoney((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1), currency)}
-                      </span>
-                      <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => remove(i.key)} aria-label={`Remove ${i.name}`}>Remove</button>
-                    </li>
-                  ))}
-                </ul>
+                    )}
+                  </div>
+                )}
 
                 {/* promo */}
                 <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -335,7 +410,7 @@ export default function Checkout() {
                 <div className="mt-8 pt-6 rule-t max-w-md ml-auto flex flex-col gap-2 text-sm">
                   <div className="flex justify-between"><span className="text-[var(--muted)]">Subtotal</span><span>{formatMoney(subtotal, currency)}</span></div>
                   {discount > 0 && <div className="flex justify-between dept-accent"><span>Discount</span><span>−{formatMoney(discount, currency)}</span></div>}
-                  <div className="flex justify-between font-display text-lg font-bold"><span>Project total</span><span>{formatMoney(total, currency)}</span></div>
+                  <div className="flex justify-between font-display text-lg font-bold"><span>Order total</span><span>{formatMoney(total, currency)}</span></div>
                 </div>
                 <div className="mt-8 flex justify-end">
                   <button className="btn btn-fill" onClick={() => { setStep(1); track("checkout_start", { value: total }); }}>Your details <span className="btn-arrow" aria-hidden>→</span></button>

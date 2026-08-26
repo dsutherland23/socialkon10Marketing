@@ -168,7 +168,8 @@ export function DesignPackageProvider({ children }: { children: ReactNode }) {
   const defaultSel = (slug: string): ConfigSelection => {
     const s = services.find((x) => x.slug === slug);
     const def = s?.sizes.find((x) => x.isDefault) ?? s?.sizes[0];
-    return { sizeId: def?.sizeId, optionIds: [], qty: s?.minQty ?? 1 };
+    const defTier = s?.tiers && s.tiers.length > 0 ? s.tiers[0].id : undefined;
+    return { sizeId: def?.sizeId, tierId: defTier, optionIds: [], qty: s?.minQty ?? 1 };
   };
 
   const add: PackageState["add"] = (slug, sel) => {

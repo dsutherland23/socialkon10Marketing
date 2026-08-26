@@ -4,6 +4,7 @@ import { CONTACT, CURRENCIES, DEPARTMENTS, type CurrencyCode } from "../lib/data
 import { fxStatus, getRate } from "../lib/rates";
 import { useRouteDept } from "../lib/dept";
 import { useShop } from "../lib/shop";
+import { useDesignPackage } from "../lib/design-shop";
 import { useTheme } from "../lib/theme";
 import { ShuffleText } from "../lib/motion";
 import { useAuth } from "../lib/auth";
@@ -317,6 +318,8 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
   const [scrolled, setScrolled] = useState(false);
   const [shuffleDept, setShuffleDept] = useState<string | null>(null);
   const { count } = useShop();
+  const { count: pkgCount } = useDesignPackage();
+  const totalCartCount = count + pkgCount;
   const { user, isAdmin } = useAuth();
   const routeDept = useRouteDept();
   const navigate = useNavigate();
@@ -454,8 +457,8 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
                 </Link>
               )
             )}
-            <Link to="/checkout" className="font-meta text-[11px] u-line whitespace-nowrap" aria-label={`Cart, ${count} items`}>
-              Cart {String(count).padStart(2, "0")}
+            <Link to="/checkout" className="font-meta text-[11px] u-line whitespace-nowrap" aria-label={`Cart, ${totalCartCount} items`}>
+              Cart {String(totalCartCount).padStart(2, "0")}
             </Link>
             <Link to="/start" className="btn btn-fill hidden sm:inline-flex !py-2.5 !px-4 whitespace-nowrap">
               Start a project <span className="btn-arrow" aria-hidden>→</span>
@@ -573,7 +576,7 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
                 onClick={() => setMobileOpen(false)}
                 className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
               >
-                Cart · {String(count).padStart(2, "0")}
+                Cart · {String(totalCartCount).padStart(2, "0")}
               </Link>
               <button
                 onClick={onOpenCommand}

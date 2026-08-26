@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { isQuoteOnly, priceLabel, type DesignService } from "../lib/design";
 import { useDesignCatalog, useDesignPackage } from "../lib/design-shop";
@@ -17,8 +17,24 @@ import { CustomProjectCta, DesignJourneys } from "../components/TalkToUs";
    Studio-managed catalog, never hard-coded.
 ------------------------------------------------------------------- */
 
-export function ServiceCard({ s, delay = 0, onAdd }: { s: DesignService; delay?: number; onAdd: () => void }) {
+export function ServiceCard({ s, delay = 0, onAdd }: { s: DesignService; delay?: number; onAdd?: () => void }) {
   const money = useMoney();
+  const pkg = useDesignPackage();
+  const navigate = useNavigate();
+
+  const handleAdd = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onAdd) {
+      onAdd();
+    } else {
+      pkg.add(s.slug);
+      toast.success(`Added "${s.name}" to package & cart`, {
+        action: { label: "Checkout →", onClick: () => navigate("/checkout") },
+      });
+    }
+  };
+
   return (
     <Reveal delay={delay}>
       <div className="group border border-[var(--line)] hover:border-[var(--line-strong)] transition-colors duration-200 flex flex-col h-full" style={{ background: "var(--panel)" }}>
@@ -66,11 +82,13 @@ export function ServiceCard({ s, delay = 0, onAdd }: { s: DesignService; delay?:
             </a>
             {!isQuoteOnly(s) && s.packageEligible !== false && (
               <button
+                type="button"
                 className="font-meta text-[8px] text-[var(--muted)] u-line hover:text-[var(--dept)] transition-colors"
-                onClick={onAdd}
-                aria-label={`Add ${s.name} to package`}
+                onClick={handleAdd}
+                aria-label={`Add ${s.name} to package and cart`}
+                title="Bundles with your cart for automatic package discounts"
               >
-                or add to package +
+                + add to package / cart
               </button>
             )}
           </div>
@@ -151,8 +169,24 @@ export function FilterDropdown({ label, value, options, onChange }: {
 }
 
 /* list-view row — same data, editorial index-row layout */
-function ServiceRow({ s, onAdd }: { s: DesignService; onAdd: () => void }) {
+function ServiceRow({ s, onAdd }: { s: DesignService; onAdd?: () => void }) {
   const money = useMoney();
+  const pkg = useDesignPackage();
+  const navigate = useNavigate();
+
+  const handleAdd = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onAdd) {
+      onAdd();
+    } else {
+      pkg.add(s.slug);
+      toast.success(`Added "${s.name}" to package & cart`, {
+        action: { label: "Checkout →", onClick: () => navigate("/checkout") },
+      });
+    }
+  };
+
   return (
     <Reveal>
       <div className="group flex flex-wrap items-center gap-x-6 gap-y-2 px-3 md:px-5 py-4 border-t border-[var(--line)] hover:bg-[var(--panel)] transition-colors">
@@ -175,9 +209,11 @@ function ServiceRow({ s, onAdd }: { s: DesignService; onAdd: () => void }) {
           <span className="flex items-center gap-2 shrink-0">
             {!isQuoteOnly(s) && s.packageEligible !== false && (
               <button
+                type="button"
                 className="font-meta text-[9px] px-2.5 py-2 border border-[var(--line)] text-[var(--muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)] transition-colors"
-                onClick={onAdd}
-                aria-label={`Add ${s.name} to package`}
+                onClick={handleAdd}
+                aria-label={`Add ${s.name} to package and cart`}
+                title="Add to package and cart (bundles & saves)"
               >
                 +
               </button>
@@ -214,6 +250,7 @@ export default function DesignStore() {
   const { categories, services } = useDesignCatalog();
   const pkg = useDesignPackage();
   const money = useMoney();
+  const navigate = useNavigate();
   const [cat, setCat] = useState("all");
   const [sort, setSort] = useState("featured");
   const [rawQuery, setRawQuery] = useState("");
@@ -267,7 +304,7 @@ export default function DesignStore() {
 
   const add = (s: DesignService) => {
     pkg.add(s.slug);
-    toast.success(`${s.name} added to your package`, { action: { label: "Review", onClick: () => (window.location.href = "/custom-package") } });
+    toast.success(`Added "${s.name}" to package & cart`, { action: { label: "Checkout →", onClick: () => navigate("/checkout") } });
   };
 
   return (
