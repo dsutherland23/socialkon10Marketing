@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "sonner";
-import { CONTACT, FAQS, PROJECTS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, formatMoney } from "../lib/data";
+import { CONTACT, FAQS, PROJECTS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, CURRENCIES, type CurrencyCode } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
 import { useAuth } from "../lib/auth";
+import { useMoney } from "../lib/money";
+import { useShop } from "../lib/shop";
 import {
   ORDER_STATUSES, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile, isOrderHistory,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
@@ -75,13 +77,14 @@ function RemoveButton({ onRemove, onDone }: { onRemove: () => Promise<void>; onD
 }
 
 function RecordPayment({ order, onDone }: { order: OrderRecord; onDone: () => void }) {
+  const money = useMoney();
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(String(order.balanceDue));
   const [busy, setBusy] = useState(false);
   if (order.balanceDue <= 0) return <span className="font-meta text-[9px] dept-accent font-bold">PAID IN FULL</span>;
   if (!open) return (
     <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors mt-2 block" onClick={() => setOpen(true)}>
-      + Record payment ({formatMoney(order.balanceDue)} due) →
+      + Record payment ({money(order.balanceDue)} due) →
     </button>
   );
   return (
@@ -421,10 +424,11 @@ function OrderStudioWorkspace({ order, onReload }: { order: OrderRecord; onReloa
 }
 
 function Orders() {
+  const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [mobileCockpitOpen, setMobileCockpitOpen] = useState(false);
-  const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ALL");
+  const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ACTIVE");
   const [search, setSearch] = useState("");
   const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
   const [uploadingVault, setUploadingVault] = useState(false);
@@ -562,8 +566,8 @@ function Orders() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {[
           { label: "All orders", value: String(orders.length), icon: "📦", tone: "var(--ink)", sub: `${activeOrders.length} active in production` },
-          { label: "Revenue collected", value: formatMoney(orders.reduce((s, o) => s + (o.amountPaid || 0), 0)), icon: "💰", tone: "rgb(16 185 129)", sub: "Verified receipts" },
-          { label: "Outstanding due", value: formatMoney(orders.reduce((s, o) => s + (o.balanceDue || 0), 0)), icon: "⏳", tone: orders.some((o) => o.balanceDue > 0) ? "#f59e0b" : "var(--muted)", sub: "Due upon completion" },
+          { label: "Revenue collected", value: money(orders.reduce((s, o) => s + (o.amountPaid || 0), 0)), icon: "💰", tone: "rgb(16 185 129)", sub: "Verified receipts" },
+          { label: "Outstanding due", value: money(orders.reduce((s, o) => s + (o.balanceDue || 0), 0)), icon: "⏳", tone: orders.some((o) => o.balanceDue > 0) ? "#f59e0b" : "var(--muted)", sub: "Due upon completion" },
           { label: "Needs action", value: String(orders.filter((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length), icon: "⚡", tone: orders.some((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)) ? "#ef4444" : "var(--muted)", sub: "Awaiting studio review" },
         ].map((s) => (
           <div key={s.label} className="p-3.5 sm:p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-xs flex flex-col justify-between">
@@ -581,20 +585,20 @@ function Orders() {
       <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
         <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter orders">
           <button
-            onClick={() => setFilter("ALL")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
-              filter === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
-            }`}
-          >
-            All ({orders.length})
-          </button>
-          <button
             onClick={() => setFilter("ACTIVE")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
               filter === "ACTIVE" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
             Active ({activeOrders.length})
+          </button>
+          <button
+            onClick={() => setFilter("ALL")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            All ({orders.length})
           </button>
           <button
             onClick={() => setFilter("REVIEW")}
@@ -689,9 +693,9 @@ function Orders() {
                     <span>Step {sIdx + 1}/8 · {pct}%</span>
                     <span className="font-semibold text-[var(--ink)]">
                       {o.balanceDue > 0 ? (
-                        <span className="text-amber-600">Balance {formatMoney(o.balanceDue)}</span>
+                        <span className="text-amber-600">Balance {money(o.balanceDue)}</span>
                       ) : (
-                        <span className="dept-accent">Paid {formatMoney(o.amountPaid)}</span>
+                        <span className="dept-accent">Paid {money(o.amountPaid)}</span>
                       )}
                     </span>
                   </div>
@@ -833,7 +837,7 @@ function Orders() {
               </div>
 
               {/* Sub-Tab Content */}
-              <div className="p-6">
+              <div className="p-4 sm:p-6">
                 {/* TAB 1: Client, Scope & Financials */}
                 {cockpitTab === "overview" && (
                   <div className="flex flex-col gap-6">
@@ -843,7 +847,7 @@ function Orders() {
                     {/* Client Intake & Contact */}
                     <div>
                       <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Client Details &amp; Brief</h4>
-                      <div className="border border-[var(--line)] p-4 rounded-lg bg-[var(--bg)] space-y-2 text-xs">
+                      <div className="border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)] space-y-2 text-xs">
                         <div className="grid sm:grid-cols-2 gap-3">
                           <div>
                             <span className="font-meta text-[9px] text-[var(--muted)] block">Contact Name</span>
@@ -874,7 +878,7 @@ function Orders() {
                     {/* Scope of Work */}
                     <div>
                       <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Scope of Work</h4>
-                      <div className="border border-[var(--line)] rounded-lg divide-y divide-[var(--line)] bg-[var(--bg)]">
+                      <div className="border border-[var(--line)] rounded-xl divide-y divide-[var(--line)] bg-[var(--bg)]">
                         {current.items.map((it, idx) => (
                           <div key={idx} className="p-3.5 flex items-center justify-between text-xs">
                             <div>
@@ -888,7 +892,7 @@ function Orders() {
                                 </p>
                               )}
                             </div>
-                            <span className="font-display font-bold">{formatMoney(it.unitPrice)}</span>
+                            <span className="font-display font-bold">{money(it.unitPrice)}</span>
                           </div>
                         ))}
                       </div>
@@ -897,20 +901,20 @@ function Orders() {
                     {/* Financial Summary & Payment Recording */}
                     <div>
                       <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Financials &amp; Balance</h4>
-                      <div className="border border-[var(--line)] p-4 rounded-lg bg-[var(--bg)] space-y-2 text-xs">
+                      <div className="border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)] space-y-2 text-xs">
                         <div className="flex justify-between text-[var(--muted)]">
                           <span>Total Engagement</span>
-                          <span className="font-bold text-[var(--ink)]">{formatMoney(current.total)}</span>
+                          <span className="font-bold text-[var(--ink)]">{money(current.total)}</span>
                         </div>
                         {current.discount > 0 && (
                           <div className="flex justify-between text-emerald-600">
                             <span>Discount {current.promo ? `(${current.promo})` : ""}</span>
-                            <span>−{formatMoney(current.discount)}</span>
+                            <span>−{money(current.discount)}</span>
                           </div>
                         )}
                         <div className="flex justify-between text-[var(--muted)]">
                           <span>Amount Received</span>
-                          <span className="text-emerald-600 font-bold">{formatMoney(current.amountPaid)}</span>
+                          <span className="text-emerald-600 font-bold">{money(current.amountPaid)}</span>
                         </div>
                         <div className="flex justify-between items-center pt-2 border-t border-[var(--line)]">
                           <div>
@@ -918,7 +922,7 @@ function Orders() {
                             <p className="font-meta text-[9px] text-[var(--muted)]">Due upon deliverable completion</p>
                           </div>
                           <span className="font-display text-base font-bold text-[var(--ink)]">
-                            {current.balanceDue > 0 ? formatMoney(current.balanceDue) : "PAID IN FULL"}
+                            {current.balanceDue > 0 ? money(current.balanceDue) : "PAID IN FULL"}
                           </span>
                         </div>
 
@@ -1174,23 +1178,24 @@ function HistoryReport({ orders }: { orders: OrderRecord[] }) {
     const bucket = months.find((m) => m.key === key);
     if (bucket) { bucket.count++; bucket.revenue += o.amountPaid || 0; }
   }
+  const money = useMoney();
   const maxRev = Math.max(...months.map((m) => m.revenue), 1);
 
   return (
-    <div className="mb-6 border border-emerald-600/30 bg-emerald-500/5 rounded-xl p-5 md:p-6" aria-label="Closed business report">
+    <div className="mb-6 border border-emerald-600/30 bg-emerald-500/5 rounded-2xl p-5 md:p-6" aria-label="Closed business report">
       <div className="flex flex-wrap items-end justify-between gap-6">
         <div>
           <span className="idx">/closed-business</span>
-          <p className="font-display text-2xl font-bold mt-1">{formatMoney(revenue)}</p>
+          <p className="font-display text-2xl font-bold mt-1">{money(revenue)}</p>
           <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
-            collected across {orders.length} completed order{orders.length === 1 ? "" : "s"} · avg {formatMoney(Math.round(avg))}
-            {outstanding > 0 && <span className="text-amber-600"> · {formatMoney(outstanding)} still outstanding</span>}
+            collected across {orders.length} completed order{orders.length === 1 ? "" : "s"} · avg {money(Math.round(avg))}
+            {outstanding > 0 && <span className="text-amber-600"> · {money(outstanding)} still outstanding</span>}
           </p>
         </div>
         <div className="flex items-end gap-3" role="img" aria-label="Monthly completed revenue, last 6 months">
           {months.map((m) => (
-            <div key={m.key} className="flex flex-col items-center gap-1 w-12" title={`${m.label}: ${formatMoney(m.revenue)} across ${m.count} order(s)`}>
-              <span className="font-meta text-[8px] text-[var(--muted)]">{m.revenue > 0 ? formatMoney(m.revenue) : ""}</span>
+            <div key={m.key} className="flex flex-col items-center gap-1 w-12" title={`${m.label}: ${money(m.revenue)} across ${m.count} order(s)`}>
+              <span className="font-meta text-[8px] text-[var(--muted)]">{m.revenue > 0 ? money(m.revenue) : ""}</span>
               <div className="w-6 bg-emerald-600/15 rounded-sm flex items-end" style={{ height: 56 }}>
                 <div className="w-full bg-emerald-600 rounded-sm transition-all" style={{ height: `${Math.max(m.revenue > 0 ? 6 : 0, (m.revenue / maxRev) * 100)}%` }} />
               </div>
@@ -1204,6 +1209,7 @@ function HistoryReport({ orders }: { orders: OrderRecord[] }) {
 }
 
 function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () => void }) {
+  const money = useMoney();
   const addonsTotal = intake.selectedAddons.reduce((s, id) => s + (INTAKE_ADDONS.find((a) => a.id === id)?.price ?? 0), 0);
   const isAddonOnly = !!intake.orderId; // package already paid → bill only the extras
   // scope-shift: client chose a higher tier in the brief — the difference is part of the proposal
@@ -1216,7 +1222,7 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
 
   if (sentId) {
     return (
-      <p className="mt-4 border border-emerald-500/40 bg-emerald-500/10 text-emerald-600 px-4 py-3 font-meta text-[10px]">
+      <p className="mt-4 border border-emerald-500/40 bg-emerald-500/10 text-emerald-600 px-4 py-3 font-meta text-[10px] rounded-xl">
         ✓ PROPOSAL SENT — order #ORD-{sentId.slice(0, 7).toUpperCase()} is now payable in the client's portal. Status → QUOTED.
       </p>
     );
@@ -1235,10 +1241,10 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
     setBusy(true);
     try {
       const shiftLabel = shiftDiff > 0 && intake.scopeShift
-        ? `Scope upgrade ${intake.scopeShift.paidPackageName} → ${intake.scopeShift.requiredPackageName} (${formatMoney(shiftDiff, "USD")})`
+        ? `Scope upgrade ${intake.scopeShift.paidPackageName} → ${intake.scopeShift.requiredPackageName} (${money(shiftDiff)})`
         : null;
       const desc = isAddonOnly
-        ? [shiftLabel, addonsTotal > 0 ? `Add-ons per signed brief (${formatMoney(addonsTotal, "USD")})` : null].filter(Boolean).join(" + ") + ` — ${intake.packageName}`
+        ? [shiftLabel, addonsTotal > 0 ? `Add-ons per signed brief (${money(addonsTotal)})` : null].filter(Boolean).join(" + ") + ` — ${intake.packageName}`
         : `Website project per signed brief — ${intake.packageName}`;
       const oid = await createOrder({
         email: intake.email,
@@ -1251,7 +1257,7 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
         details: {
           source: `intake:${intake.id}`,
           ...(intake.orderId ? { linkedOrder: intake.orderId } : {}),
-          ...(monthly > 0 ? { recurring: `${formatMoney(monthly)}/mo recurring services selected — set up at kickoff` } : {}),
+          ...(monthly > 0 ? { recurring: `${money(monthly)}/mo recurring services selected — set up at kickoff` } : {}),
         },
         files: [],
       }, null);
@@ -1275,15 +1281,15 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
   };
 
   return (
-    <div className="mt-4 border border-[var(--line)] p-4">
+    <div className="mt-4 border border-[var(--line)] p-4 rounded-xl">
       <span className={labelCls}>FINAL PROPOSAL — admin-approved quote</span>
       <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
         {isAddonOnly
           ? shiftDiff > 0
-            ? `Client paid the package — this bills the scope-upgrade difference (${formatMoney(shiftDiff, "USD")})${addonsTotal > 0 ? ` + selected add-ons (${formatMoney(addonsTotal, "USD")})` : ""}.`
+            ? `Client paid the package — this bills the scope-upgrade difference (${money(shiftDiff)})${addonsTotal > 0 ? ` + selected add-ons (${money(addonsTotal)})` : ""}.`
             : "Client already paid the package — this bills the selected add-ons only."
           : "No payment linked yet — this bills the full project estimate."}
-        {monthly > 0 && ` Recurring (${formatMoney(monthly)}/mo) is noted on the order, not charged here.`}
+        {monthly > 0 && ` Recurring (${money(monthly)}/mo) is noted on the order, not charged here.`}
       </p>
       <div className="flex items-end gap-3 mt-3">
         <div className="grow">
@@ -1300,6 +1306,7 @@ function ProposalButton({ intake, onDone }: { intake: IntakeRecord; onDone: () =
 }
 
 function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => void }) {
+  const money = useMoney();
   const pkg = intakePackageFor(intake.packageSlug);
   const a = intake.answers ?? {};
   const colors = Array.isArray(a.brand_colors_hex) ? (a.brand_colors_hex as string[]) : [];
@@ -1333,7 +1340,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
     <div className="grid lg:grid-cols-2 gap-6 mt-4 pt-4 border-t border-[var(--line)]">
       <div>
         <span className={labelCls}>CONTACT &amp; BUSINESS</span>
-        <div className="border border-[var(--line)] px-4 py-2 mt-1">
+        <div className="border border-[var(--line)] px-4 py-2 mt-1 rounded-xl">
           {answerRow("Business", "business_name")}
           {answerRow("Contact", "contact_name")}
           {answerRow("Email", "email")}
@@ -1345,7 +1352,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
         </div>
 
         <span className={`${labelCls} mt-5`}>PROJECT</span>
-        <div className="border border-[var(--line)] px-4 py-2 mt-1">
+        <div className="border border-[var(--line)] px-4 py-2 mt-1 rounded-xl">
           {answerRow("Type", "website_type")}
           {answerRow("Main goal", "primary_goal")}
           {answerRow("#1 visitor action", "visitor_action")}
@@ -1363,7 +1370,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
         </div>
 
         <span className={`${labelCls} mt-5`}>DESIGN DIRECTION</span>
-        <div className="border border-[var(--line)] px-4 py-2 mt-1">
+        <div className="border border-[var(--line)] px-4 py-2 mt-1 rounded-xl">
           {answerRow("Style", "style_direction")}
           {answerRow("Brand colours", "brand_colors")}
           {colors.length > 0 && (
@@ -1372,7 +1379,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
               <span className="flex items-center gap-2 flex-wrap">
                 {colors.map((c) => (
                   <span key={c} className="flex items-center gap-1">
-                    <span className="w-4 h-4 inline-block border border-black/10" style={{ background: c }} />
+                    <span className="w-4 h-4 inline-block border border-black/10 rounded" style={{ background: c }} />
                     <span className="font-meta text-[9px]">{c}</span>
                   </span>
                 ))}
@@ -1388,19 +1395,19 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
 
       <div>
         <span className={labelCls}>SCOPE &amp; COMMERCIAL</span>
-        <div className="border border-[var(--line)] p-4 mt-1" style={{ background: "var(--panel)" }}>
-          <div className="flex justify-between text-sm"><span className="text-[var(--muted)]">Estimated one-time</span><span className="font-display font-bold">{formatMoney(intake.estimate?.oneTime ?? 0, "USD")}</span></div>
+        <div className="border border-[var(--line)] p-4 mt-1 rounded-xl" style={{ background: "var(--panel)" }}>
+          <div className="flex justify-between text-sm"><span className="text-[var(--muted)]">Estimated one-time</span><span className="font-display font-bold">{money(intake.estimate?.oneTime ?? 0)}</span></div>
           {(intake.estimate?.monthly ?? 0) > 0 && (
-            <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Recurring</span><span className="font-display font-bold">{formatMoney(intake.estimate!.monthly, "USD")}/mo</span></div>
+            <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Recurring</span><span className="font-display font-bold">{money(intake.estimate!.monthly)}/mo</span></div>
           )}
           {intake.scopeShift && (
-            <div className={`mt-2 border px-3 py-2 ${intake.scopeShift.direction === "upgrade" ? "border-amber-500/50 bg-amber-500/10" : "border-[var(--line-strong)]"}`} data-admin-shift={intake.scopeShift.direction}>
+            <div className={`mt-2 border px-3 py-2 rounded-lg ${intake.scopeShift.direction === "upgrade" ? "border-amber-500/50 bg-amber-500/10" : "border-[var(--line-strong)]"}`} data-admin-shift={intake.scopeShift.direction}>
               <p className={`font-meta text-[9px] font-bold ${intake.scopeShift.direction === "upgrade" ? "text-amber-700 dark:text-amber-300" : ""}`}>
                 {intake.scopeShift.direction === "upgrade" ? "⚠ SCOPE SHIFT — UPGRADE" : intake.scopeShift.direction === "downgrade" ? "⚠ SCOPE SHIFT — DOWNGRADE (REVIEW CREDIT/VALUE)" : "CUSTOM-QUOTE SCOPE"}
               </p>
               <p className="font-meta text-[10px] mt-1">
-                {intake.scopeShift.paidPackageName} (paid {formatMoney(intake.scopeShift.paidBase, "USD")}) → {intake.scopeShift.requiredPackageName}
-                {intake.scopeShift.direction === "upgrade" && <> · difference <strong>{formatMoney(intake.scopeShift.difference, "USD")}</strong></>}
+                {intake.scopeShift.paidPackageName} (paid {money(intake.scopeShift.paidBase)}) → {intake.scopeShift.requiredPackageName}
+                {intake.scopeShift.direction === "upgrade" && <> · difference <strong>{money(intake.scopeShift.difference)}</strong></>}
               </p>
               <p className="font-meta text-[8.5px] text-[var(--muted)] mt-0.5">
                 {intake.scopeShift.acknowledgedAt
@@ -1410,7 +1417,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
             </div>
           )}
           <div className="flex justify-between text-sm mt-1"><span className="text-[var(--muted)]">Lead score</span>
-            <span className="font-meta text-[10px] px-2 py-0.5 text-white" style={{ background: LEAD_BADGE[intake.leadCategory] ?? "#6b7280" }}>
+            <span className="font-meta text-[10px] px-2 py-0.5 text-white rounded" style={{ background: LEAD_BADGE[intake.leadCategory] ?? "#6b7280" }}>
               {intake.leadScore} · {intake.leadCategory}
             </span>
           </div>
@@ -1425,10 +1432,10 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
         {pickedAddons.length > 0 && (
           <>
             <span className={`${labelCls} mt-5`}>SELECTED ADD-ONS</span>
-            <ul className="border border-[var(--line)] px-4 py-2 mt-1">
+            <ul className="border border-[var(--line)] px-4 py-2 mt-1 rounded-xl">
               {pickedAddons.map((x) => x && (
                 <li key={x.id} className="flex justify-between py-1.5 border-b border-[var(--line)] last:border-0 text-[13px]">
-                  <span>{x.name}</span><span className="font-meta text-[10px]">+{formatMoney(x.price, "USD")}</span>
+                  <span>{x.name}</span><span className="font-meta text-[10px]">+{money(x.price)}</span>
                 </li>
               ))}
             </ul>
@@ -1437,10 +1444,10 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
         {pickedRecurring.length > 0 && (
           <>
             <span className={`${labelCls} mt-5`}>RECURRING SERVICES</span>
-            <ul className="border border-[var(--line)] px-4 py-2 mt-1">
+            <ul className="border border-[var(--line)] px-4 py-2 mt-1 rounded-xl">
               {pickedRecurring.map((x) => x && (
                 <li key={x.id} className="flex justify-between py-1.5 border-b border-[var(--line)] last:border-0 text-[13px]">
-                  <span>{x.name}</span><span className="font-meta text-[10px]">+{formatMoney(x.monthly, "USD")}/mo</span>
+                  <span>{x.name}</span><span className="font-meta text-[10px]">+{money(x.monthly)}/mo</span>
                 </li>
               ))}
             </ul>
@@ -1450,7 +1457,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
         {intake.assets.length > 0 && (
           <>
             <span className={`${labelCls} mt-5`}>CLIENT FILES ({intake.assets.length})</span>
-            <div className="border border-[var(--line)] px-4 py-3 mt-1 flex flex-col gap-1.5">
+            <div className="border border-[var(--line)] px-4 py-3 mt-1 flex flex-col gap-1.5 rounded-xl">
               {intake.assets.map((asset, i) => <IntakeAssetLink key={`${asset.name}-${i}`} asset={asset} />)}
             </div>
           </>
@@ -1459,12 +1466,12 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
         {intake.contract && (
           <>
             <span className={`${labelCls} mt-5`}>SIGNED AGREEMENT</span>
-            <div className="border border-[var(--dept)] p-4 mt-1" style={{ background: "var(--dept-soft)" }}>
+            <div className="border border-[var(--dept)] p-4 mt-1 rounded-xl" style={{ background: "var(--dept-soft)" }}>
               <p className="text-sm">{intake.contract.signedName} — {new Date(intake.contract.signedAt).toLocaleString()}</p>
               <p className="font-meta text-[9px] text-[var(--muted)] mt-1">{intake.contract.version}</p>
               <details className="mt-3">
                 <summary className="font-meta text-[10px] dept-accent cursor-pointer">View signed scope text</summary>
-                <pre className="mt-2 text-[10.5px] leading-relaxed whitespace-pre-wrap font-sans max-h-64 overflow-y-auto bg-[var(--bg)] border border-[var(--line)] p-3">
+                <pre className="mt-2 text-[10.5px] leading-relaxed whitespace-pre-wrap font-sans max-h-64 overflow-y-auto bg-[var(--bg)] border border-[var(--line)] p-3 rounded-lg">
                   {intake.contract.scopeText}
                 </pre>
               </details>
@@ -1477,9 +1484,13 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
 }
 
 function IntakesManager() {
+  const money = useMoney();
   const [intakes, setIntakes] = useState<IntakeRecord[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [filter, setFilter] = useState<"ALL" | "SUBMITTED" | "IN_REVIEW" | "QUOTED" | "APPROVED" | "DRAFT">("ALL");
+  const [search, setSearch] = useState("");
+
   const reload = () => listAllIntakes().then((xs) => { setIntakes(xs); setLoaded(true); });
   useEffect(() => {
     const unsub = subscribeAllIntakes((xs) => {
@@ -1490,77 +1501,177 @@ function IntakesManager() {
   }, []);
 
   const submitted = intakes.filter((x) => x.status === "submitted");
+  const inReview = intakes.filter((x) => x.status === "in_review");
+  const quoted = intakes.filter((x) => x.status === "quoted");
+  const approved = intakes.filter((x) => x.status === "approved");
+  const drafts = intakes.filter((x) => x.status === "draft");
   const pipeline = intakes.filter((x) => x.status !== "draft");
   const oneTime = pipeline.reduce((s, x) => s + (x.estimate?.oneTime ?? 0), 0);
   const monthly = pipeline.reduce((s, x) => s + (x.estimate?.monthly ?? 0), 0);
 
+  const filteredIntakes = intakes.filter((x) => {
+    if (filter === "SUBMITTED" && x.status !== "submitted") return false;
+    if (filter === "IN_REVIEW" && x.status !== "in_review") return false;
+    if (filter === "QUOTED" && x.status !== "quoted") return false;
+    if (filter === "APPROVED" && x.status !== "approved") return false;
+    if (filter === "DRAFT" && x.status !== "draft") return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const matchName = String(x.answers?.contact_name ?? "").toLowerCase().includes(q);
+      const matchBiz = String(x.answers?.business_name ?? "").toLowerCase().includes(q);
+      const matchEmail = (x.email ?? "").toLowerCase().includes(q);
+      const matchPkg = (x.packageName ?? "").toLowerCase().includes(q);
+      const matchType = String(x.answers?.website_type ?? "").toLowerCase().includes(q);
+      return matchName || matchBiz || matchEmail || matchPkg || matchType;
+    }
+    return true;
+  });
+
   return (
-    <div>
-      <div className="grid sm:grid-cols-4 gap-px mb-8" style={{ background: "var(--line)" }}>
+    <div className="space-y-6">
+      {/* Metrics Header */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {[
-          { label: "Needs review", value: String(submitted.length), accent: submitted.length > 0 },
-          { label: "Active briefs", value: String(pipeline.length), accent: false },
-          { label: "Est. one-time pipeline", value: formatMoney(oneTime, "USD"), accent: false },
-          { label: "Est. monthly recurring", value: formatMoney(monthly, "USD"), accent: false },
+          { label: "Needs review", value: String(submitted.length), icon: "⚡", tone: submitted.length > 0 ? "#ef4444" : "var(--ink)", sub: "New client submissions" },
+          { label: "Active briefs", value: String(pipeline.length), icon: "📋", tone: "var(--ink)", sub: "In scope pipeline" },
+          { label: "Est. one-time", value: money(oneTime), icon: "💰", tone: "rgb(16 185 129)", sub: "Non-draft estimates" },
+          { label: "Est. monthly", value: `${money(monthly)}/mo`, icon: "🔄", tone: "var(--ink)", sub: "Recurring services" },
         ].map((s) => (
-          <div key={s.label} className="p-4" style={{ background: "var(--panel)" }}>
-            <span className="font-meta text-[9px] text-[var(--muted)] uppercase">{s.label}</span>
-            <p className={`font-display text-xl font-bold mt-1 ${s.accent ? "dept-accent" : ""}`}>{s.value}</p>
+          <div key={s.label} className="p-3.5 sm:p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-xs flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider font-semibold truncate mr-1">{s.label}</span>
+              <span className="text-base sm:text-lg shrink-0">{s.icon}</span>
+            </div>
+            <p className="font-display text-lg sm:text-xl font-bold mt-0.5 truncate" style={{ color: s.tone }}>{s.value}</p>
+            <span className="font-meta text-[8px] sm:text-[8.5px] text-[var(--muted)] mt-1 truncate">{s.sub}</span>
           </div>
         ))}
       </div>
 
-      {loaded && intakes.length === 0 && (
-        <p className="font-meta text-[11px] text-[var(--muted)]">No client briefs yet — website buyers complete their project brief (and sign the agreement) right after checkout or from their portal.</p>
-      )}
+      {/* Filter & Search Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
+        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter briefs">
+          <button
+            onClick={() => setFilter("ALL")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            All ({intakes.length})
+          </button>
+          <button
+            onClick={() => setFilter("SUBMITTED")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "SUBMITTED" ? "bg-amber-500 text-black border-amber-500 font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-amber-500"
+            }`}
+          >
+            Needs Review ({submitted.length})
+          </button>
+          <button
+            onClick={() => setFilter("IN_REVIEW")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "IN_REVIEW" ? "bg-cyan-600 text-white border-cyan-600 font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-cyan-600"
+            }`}
+          >
+            In Review ({inReview.length})
+          </button>
+          <button
+            onClick={() => setFilter("QUOTED")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "QUOTED" ? "bg-purple-600 text-white border-purple-600 font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-purple-600"
+            }`}
+          >
+            Quoted ({quoted.length})
+          </button>
+          <button
+            onClick={() => setFilter("APPROVED")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "APPROVED" ? "bg-emerald-600 text-white border-emerald-600 font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-emerald-600"
+            }`}
+          >
+            Approved ({approved.length})
+          </button>
+          <button
+            onClick={() => setFilter("DRAFT")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "DRAFT" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            Drafts ({drafts.length})
+          </button>
+        </div>
 
-      <div className="flex flex-col gap-3">
-        {intakes.map((x) => {
-          const open = openId === x.id;
-          return (
-            <div key={x.id} className="border border-[var(--line)] px-5 py-4" style={{ background: "var(--panel)" }}>
-              <div className="grid md:grid-cols-[1fr_170px_150px_130px_90px] gap-4 items-center">
-                <div>
-                  <p className="font-display text-sm font-bold uppercase">{String(x.answers?.business_name ?? "") || x.packageName}</p>
-                  <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
-                    {String(x.answers?.contact_name ?? "")} · {x.email} · {x.packageName}
-                    {x.answers?.website_type ? ` · ${x.answers.website_type}` : ""}
-                  </p>
-                  {x.scopeShift?.direction === "upgrade" && (
-                    <span className="inline-block mt-1 font-meta text-[8px] px-2 py-0.5 border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300" data-shift-badge>
-                      ⚠ SCOPE SHIFT +{formatMoney(x.scopeShift.difference, "USD")}
-                    </span>
-                  )}
-                  {x.scopeShift?.direction === "downgrade" && (
-                    <span className="inline-block mt-1 font-meta text-[8px] px-2 py-0.5 border border-red-500/50 bg-red-500/10 text-red-600" data-shift-badge>
-                      ⚠ DOWNGRADE — REVIEW
-                    </span>
-                  )}
-                </div>
-                <span className="font-meta text-[10px]">
-                  {x.status === "draft" ? "Draft in progress" : `${formatMoney(x.estimate?.oneTime ?? 0, "USD")}${(x.estimate?.monthly ?? 0) > 0 ? ` + ${formatMoney(x.estimate!.monthly, "USD")}/mo` : ""}`}
-                </span>
-                <span className="font-meta text-[10px] px-2 py-1 text-white text-center" style={{ background: LEAD_BADGE[x.leadCategory] ?? "#6b7280" }}>
-                  {x.leadScore ?? 0} · {x.leadCategory ?? "—"}
-                </span>
-                <select value={x.status}
-                  onChange={async (e) => {
-                    const okDone = await mutate(() => setIntakeStatus(x.id, e.target.value as IntakeRecord["status"]), "Brief status updated");
-                    if (okDone) reload();
-                  }}
-                  className={`${inputCls} !py-1.5 font-meta text-[10px]`}
-                  aria-label="Brief status">
-                  {INTAKE_STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ").toUpperCase()}</option>)}
-                </select>
-                <button className="font-meta text-[10px] dept-accent u-line justify-self-end" onClick={() => setOpenId(open ? null : x.id)}>
-                  {open ? "Close" : "View brief"}
-                </button>
-              </div>
-              {open && <IntakeDetail intake={x} onDone={reload} />}
-            </div>
-          );
-        })}
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search briefs by client, business, package…"
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-72"
+        />
       </div>
+
+      {loaded && intakes.length === 0 ? (
+        <div className="border border-[var(--line)] p-8 sm:p-12 text-center rounded-2xl" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-lg sm:text-xl font-bold uppercase">No client briefs yet</p>
+          <p className="text-sm text-[var(--muted)] mt-2">Website buyers complete their project brief (and sign the agreement) right after checkout or from their portal.</p>
+        </div>
+      ) : filteredIntakes.length === 0 ? (
+        <div className="border border-[var(--line)] p-8 sm:p-12 text-center rounded-2xl" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-lg sm:text-xl font-bold uppercase">No matching briefs</p>
+          <p className="text-sm text-[var(--muted)] mt-2">Try clearing your search or filter.</p>
+          <button onClick={() => { setFilter("ALL"); setSearch(""); }} className="btn btn-ghost mt-4">Reset Filters</button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filteredIntakes.map((x) => {
+            const open = openId === x.id;
+            return (
+              <div key={x.id} className="border border-[var(--line)] px-4 sm:px-5 py-4 rounded-2xl transition-all" style={{ background: "var(--panel)" }}>
+                <div className="grid md:grid-cols-[1fr_170px_150px_130px_90px] gap-3 sm:gap-4 items-center">
+                  <div>
+                    <p className="font-display text-sm font-bold uppercase">{String(x.answers?.business_name ?? "") || x.packageName}</p>
+                    <p className="font-meta text-[9px] sm:text-[9.5px] text-[var(--muted)] mt-0.5">
+                      {String(x.answers?.contact_name ?? "")} · {x.email} · {x.packageName}
+                      {x.answers?.website_type ? ` · ${x.answers.website_type}` : ""}
+                    </p>
+                    {x.scopeShift?.direction === "upgrade" && (
+                      <span className="inline-block mt-1 font-meta text-[8px] px-2 py-0.5 rounded-full border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300" data-shift-badge>
+                        ⚠ SCOPE SHIFT +{money(x.scopeShift.difference)}
+                      </span>
+                    )}
+                    {x.scopeShift?.direction === "downgrade" && (
+                      <span className="inline-block mt-1 font-meta text-[8px] px-2 py-0.5 rounded-full border border-red-500/50 bg-red-500/10 text-red-600" data-shift-badge>
+                        ⚠ DOWNGRADE — REVIEW
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-meta text-[10px]">
+                    {x.status === "draft" ? "Draft in progress" : `${money(x.estimate?.oneTime ?? 0)}${(x.estimate?.monthly ?? 0) > 0 ? ` + ${money(x.estimate!.monthly)}/mo` : ""}`}
+                  </span>
+                  <span className="font-meta text-[10px] px-2.5 py-1 text-white text-center rounded-lg font-bold" style={{ background: LEAD_BADGE[x.leadCategory] ?? "#6b7280" }}>
+                    {x.leadScore ?? 0} · {x.leadCategory ?? "—"}
+                  </span>
+                  <select
+                    value={x.status}
+                    onChange={async (e) => {
+                      const okDone = await mutate(() => setIntakeStatus(x.id, e.target.value as IntakeRecord["status"]), "Brief status updated");
+                      if (okDone) reload();
+                    }}
+                    className={`${inputCls} !py-1.5 font-meta text-[10px] rounded-xl`}
+                    aria-label="Brief status"
+                  >
+                    {INTAKE_STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ").toUpperCase()}</option>)}
+                  </select>
+                  <button className="font-meta text-[10px] dept-accent u-line justify-self-end font-bold" onClick={() => setOpenId(open ? null : x.id)}>
+                    {open ? "Close" : "View brief"}
+                  </button>
+                </div>
+                {open && <IntakeDetail intake={x} onDone={reload} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -2490,6 +2601,7 @@ function Bar({ label, value, max }: { label: string; value: number; max: number 
 }
 
 function Analytics() {
+  const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
   useEffect(() => {
@@ -2519,9 +2631,9 @@ function Analytics() {
   return (
     <div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-10">
-        <Stat label="REVENUE COLLECTED" value={formatMoney(revenue)} sub={`${orders.length} orders`} />
-        <Stat label="OUTSTANDING BALANCES" value={formatMoney(outstanding)} sub="deposits → final approval" />
-        <Stat label="AVERAGE ORDER VALUE" value={formatMoney(aov)} />
+        <Stat label="REVENUE COLLECTED" value={money(revenue)} sub={`${orders.length} orders`} />
+        <Stat label="OUTSTANDING BALANCES" value={money(outstanding)} sub="deposits → final approval" />
+        <Stat label="AVERAGE ORDER VALUE" value={money(aov)} />
         <Stat label="LEADS" value={String(leads.length)} sub={`${leads.filter((l) => l.status === "converted").length} converted`} />
       </div>
       <div className="grid lg:grid-cols-3 gap-8">
@@ -4024,6 +4136,7 @@ function AlertStrip({ data, onNavigate }: { data: AdminAlerts; onNavigate: (t: (
 export default function Admin() {
   useDepartment(null);
   const { user, loading, isAdmin, signOut } = useAuth();
+  const { currency, setCurrency, fxLive } = useShop();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Orders");
   useSEO({ title: "Admin — Social Kon10 Marketing", description: "Studio admin dashboard." });
 
@@ -4086,9 +4199,32 @@ export default function Admin() {
 
   return (
     <section className="wrap pt-14 md:pt-20 pb-24 min-h-[70vh]">
-      <div className="flex justify-between font-meta text-[10px] text-[var(--muted)]">
-        <span className="idx">/admin</span>
-        <span>{firebaseReady ? (isAdmin ? `Admin: ${user?.email}` : user ? "Not authorised" : "Signed out") : "Demo mode"}</span>
+      <div className="flex flex-wrap items-center justify-between gap-3 font-meta text-[10px] text-[var(--muted)] pb-3 mb-2 border-b border-[var(--line)]">
+        <div className="flex items-center gap-3">
+          <span className="idx">/admin</span>
+          <span>{firebaseReady ? (isAdmin ? `Admin: ${user?.email}` : user ? "Not authorised" : "Signed out") : "Demo mode"}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-[var(--ink)]">Display Currency:</span>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+            aria-label="Studio display currency"
+            className="bg-[var(--panel)] border border-[var(--line)] px-2.5 py-1 rounded-xl text-[10px] font-bold text-[var(--ink)] cursor-pointer hover:border-[var(--dept)] transition-colors outline-none"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code} className="text-black">
+                {c.code} ({c.symbol})
+              </option>
+            ))}
+          </select>
+          {currency !== "USD" && currency !== "BMD" && (
+            <span
+              className={`w-2 h-2 rounded-full ${fxLive ? "bg-emerald-500" : "bg-amber-500"}`}
+              title={fxLive ? "Live conversion active" : "Estimated rate active"}
+            />
+          )}
+        </div>
       </div>
       <h1 className="display-section mt-6 mb-8">Studio admin</h1>
 

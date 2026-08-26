@@ -52,7 +52,7 @@ function CurrencySelect() {
   const rate = currency !== "USD" ? getRate(currency) : 1;
   const age = fx.fetchedAt ? new Date(fx.fetchedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
   return (
-    <label className="hidden lg:inline-flex items-center gap-1 font-meta text-[10px]">
+    <label className="inline-flex items-center gap-1 font-meta text-[10px]">
       <span className="sr-only">Display currency</span>
       <select
         value={currency}
@@ -63,7 +63,7 @@ function CurrencySelect() {
           : fxLive
             ? `Live rate: $1 USD = ${currency === "JMD" ? "J$" : "C$"}${rate.toFixed(2)} (updated ${age}) · display only — charges settle in USD`
             : `Estimated rate: $1 USD = ${currency === "JMD" ? "J$" : "C$"}${rate.toFixed(2)} · display only — charges settle in USD`}
-        className="bg-transparent border border-[var(--line)] px-2 py-1 cursor-pointer hover:border-[var(--dept)] transition-colors"
+        className="bg-transparent border border-[var(--line)] px-1.5 py-1 sm:px-2 rounded-lg cursor-pointer hover:border-[var(--dept)] transition-colors text-[10px] font-bold outline-none"
       >
         {CURRENCIES.map((c) => <option key={c.code} value={c.code} className="text-black">{c.code}</option>)}
       </select>
@@ -578,11 +578,12 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
 
             {/* Account + utility — mobile users otherwise have no auth or cart entry point */}
             <div className="flex flex-wrap items-center gap-2 pt-1">
+              <CurrencySelect />
               {firebaseReady && (
                 <Link
                   to={user ? (isAdmin ? "/admin" : "/client") : "/auth"}
                   onClick={() => setMobileOpen(false)}
-                  className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider inline-flex items-center gap-1.5"
+                  className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider inline-flex items-center gap-1.5 rounded-lg"
                 >
                   {user ? (
                     isAdmin ? (
@@ -603,13 +604,13 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
               <Link
                 to="/checkout"
                 onClick={() => setMobileOpen(false)}
-                className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
+                className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider rounded-lg"
               >
                 Cart · {String(totalCartCount).padStart(2, "0")}
               </Link>
               <button
                 onClick={onOpenCommand}
-                className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider"
+                className="font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] hover:text-[var(--dept)] transition-colors uppercase tracking-wider rounded-lg"
                 aria-label="Open command menu"
               >
                 ⌘K Command
