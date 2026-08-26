@@ -423,6 +423,7 @@ function OrderStudioWorkspace({ order, onReload }: { order: OrderRecord; onReloa
 function Orders() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [mobileCockpitOpen, setMobileCockpitOpen] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ALL");
   const [search, setSearch] = useState("");
   const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
@@ -557,55 +558,59 @@ function Orders() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* volume + revenue summary — every recorded order accounted for */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
+      {/* volume + revenue summary — 2026 modern glass metric cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {[
-          { label: "All orders recorded", value: String(orders.length), warn: false },
-          { label: "Revenue collected", value: formatMoney(orders.reduce((s, o) => s + (o.amountPaid || 0), 0)), warn: false },
-          { label: "Balances outstanding", value: formatMoney(orders.reduce((s, o) => s + (o.balanceDue || 0), 0)), warn: orders.some((o) => o.balanceDue > 0) },
-          { label: "Needs studio action", value: String(orders.filter((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length), warn: orders.some((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)) },
+          { label: "All orders", value: String(orders.length), icon: "📦", tone: "var(--ink)", sub: `${activeOrders.length} active in production` },
+          { label: "Revenue collected", value: formatMoney(orders.reduce((s, o) => s + (o.amountPaid || 0), 0)), icon: "💰", tone: "rgb(16 185 129)", sub: "Verified receipts" },
+          { label: "Outstanding due", value: formatMoney(orders.reduce((s, o) => s + (o.balanceDue || 0), 0)), icon: "⏳", tone: orders.some((o) => o.balanceDue > 0) ? "#f59e0b" : "var(--muted)", sub: "Due upon completion" },
+          { label: "Needs action", value: String(orders.filter((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length), icon: "⚡", tone: orders.some((o) => ["ORDER RECEIVED", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)) ? "#ef4444" : "var(--muted)", sub: "Awaiting studio review" },
         ].map((s) => (
-          <div key={s.label} className="p-4" style={{ background: "var(--panel)" }}>
-            <span className="font-meta text-[9px] text-[var(--muted)] uppercase">{s.label}</span>
-            <p className={`font-display text-xl font-bold mt-1 ${s.warn ? "text-amber-600" : ""}`}>{s.value}</p>
+          <div key={s.label} className="p-3.5 sm:p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-xs flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider font-semibold truncate mr-1">{s.label}</span>
+              <span className="text-base sm:text-lg shrink-0">{s.icon}</span>
+            </div>
+            <p className="font-display text-lg sm:text-xl font-bold mt-0.5 truncate" style={{ color: s.tone }}>{s.value}</p>
+            <span className="font-meta text-[8px] sm:text-[8.5px] text-[var(--muted)] mt-1 truncate">{s.sub}</span>
           </div>
         ))}
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
-        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter orders">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
+        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter orders">
           <button
             onClick={() => setFilter("ALL")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
-              filter === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
-            All Orders ({orders.length})
+            All ({orders.length})
           </button>
           <button
             onClick={() => setFilter("ACTIVE")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
-              filter === "ACTIVE" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "ACTIVE" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
             Active ({activeOrders.length})
           </button>
           <button
             onClick={() => setFilter("REVIEW")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
-              filter === "REVIEW" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "REVIEW" ? "bg-amber-500 text-black border-amber-500 font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-amber-500"
             }`}
           >
-            Action / Review ({reviewOrders.length})
+            Action ({reviewOrders.length})
           </button>
           <button
             onClick={() => setFilter("HISTORY")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-full border transition-colors ${
-              filter === "HISTORY" ? "bg-emerald-600 text-white border-emerald-600" : "border-[var(--line)] text-[var(--muted)] hover:border-emerald-600"
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filter === "HISTORY" ? "bg-emerald-600 text-white border-emerald-600 font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-emerald-600"
             }`}
           >
-            History · Completed ({historyOrders.length})
+            Archive ({historyOrders.length})
           </button>
         </div>
 
@@ -613,8 +618,8 @@ function Orders() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by client, ID, email, or item…"
-          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-72"
+          placeholder="Search client, ID, email, item…"
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
         />
       </div>
 
@@ -622,21 +627,21 @@ function Orders() {
       {filter === "HISTORY" && <HistoryReport orders={historyOrders} />}
 
       {orders.length === 0 ? (
-        <div className="border border-[var(--line)] p-12 text-center" style={{ background: "var(--panel)" }}>
-          <p className="font-display text-xl font-bold uppercase">No orders received yet</p>
+        <div className="border border-[var(--line)] p-8 sm:p-12 text-center rounded-2xl" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-lg sm:text-xl font-bold uppercase">No orders received yet</p>
           <p className="text-sm text-[var(--muted)] mt-2">When clients purchase or accept proposals, they will appear here.</p>
         </div>
       ) : filteredOrders.length === 0 ? (
-        <div className="border border-[var(--line)] p-12 text-center" style={{ background: "var(--panel)" }}>
-          <p className="font-display text-xl font-bold uppercase">No matching orders</p>
+        <div className="border border-[var(--line)] p-8 sm:p-12 text-center rounded-2xl" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-lg sm:text-xl font-bold uppercase">No matching orders</p>
           <p className="text-sm text-[var(--muted)] mt-2">Try clearing your search or filter.</p>
           <button onClick={() => { setFilter("ALL"); setSearch(""); }} className="btn btn-ghost mt-4">Reset Filters</button>
         </div>
       ) : (
         /* Split-View Master-Detail Studio Cockpit */
-        <div className="grid lg:grid-cols-12 gap-6 items-start">
+        <div className="grid lg:grid-cols-12 gap-5 items-start">
           {/* LEFT COLUMN: Order Master List */}
-          <div className="lg:col-span-4 flex flex-col gap-2.5 max-h-[750px] overflow-y-auto pr-1">
+          <div className={`${mobileCockpitOpen ? "hidden lg:flex" : "flex"} lg:col-span-4 flex-col gap-2.5 max-h-[750px] overflow-y-auto pr-0.5`}>
             {filteredOrders.map((o) => {
               const isSelected = current && o.id === current.id;
               const sIdx = ORDER_STATUSES.indexOf(o.status);
@@ -644,14 +649,17 @@ function Orders() {
               return (
                 <div
                   key={o.id}
-                  onClick={() => setSelectedId(o.id)}
-                  className={`p-4 border text-left cursor-pointer transition-all duration-150 rounded-lg ${
+                  onClick={() => {
+                    setSelectedId(o.id);
+                    setMobileCockpitOpen(true);
+                  }}
+                  className={`p-3.5 sm:p-4 border text-left cursor-pointer transition-all duration-150 rounded-2xl active:scale-[0.99] ${
                     isSelected
                       ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-sm"
                       : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
                     <span className="font-meta text-[9px] text-[var(--muted)]">
                       #ORD-{o.id.slice(0, 7).toUpperCase()}
                     </span>
@@ -660,11 +668,11 @@ function Orders() {
                     </span>
                   </div>
 
-                  <h4 className="font-display text-sm font-bold uppercase line-clamp-1 leading-snug">
+                  <h4 className="font-display text-xs sm:text-sm font-bold uppercase line-clamp-1 leading-snug">
                     {o.items.map((i) => i.name).join(" · ")}
                   </h4>
 
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 truncate flex items-center gap-1.5">
+                  <p className="font-meta text-[9.5px] sm:text-[10px] text-[var(--muted)] mt-1 truncate flex items-center gap-1.5">
                     {orderHasUnreadClientMessage(o) && (
                       <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" role="img" aria-label="Unread client message" title="Unread client message" />
                     )}
@@ -677,7 +685,7 @@ function Orders() {
                     </p>
                   )}
 
-                  <div className="mt-3 flex items-center justify-between text-[11px] font-meta text-[var(--muted)]">
+                  <div className="mt-2.5 flex items-center justify-between text-[10px] sm:text-[11px] font-meta text-[var(--muted)]">
                     <span>Step {sIdx + 1}/8 · {pct}%</span>
                     <span className="font-semibold text-[var(--ink)]">
                       {o.balanceDue > 0 ? (
@@ -705,23 +713,36 @@ function Orders() {
 
           {/* RIGHT COLUMN: Interactive Studio Operations Cockpit */}
           {current && (
-            <div className="lg:col-span-8 border border-[var(--line-strong)] bg-[var(--panel)] rounded-xl overflow-hidden shadow-sm">
+            <div className={`${!mobileCockpitOpen ? "hidden lg:block" : "block"} lg:col-span-8 border border-[var(--line-strong)] bg-[var(--panel)] rounded-2xl overflow-hidden shadow-sm`}>
+              {/* Mobile Back to List Button Bar */}
+              <div className="lg:hidden p-3 bg-[var(--bg)] border-b border-[var(--line)] flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setMobileCockpitOpen(false)}
+                  className="flex items-center gap-1.5 font-meta text-[10px] font-bold dept-accent hover:underline py-1 px-3 rounded-xl bg-[var(--dept-soft)] border border-[var(--dept)]/30 active:scale-95 transition-transform"
+                >
+                  <span>←</span>
+                  <span>Back to Orders List</span>
+                </button>
+                <span className="font-meta text-[9px] text-[var(--muted)]">#ORD-{current.id.slice(0, 7).toUpperCase()}</span>
+              </div>
+
               {/* Cockpit Header */}
-              <div className="p-6 border-b border-[var(--line)] bg-[var(--bg)] flex flex-wrap items-center justify-between gap-4">
-                <div>
+              <div className="p-4 sm:p-6 border-b border-[var(--line)] bg-[var(--bg)] flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="idx">/studio-operations</span>
                     <span className="font-meta text-[10px] text-[var(--muted)]">· #ORD-{current.id.slice(0, 8).toUpperCase()}</span>
                   </div>
-                  <h2 className="font-display text-xl font-bold uppercase">
+                  <h2 className="font-display text-lg sm:text-xl font-bold uppercase truncate">
                     {current.items.map((i) => i.name).join(" · ")}
                   </h2>
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 truncate">
                     Client: <strong className="text-[var(--ink)]">{current.name}</strong> ({current.email}) {current.company ? `· ${current.company}` : ""}
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                   <div className="flex items-center gap-2">
                     <label htmlFor="admin-order-status-select" className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold">Status:</label>
                     <select
@@ -736,7 +757,7 @@ function Orders() {
                           reload();
                         }
                       }}
-                      className={`${inputCls} !w-auto !py-1.5 font-meta text-[10px] font-bold rounded`}
+                      className={`${inputCls} !w-auto !py-1.5 font-meta text-[10px] font-bold rounded-xl`}
                     >
                       {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
@@ -746,21 +767,21 @@ function Orders() {
               </div>
 
               {/* Visual Milestone Progress Tracker & Step Advancer */}
-              <div className="px-6 py-4 border-b border-[var(--line)] bg-[var(--dept-soft)]/50">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-meta text-[10px] uppercase font-bold text-[var(--dept)] tracking-wider">
+              <div className="px-4 sm:px-6 py-3.5 border-b border-[var(--line)] bg-[var(--dept-soft)]/50">
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <span className="font-meta text-[9.5px] sm:text-[10px] uppercase font-bold text-[var(--dept)] tracking-wider truncate">
                     Phase {ORDER_STATUSES.indexOf(current.status) + 1} of 8: {current.status}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className="font-meta text-[10px] text-[var(--muted)]">
                       {Math.round(((ORDER_STATUSES.indexOf(current.status) + 1) / ORDER_STATUSES.length) * 100)}%
                     </span>
                     {ORDER_STATUSES.indexOf(current.status) < ORDER_STATUSES.length - 1 && (
                       <button
                         onClick={advanceNextStatus}
-                        className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px]"
+                        className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px] rounded-lg"
                       >
-                        Advance Phase →
+                        Advance →
                       </button>
                     )}
                   </div>
@@ -777,34 +798,37 @@ function Orders() {
                 </div>
               </div>
 
-              {/* Sub-Tabs Navigation */}
-              <div className="flex border-b border-[var(--line)] bg-[var(--bg)] px-4" role="tablist">
+              {/* Responsive Segmented Sub-Tabs Navigation */}
+              <div className="grid grid-cols-3 border-b border-[var(--line)] bg-[var(--bg)] p-1.5 gap-1" role="tablist">
                 <button
                   onClick={() => setCockpitTab("overview")}
-                  className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
-                    cockpitTab === "overview" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                  className={`font-meta text-[9px] sm:text-[10px] uppercase py-2.5 px-2 rounded-xl font-bold transition-all text-center flex items-center justify-center gap-1 ${
+                    cockpitTab === "overview" ? "bg-[var(--dept)] text-[var(--on-dept)] shadow-xs" : "text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--panel)]"
                   }`}
                 >
-                  📌 Client, Scope &amp; Financials
+                  <span>📌</span>
+                  <span className="truncate">Scope &amp; Balance</span>
                 </button>
                 <button
                   onClick={() => setCockpitTab("chat")}
-                  className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
-                    cockpitTab === "chat" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                  className={`relative font-meta text-[9px] sm:text-[10px] uppercase py-2.5 px-2 rounded-xl font-bold transition-all text-center flex items-center justify-center gap-1 ${
+                    cockpitTab === "chat" ? "bg-[var(--dept)] text-[var(--on-dept)] shadow-xs" : "text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--panel)]"
                   }`}
                 >
-                  💬 Client Chat Thread
+                  <span>💬</span>
+                  <span className="truncate">Client Chat</span>
                   {current && orderHasUnreadClientMessage(current) && (
-                    <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse ml-1.5 align-middle" role="img" aria-label="Unread client message" title="Unread client message" />
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse ml-0.5" role="img" aria-label="Unread" />
                   )}
                 </button>
                 <button
                   onClick={() => setCockpitTab("vault")}
-                  className={`font-meta text-[10px] uppercase px-4 py-3 border-b-2 font-bold transition-colors ${
-                    cockpitTab === "vault" ? "border-[var(--dept)] text-[var(--dept)]" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                  className={`font-meta text-[9px] sm:text-[10px] uppercase py-2.5 px-2 rounded-xl font-bold transition-all text-center flex items-center justify-center gap-1 ${
+                    cockpitTab === "vault" ? "bg-[var(--dept)] text-[var(--on-dept)] shadow-xs" : "text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--panel)]"
                   }`}
                 >
-                  📂 Deliverables Vault ({current.files.length})
+                  <span>📂</span>
+                  <span className="truncate">Vault ({current.files.length})</span>
                 </button>
               </div>
 
@@ -3828,6 +3852,27 @@ function ClientDesignsManager() {
 
 /* ================= PAGE ================= */
 
+const ADMIN_SECTIONS = [
+  {
+    id: "operations",
+    label: "Operations",
+    icon: "⚡",
+    tabs: ["Orders", "Communications", "Client Designs", "Intakes", "Leads"] as const,
+  },
+  {
+    id: "studio",
+    label: "Studio & Catalog",
+    icon: "🎨",
+    tabs: ["Design", "Templates", "Products", "Portfolio", "Analytics"] as const,
+  },
+  {
+    id: "cms",
+    label: "Site & CMS",
+    icon: "⚙️",
+    tabs: ["Homepage", "Promos", "Testimonials", "FAQs", "Settings"] as const,
+  },
+] as const;
+
 const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Intakes", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
 
 const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
@@ -4033,20 +4078,26 @@ export default function Admin() {
     return 0;
   };
 
+  const sectionBadge = (sectionTabs: readonly string[]): number => {
+    return sectionTabs.reduce((sum, t) => sum + tabBadge(t as (typeof TABS)[number]), 0);
+  };
+
+  const currentSec = ADMIN_SECTIONS.find((s) => s.tabs.some((t) => t === tab)) || ADMIN_SECTIONS[0];
+
   return (
     <section className="wrap pt-14 md:pt-20 pb-24 min-h-[70vh]">
       <div className="flex justify-between font-meta text-[10px] text-[var(--muted)]">
         <span className="idx">/admin</span>
         <span>{firebaseReady ? (isAdmin ? `Admin: ${user?.email}` : user ? "Not authorised" : "Signed out") : "Demo mode"}</span>
       </div>
-      <h1 className="display-section mt-6 mb-10">Studio admin</h1>
+      <h1 className="display-section mt-6 mb-8">Studio admin</h1>
 
       {loading ? (
         <p className="font-meta text-[11px] text-[var(--muted)]">Loading…</p>
       ) : !allowed ? (
         <>
           {user ? (
-            <div className="border border-[var(--line)] p-8 max-w-sm text-center" style={{ background: "var(--panel)" }}>
+            <div className="border border-[var(--line)] p-8 max-w-sm text-center rounded-2xl" style={{ background: "var(--panel)" }}>
               <p className="font-meta text-[10px] text-red-500">⛔ {user.email} is not an admin account.</p>
               <p className="text-sm text-[var(--muted)] mt-2">Sign in with an authorised admin email to continue.</p>
               <button className="btn btn-fill mt-5" onClick={signOut}>Sign out</button>
@@ -4060,29 +4111,82 @@ export default function Admin() {
           {/* studio alert center — every client request that needs attention */}
           {alerts && <AlertStrip data={alerts} onNavigate={setTab} />}
 
-          <div className="flex flex-wrap gap-2 mb-10" role="tablist" aria-label="Admin sections">
-            {TABS.map((t) => {
-              const badge = tabBadge(t);
-              return (
-                <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                  className="font-meta text-[10px] px-4 py-2 border transition-colors relative"
-                  style={tab === t ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
-                  {t.toUpperCase()}
-                  {badge > 0 && (
-                    <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center"
-                      aria-label={`${badge} items need attention`}>
-                      {badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            <button
-              onClick={signOut}
-              className="font-meta text-[10px] px-4 py-2 border border-[var(--line)] text-[var(--muted)] hover:border-red-500 hover:text-red-500 transition-colors ml-auto"
-            >
-              SIGN OUT
-            </button>
+          {/* 2026 CATEGORIZED STUDIO ADMIN NAVIGATION */}
+          <div className="space-y-3 mb-8">
+            {/* Top Tier: Primary Studio Pillar Segments + Sign Out */}
+            <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-[var(--panel)] border border-[var(--line)] rounded-2xl shadow-xs">
+              <div className="flex flex-wrap items-center gap-1 flex-1">
+                {ADMIN_SECTIONS.map((sec) => {
+                  const isSecActive = sec.tabs.some((t) => t === tab);
+                  const totalBadges = sectionBadge(sec.tabs);
+                  return (
+                    <button
+                      key={sec.id}
+                      type="button"
+                      onClick={() => {
+                        if (!isSecActive) setTab(sec.tabs[0]);
+                      }}
+                      className={`relative px-3.5 py-2 rounded-xl font-display text-xs font-bold uppercase transition-all flex items-center gap-2 active:scale-95 ${
+                        isSecActive
+                          ? "bg-[var(--dept)] text-[var(--on-dept)] shadow-xs"
+                          : "text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--bg)]"
+                      }`}
+                    >
+                      <span>{sec.icon}</span>
+                      <span>{sec.label}</span>
+                      {totalBadges > 0 && (
+                        <span
+                          className={`min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center animate-pulse ${
+                            isSecActive
+                              ? "bg-black text-white"
+                              : "bg-red-500 text-white"
+                          }`}
+                        >
+                          {totalBadges}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={signOut}
+                className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:border-red-500 hover:text-red-500 transition-colors ml-auto flex items-center gap-1.5 active:scale-95"
+              >
+                <span>🚪</span>
+                <span className="hidden sm:inline">SIGN OUT</span>
+              </button>
+            </div>
+
+            {/* Sub-Tier: Horizontal Sub-Tab Strip with Touch Scrolling */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 px-0.5" role="tablist" aria-label="Section Tabs">
+              {currentSec.tabs.map((t) => {
+                const badge = tabBadge(t);
+                const isSelected = tab === t;
+                return (
+                  <button
+                    key={t}
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => setTab(t)}
+                    className={`font-meta text-[10px] sm:text-[10.5px] px-3.5 py-2 rounded-xl border transition-all relative shrink-0 flex items-center gap-1.5 active:scale-95 ${
+                      isSelected
+                        ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs"
+                        : "border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
+                    }`}
+                  >
+                    <span>{t.toUpperCase()}</span>
+                    {badge > 0 && (
+                      <span className="min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[8.5px] font-bold flex items-center justify-center">
+                        {badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           {tab === "Orders" && <Orders />}
           {tab === "Client Designs" && <ClientDesignsManager />}
