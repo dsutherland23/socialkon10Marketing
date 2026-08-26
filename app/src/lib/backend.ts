@@ -1,6 +1,6 @@
 import {
   addDoc, collection, doc, getDocs, getDoc, orderBy, query,
-  serverTimestamp, setDoc, updateDoc, where, deleteDoc,
+  serverTimestamp, setDoc, updateDoc, where, deleteDoc, onSnapshot,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, getBytes, deleteObject } from "firebase/storage";
 import type { User } from "firebase/auth";
@@ -222,9 +222,13 @@ export async function createOrder(
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     orders.unshift({ ...base, id, createdAt: new Date().toISOString() });
     await idbSet("sk-demo-orders", orders);
+    window.dispatchEvent(new CustomEvent("sk-order-complete"));
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return id;
   }
   const refDoc = await addDoc(collection(db, "orders"), { ...base, createdAt: serverTimestamp() });
+  window.dispatchEvent(new CustomEvent("sk-order-complete"));
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
   return refDoc.id;
 }
 
@@ -347,10 +351,107 @@ export async function listAllOrders(): Promise<OrderRecord[]> {
   }
   try {
     const snap = await getDocs(query(collection(db, "orders"), orderBy("createdAt", "desc")));
-    return snap.docs.map((d) => normalizeOrder(d.id, d.data()));
+    const firestoreOrders = snap.docs.map((d) => normalizeOrder(d.id, d.data()));
+    const localOrders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    const orderMap = new Map<string, OrderRecord>();
+    firestoreOrders.forEach((o) => orderMap.set(o.id, o));
+    localOrders.forEach((o) => { if (!orderMap.has(o.id)) orderMap.set(o.id, o); });
+    return Array.from(orderMap.values()).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   } catch {
-    return [];
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    return orders.map((o) => ({ ...o, files: Array.isArray(o.files) ? o.files : [] }));
   }
+}
+
+/** Real-time subscriber for all orders (Studio Cockpit / Admin) with Firestore onSnapshot + instant local event reactivity. */
+export function subscribeAllOrders(callback: (orders: OrderRecord[]) => void): () => void {
+  let unsubFirestore: (() => void) | null = null;
+  let active = true;
+
+  const fetchAndNotify = async () => {
+    const orders = await listAllOrders();
+    if (active) callback(orders);
+  };
+
+  if (firebaseReady && db) {
+    try {
+      const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+      unsubFirestore = onSnapshot(
+        q,
+        async (snap) => {
+          if (!active) return;
+          const firestoreOrders = snap.docs.map((d) => normalizeOrder(d.id, d.data()));
+          const localOrders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+          const orderMap = new Map<string, OrderRecord>();
+          firestoreOrders.forEach((o) => orderMap.set(o.id, o));
+          localOrders.forEach((o) => { if (!orderMap.has(o.id)) orderMap.set(o.id, o); });
+          const merged = Array.from(orderMap.values()).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+          callback(merged);
+        },
+        (err) => {
+          console.warn("subscribeAllOrders firestore snapshot error, using polling fallback:", err);
+          void fetchAndNotify();
+        }
+      );
+    } catch {
+      void fetchAndNotify();
+    }
+  } else {
+    void fetchAndNotify();
+  }
+
+  const handleLocalEvent = () => { void fetchAndNotify(); };
+  window.addEventListener("sk-order-complete", handleLocalEvent);
+  window.addEventListener("sk-order-updated", handleLocalEvent);
+  window.addEventListener("storage", handleLocalEvent);
+
+  // Polling safety net every 10s
+  const interval = setInterval(() => { void fetchAndNotify(); }, 10000);
+
+  return () => {
+    active = false;
+    if (unsubFirestore) unsubFirestore();
+    window.removeEventListener("sk-order-complete", handleLocalEvent);
+    window.removeEventListener("sk-order-updated", handleLocalEvent);
+    window.removeEventListener("storage", handleLocalEvent);
+    clearInterval(interval);
+  };
+}
+
+/** Real-time subscriber for user's own orders (Client Portal). */
+export function subscribeMyOrders(user: User | null, callback: (orders: OrderRecord[]) => void): () => void {
+  let active = true;
+
+  const fetchAndNotify = async () => {
+    const orders = await listMyOrders(user);
+    if (active) callback(orders);
+  };
+
+  void fetchAndNotify();
+
+  let unsubFirestore: (() => void) | null = null;
+  if (firebaseReady && db && user) {
+    try {
+      const qUid = query(collection(db, "orders"), where("uid", "==", user.uid));
+      unsubFirestore = onSnapshot(qUid, () => { void fetchAndNotify(); }, () => { void fetchAndNotify(); });
+    } catch {}
+  }
+
+  const handleLocalEvent = () => { void fetchAndNotify(); };
+  window.addEventListener("sk-order-complete", handleLocalEvent);
+  window.addEventListener("sk-order-updated", handleLocalEvent);
+  window.addEventListener("storage", handleLocalEvent);
+
+  const interval = setInterval(() => { void fetchAndNotify(); }, 10000);
+
+  return () => {
+    active = false;
+    if (unsubFirestore) unsubFirestore();
+    window.removeEventListener("sk-order-complete", handleLocalEvent);
+    window.removeEventListener("sk-order-updated", handleLocalEvent);
+    window.removeEventListener("storage", handleLocalEvent);
+    clearInterval(interval);
+  };
 }
 
 /** Delete an order (admin housekeeping). */
@@ -358,9 +459,11 @@ export async function deleteOrder(id: string): Promise<void> {
   if (!firebaseReady || !db) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     await idbSet("sk-demo-orders", orders.filter((o) => o.id !== id));
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
   await deleteDoc(doc(db, "orders", id));
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
 export async function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
@@ -370,9 +473,11 @@ export async function setOrderStatus(id: string, status: OrderStatus): Promise<v
   if (!firebaseReady || !db) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     await idbSet("sk-demo-orders", orders.map((o) => (o.id === id ? { ...o, status, completedAt: completedAt ?? undefined } : o)));
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
   await updateDoc(doc(db, "orders", id), { status, completedAt });
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
 /** Delete a specific file from an order's deliverables vault. */
@@ -384,6 +489,7 @@ export async function deleteOrderFile(orderId: string, filePathOrName: string): 
         const existing = (snap.data().files || []) as { name: string; size: number; path?: string }[];
         const updated = existing.filter((f) => f.path !== filePathOrName && f.name !== filePathOrName);
         await updateDoc(doc(db, "orders", orderId), { files: updated });
+        window.dispatchEvent(new CustomEvent("sk-order-updated"));
       }
       if (storage && filePathOrName && !filePathOrName.startsWith("local://") && !filePathOrName.startsWith("data:")) {
         try {
@@ -405,6 +511,7 @@ export async function deleteOrderFile(orderId: string, filePathOrName: string): 
           : o
       )
     );
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
   }
 }
 
@@ -473,26 +580,91 @@ export async function createLead(data: Omit<LeadRecord, "id" | "status" | "creat
     const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
     leads.unshift({ ...data, id: `LEAD-${Date.now()}`, status: "new", createdAt: new Date().toISOString() });
     await idbSet("sk-demo-leads", leads);
+    window.dispatchEvent(new CustomEvent("sk-lead-submitted"));
+    window.dispatchEvent(new CustomEvent("sk-lead-updated"));
     return;
   }
   await addDoc(collection(db, "leads"), { ...data, status: "new", createdAt: serverTimestamp() });
+  window.dispatchEvent(new CustomEvent("sk-lead-submitted"));
+  window.dispatchEvent(new CustomEvent("sk-lead-updated"));
 }
 
 export async function listLeads(): Promise<LeadRecord[]> {
   if (!firebaseReady || !db) {
     return (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
   }
-  const snap = await getDocs(query(collection(db, "leads"), orderBy("createdAt", "desc")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? "" }) as LeadRecord);
+  try {
+    const snap = await getDocs(query(collection(db, "leads"), orderBy("createdAt", "desc")));
+    const firestoreLeads = snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: tsToIso(d.data().createdAt) || new Date().toISOString() }) as LeadRecord);
+    const localLeads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+    const leadMap = new Map<string, LeadRecord>();
+    firestoreLeads.forEach((l) => leadMap.set(l.id, l));
+    localLeads.forEach((l) => { if (!leadMap.has(l.id)) leadMap.set(l.id, l); });
+    return Array.from(leadMap.values()).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  } catch {
+    return (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+  }
+}
+
+/** Real-time subscriber for leads (Studio Cockpit). */
+export function subscribeLeads(callback: (leads: LeadRecord[]) => void): () => void {
+  let unsubFirestore: (() => void) | null = null;
+  let active = true;
+
+  const fetchAndNotify = async () => {
+    const leads = await listLeads();
+    if (active) callback(leads);
+  };
+
+  if (firebaseReady && db) {
+    try {
+      const q = query(collection(db, "leads"), orderBy("createdAt", "desc"));
+      unsubFirestore = onSnapshot(
+        q,
+        async (snap) => {
+          if (!active) return;
+          const firestoreLeads = snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: tsToIso(d.data().createdAt) || new Date().toISOString() }) as LeadRecord);
+          const localLeads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+          const leadMap = new Map<string, LeadRecord>();
+          firestoreLeads.forEach((l) => leadMap.set(l.id, l));
+          localLeads.forEach((l) => { if (!leadMap.has(l.id)) leadMap.set(l.id, l); });
+          callback(Array.from(leadMap.values()).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")));
+        },
+        () => { void fetchAndNotify(); }
+      );
+    } catch {
+      void fetchAndNotify();
+    }
+  } else {
+    void fetchAndNotify();
+  }
+
+  const handleLocalEvent = () => { void fetchAndNotify(); };
+  window.addEventListener("sk-lead-submitted", handleLocalEvent);
+  window.addEventListener("sk-lead-updated", handleLocalEvent);
+  window.addEventListener("storage", handleLocalEvent);
+
+  const interval = setInterval(() => { void fetchAndNotify(); }, 10000);
+
+  return () => {
+    active = false;
+    if (unsubFirestore) unsubFirestore();
+    window.removeEventListener("sk-lead-submitted", handleLocalEvent);
+    window.removeEventListener("sk-lead-updated", handleLocalEvent);
+    window.removeEventListener("storage", handleLocalEvent);
+    clearInterval(interval);
+  };
 }
 
 export async function setLeadStatus(id: string, status: LeadRecord["status"]): Promise<void> {
   if (!firebaseReady || !db) {
     const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
     await idbSet("sk-demo-leads", leads.map((l) => (l.id === id ? { ...l, status } : l)));
+    window.dispatchEvent(new CustomEvent("sk-lead-updated"));
     return;
   }
   await updateDoc(doc(db, "leads", id), { status });
+  window.dispatchEvent(new CustomEvent("sk-lead-updated"));
 }
 
 /* ---------------- content overrides (Package CMS, PRD §68) ---------------- */
@@ -1136,6 +1308,7 @@ export async function recordPayment(orderId: string, amountUsd: number): Promise
         : o
     );
     ls.write("sk-demo-orders", orders);
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
   const ref = doc(db, "orders", orderId);
@@ -1143,6 +1316,7 @@ export async function recordPayment(orderId: string, amountUsd: number): Promise
   if (!snap.exists()) return;
   const o = snap.data() as OrderRecord;
   await updateDoc(ref, { amountPaid: (o.amountPaid ?? 0) + amountUsd, balanceDue: Math.max(0, (o.balanceDue ?? 0) - amountUsd) });
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
 export function cartToOrderItems(items: CartItem[]) {

@@ -9,6 +9,7 @@ import { useAuth } from "../lib/auth";
 import {
   claimOrders,
   listMyOrders,
+  subscribeMyOrders,
   recordPayment,
   setOrderStatus,
   getFileUrl,
@@ -2120,7 +2121,11 @@ function AccountPortal({ user, isAdmin, signOut }: { user: any; isAdmin: boolean
     setLoading(false);
   };
 
-  useEffect(() => { void reload(); }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    void reload();
+    const unsub = subscribeMyOrders(user, (o) => setOrders(o));
+    return unsub;
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ----- website intake: pending detection + one-time popup per order ----- */
   const webOrders = orders.filter((o) => o.items.some((i) => isIntakePackage(i.serviceSlug)));

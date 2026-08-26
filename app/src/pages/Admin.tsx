@@ -6,7 +6,7 @@ import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
 import { useAuth } from "../lib/auth";
 import {
-  ORDER_STATUSES, listAllOrders, listLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile, isOrderHistory,
+  ORDER_STATUSES, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile, isOrderHistory,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
   getSettings, saveSettings, convertLeadToOrder, recordPayment, createOrder,
@@ -29,7 +29,7 @@ import { TemplateStudio } from "./AdminTemplates";
 import { listAllCustomerDesigns, deleteDesign, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
 import { useTemplates } from "../lib/templates";
 import {
-  listAllIntakes, setIntakeStatus, INTAKE_STATUSES,
+  listAllIntakes, subscribeAllIntakes, setIntakeStatus, INTAKE_STATUSES,
   intakePackageFor, intakeSteps, fieldVisible,
   INTAKE_ADDONS, RECURRING_SERVICES,
   type IntakeRecord,
@@ -436,14 +436,16 @@ function Orders() {
     if (data.length > 0 && !selectedId) setSelectedId(data[0].id);
   });
 
-  useEffect(() => { reload(); }, []);
-
-  // Keep selectedId valid
   useEffect(() => {
-    if (orders.length > 0 && (!selectedId || !orders.some((o) => o.id === selectedId))) {
-      setSelectedId(orders[0].id);
-    }
-  }, [orders, selectedId]);
+    const unsub = subscribeAllOrders((data) => {
+      setOrders(data);
+      setSelectedId((curr) => {
+        if (curr && data.some((o) => o.id === curr)) return curr;
+        return data[0]?.id ?? "";
+      });
+    });
+    return unsub;
+  }, []);
 
   // Active = everything not yet COMPLETED (DELIVERED still needs final sign-off).
   // History = auto-archive — the moment an order is tagged COMPLETED it lands here.
@@ -1068,7 +1070,10 @@ function ConvertLead({ lead, onDone }: { lead: LeadRecord; onDone: () => void })
 function Leads() {
   const [leads, setLeads] = useState<LeadRecord[]>([]);
   const reload = () => listLeads().then(setLeads);
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    const unsub = subscribeLeads(setLeads);
+    return unsub;
+  }, []);
 
   return (
     <div>
@@ -1452,7 +1457,13 @@ function IntakesManager() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const reload = () => listAllIntakes().then((xs) => { setIntakes(xs); setLoaded(true); });
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    const unsub = subscribeAllIntakes((xs) => {
+      setIntakes(xs);
+      setLoaded(true);
+    });
+    return unsub;
+  }, []);
 
   const submitted = intakes.filter((x) => x.status === "submitted");
   const pipeline = intakes.filter((x) => x.status !== "draft");
@@ -2457,7 +2468,14 @@ function Bar({ label, value, max }: { label: string; value: number; max: number 
 function Analytics() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
-  useEffect(() => { listAllOrders().then(setOrders); listLeads().then(setLeads); }, []);
+  useEffect(() => {
+    const unsubOrders = subscribeAllOrders(setOrders);
+    const unsubLeads = subscribeLeads(setLeads);
+    return () => {
+      unsubOrders();
+      unsubLeads();
+    };
+  }, []);
 
   const revenue = orders.reduce((s, o) => s + o.amountPaid, 0);
   const aov = orders.length ? Math.round(orders.reduce((s, o) => s + o.total, 0) / orders.length) : 0;
@@ -3966,26 +3984,46 @@ export default function Admin() {
 
   const allowed = firebaseReady ? isAdmin : true; // demo mode: open for preview
 
-  /* studio alert polling — refreshes on tab change + every 60s */
+  /* studio alert center — real-time reactive updates */
   const [alerts, setAlerts] = useState<AdminAlerts | null>(null);
   useEffect(() => {
     if (!allowed) return;
     let stop = false;
-    const load = async () => {
-      const [orders, intakes, leads] = await Promise.all([listAllOrders(), listAllIntakes(), listLeads()]);
+    let currOrders: OrderRecord[] = [];
+    let currIntakes: IntakeRecord[] = [];
+    let currLeads: LeadRecord[] = [];
+
+    const updateAlerts = () => {
       if (stop) return;
       setAlerts({
-        newOrders: orders.filter((o) => o.status === "ORDER RECEIVED").length,
-        reviewReqs: orders.filter((o) => ["CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length,
-        newBriefs: intakes.filter((i) => i.status === "submitted").length,
-        newLeads: leads.filter((l) => l.status === "new").length,
-        unreadMsgs: orders.filter(orderHasUnreadClientMessage).length,
+        newOrders: currOrders.filter((o) => o.status === "ORDER RECEIVED").length,
+        reviewReqs: currOrders.filter((o) => ["CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length,
+        newBriefs: currIntakes.filter((i) => i.status === "submitted").length,
+        newLeads: currLeads.filter((l) => l.status === "new").length,
+        unreadMsgs: currOrders.filter(orderHasUnreadClientMessage).length,
       });
     };
-    void load();
-    const t = setInterval(() => void load(), 60000);
-    return () => { stop = true; clearInterval(t); };
-  }, [allowed, tab]);
+
+    const unsubOrders = subscribeAllOrders((orders) => {
+      currOrders = orders;
+      updateAlerts();
+    });
+    const unsubIntakes = subscribeAllIntakes((intakes) => {
+      currIntakes = intakes;
+      updateAlerts();
+    });
+    const unsubLeads = subscribeLeads((leads) => {
+      currLeads = leads;
+      updateAlerts();
+    });
+
+    return () => {
+      stop = true;
+      unsubOrders();
+      unsubIntakes();
+      unsubLeads();
+    };
+  }, [allowed]);
 
   const tabBadge = (t: (typeof TABS)[number]): number => {
     if (!alerts) return 0;

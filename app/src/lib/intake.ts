@@ -1,6 +1,6 @@
 import {
   addDoc, collection, doc, getDoc, getDocs, orderBy, query,
-  serverTimestamp, setDoc, updateDoc, where,
+  serverTimestamp, setDoc, updateDoc, where, onSnapshot,
 } from "firebase/firestore";
 import { ref, uploadBytes } from "firebase/storage";
 import type { User } from "firebase/auth";
@@ -744,10 +744,65 @@ export async function listAllIntakes(): Promise<IntakeRecord[]> {
   }
   try {
     const snap = await getDocs(query(collection(db, "intakes"), orderBy("updatedAt", "desc")));
-    return snap.docs.map((d) => normalizeIntake(d.id, d.data()));
+    const firestoreIntakes = snap.docs.map((d) => normalizeIntake(d.id, d.data()));
+    const localIntakes = (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
+    const intakeMap = new Map<string, IntakeRecord>();
+    firestoreIntakes.forEach((i) => intakeMap.set(i.id, i));
+    localIntakes.forEach((i) => { if (!intakeMap.has(i.id)) intakeMap.set(i.id, i); });
+    return Array.from(intakeMap.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   } catch {
     return (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
   }
+}
+
+/** Real-time subscriber for all intakes (Studio Admin). */
+export function subscribeAllIntakes(callback: (intakes: IntakeRecord[]) => void): () => void {
+  let unsubFirestore: (() => void) | null = null;
+  let active = true;
+
+  const fetchAndNotify = async () => {
+    const intakes = await listAllIntakes();
+    if (active) callback(intakes);
+  };
+
+  if (firebaseReady && db) {
+    try {
+      const q = query(collection(db, "intakes"), orderBy("updatedAt", "desc"));
+      unsubFirestore = onSnapshot(
+        q,
+        async (snap) => {
+          if (!active) return;
+          const firestoreIntakes = snap.docs.map((d) => normalizeIntake(d.id, d.data()));
+          const localIntakes = (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
+          const intakeMap = new Map<string, IntakeRecord>();
+          firestoreIntakes.forEach((i) => intakeMap.set(i.id, i));
+          localIntakes.forEach((i) => { if (!intakeMap.has(i.id)) intakeMap.set(i.id, i); });
+          callback(Array.from(intakeMap.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+        },
+        () => { void fetchAndNotify(); }
+      );
+    } catch {
+      void fetchAndNotify();
+    }
+  } else {
+    void fetchAndNotify();
+  }
+
+  const handleLocalEvent = () => { void fetchAndNotify(); };
+  window.addEventListener("sk-intake-submitted", handleLocalEvent);
+  window.addEventListener("sk-intake-updated", handleLocalEvent);
+  window.addEventListener("storage", handleLocalEvent);
+
+  const interval = setInterval(() => { void fetchAndNotify(); }, 10000);
+
+  return () => {
+    active = false;
+    if (unsubFirestore) unsubFirestore();
+    window.removeEventListener("sk-intake-submitted", handleLocalEvent);
+    window.removeEventListener("sk-intake-updated", handleLocalEvent);
+    window.removeEventListener("storage", handleLocalEvent);
+    clearInterval(interval);
+  };
 }
 
 export async function setIntakeStatus(id: string, status: IntakeStatus): Promise<void> {
@@ -755,10 +810,12 @@ export async function setIntakeStatus(id: string, status: IntakeStatus): Promise
   if (!firebaseReady || !db || id.startsWith("INTAKE-")) {
     const xs = (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
     await idbSet("sk-demo-intakes", xs.map((x) => (x.id === id ? { ...x, status, updatedAt: new Date().toISOString() } : x)));
+    window.dispatchEvent(new CustomEvent("sk-intake-updated"));
   }
   if (firebaseReady && db && !id.startsWith("INTAKE-")) {
     try {
       await updateDoc(doc(db, "intakes", id), { status, updatedAt: serverTimestamp() });
+      window.dispatchEvent(new CustomEvent("sk-intake-updated"));
     } catch (err) {
       console.warn("setIntakeStatus error:", err);
     }
