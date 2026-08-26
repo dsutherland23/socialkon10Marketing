@@ -3058,9 +3058,9 @@ export default function MeetingRoom() {
       )}
 
       {/* Main Workspace Area (Stage + Grid + Drawers) */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative h-full min-h-0">
         {/* Stage & Video Tiles */}
-        <div className="flex-1 p-2 sm:p-4 flex flex-col gap-4 overflow-y-auto">
+        <div className="flex-1 p-2 sm:p-4 flex flex-col gap-2 sm:gap-4 overflow-hidden h-full min-h-0">
           {/* Universal Screen Share & Live Studio Broadcast Stage (Local or Remote) */}
           {(() => {
             const remoteScreenSharer = meeting?.participants.find(
@@ -3597,69 +3597,71 @@ export default function MeetingRoom() {
 
             {/* DRAWER: 2026 LIVE DELIVERABLES PROOFING & ASSETS CO-VIEWER */}
             {activeDrawer === "proofing" && (
-              <div className="flex-1 p-4 overflow-y-auto space-y-4 text-xs">
-                {/* Proofing Status & Broadcaster Banner */}
-                <div className="p-3 bg-neutral-800/90 rounded-xl border border-neutral-700 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                      <span className="font-meta text-[9px] uppercase font-bold text-[var(--dept)]">
+              <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3.5 text-xs">
+                {/* Proofing Status & Action Strip */}
+                <div className="p-3 bg-neutral-900 rounded-2xl border border-neutral-800 space-y-3">
+                  {/* Top Bar: Title & Broadcast / Maximize */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                      <span className="font-display text-[11px] uppercase font-bold text-white tracking-wider truncate">
                         Live Proofing Canvas
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
-                      {isHost && (
-                        <button
-                          type="button"
-                          onClick={() => handleStartStudioCoDesign()}
-                          className="font-meta text-[9px] px-2 py-1 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/30 rounded font-bold flex items-center gap-1 shadow-sm"
-                          title="Open in KON10 Studio Editor and broadcast live to client"
-                        >
-                          <span>✏️</span> Co-Design
-                        </button>
-                      )}
-
-                      {isHost && (
-                        <button
-                          type="button"
-                          onClick={() => setShowUploadModal(true)}
-                          className="font-meta text-[9px] px-2.5 py-1 bg-[var(--dept)] text-black rounded font-bold hover:brightness-110 flex items-center gap-1 shadow-sm"
-                          title="Upload new deliverable or concept image"
-                        >
-                          <span>📁</span> + Upload Artwork
-                        </button>
-                      )}
-
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
                         onClick={() => setIsProofingMaximized(true)}
-                        className="font-meta text-[9px] px-2 py-1 bg-neutral-700 hover:bg-neutral-600 rounded text-white font-bold flex items-center gap-1"
+                        className="font-meta text-[9.5px] px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 rounded-xl text-white font-bold flex items-center gap-1 border border-neutral-700 transition-colors"
                         title="Maximize Canvas"
                       >
-                        <span>⛶</span> Maximize
+                        <span>⛶</span> Fullscreen
                       </button>
 
                       {isHost && (
                         <button
                           type="button"
                           onClick={handleToggleProofingSession}
-                          className={`font-meta text-[9px] px-2 py-1 rounded font-bold transition-all ${
+                          className={`font-meta text-[9.5px] px-2.5 py-1.5 rounded-xl font-bold transition-all ${
                             meeting.liveProofing?.active
                               ? "bg-red-500/20 text-red-300 border border-red-500/40"
-                              : "bg-neutral-700 text-neutral-300 hover:text-white"
+                              : "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30"
                           }`}
                         >
-                          {meeting.liveProofing?.active ? "Stop" : "Broadcast"}
+                          {meeting.liveProofing?.active ? "Stop Live" : "Broadcast"}
                         </button>
                       )}
                     </div>
                   </div>
 
+                  {/* Host Quick Actions Bar */}
+                  {isHost && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleStartStudioCoDesign()}
+                        className="flex-1 font-meta text-[10px] py-1.5 px-2 bg-purple-950/60 hover:bg-purple-900 text-purple-300 border border-purple-500/30 rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                        title="Open in KON10 Studio Editor and broadcast live"
+                      >
+                        <span>✏️</span> Live Co-Design
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowUploadModal(true)}
+                        className="flex-1 font-meta text-[10px] py-1.5 px-2 bg-[var(--dept)] text-black rounded-xl font-bold hover:brightness-110 flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                        title="Upload new deliverable or concept image"
+                      >
+                        <span>📁</span> + Upload
+                      </button>
+                    </div>
+                  )}
+
                   {/* Thumbnail Strip for All Deliverables */}
-                  <div className="pt-2 border-t border-neutral-700/60">
+                  <div className="pt-2 border-t border-neutral-800">
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400">
+                      <span className="font-meta text-[9px] uppercase font-bold text-neutral-400">
                         Deliverable #{proofingIndex + 1} of {proofingMockups.length}
                       </span>
                       <div className="flex gap-1">
@@ -3667,7 +3669,7 @@ export default function MeetingRoom() {
                           type="button"
                           onClick={() => handleSelectProof(proofingIndex - 1)}
                           disabled={proofingIndex === 0}
-                          className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
+                          className="px-2 py-0.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-xs font-bold text-white border border-neutral-700"
                         >
                           ←
                         </button>
@@ -3675,7 +3677,7 @@ export default function MeetingRoom() {
                           type="button"
                           onClick={() => handleSelectProof(proofingIndex + 1)}
                           disabled={proofingIndex === proofingMockups.length - 1}
-                          className="px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 disabled:opacity-40 text-xs font-bold"
+                          className="px-2 py-0.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-xs font-bold text-white border border-neutral-700"
                         >
                           →
                         </button>
@@ -3688,14 +3690,14 @@ export default function MeetingRoom() {
                         <div
                           key={m.id}
                           onClick={() => handleSelectProof(idx)}
-                          className={`relative w-16 h-11 shrink-0 rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
+                          className={`relative w-16 h-12 shrink-0 rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${
                             idx === proofingIndex
                               ? "border-[var(--dept)] ring-2 ring-[var(--dept)]/30 scale-105 shadow-md"
-                              : "border-neutral-700 opacity-60 hover:opacity-100"
+                              : "border-neutral-800 opacity-60 hover:opacity-100"
                           }`}
                         >
                           <img src={m.image} alt={m.title} className="w-full h-full object-cover" />
-                          <span className="absolute bottom-0 inset-x-0 bg-black/80 text-white font-mono text-[7px] text-center truncate px-0.5">
+                          <span className="absolute bottom-0 inset-x-0 bg-black/85 text-white font-mono text-[7px] text-center truncate px-0.5 font-bold">
                             #{idx + 1}
                           </span>
                         </div>
@@ -3704,7 +3706,7 @@ export default function MeetingRoom() {
                         <button
                           type="button"
                           onClick={() => setShowUploadModal(true)}
-                          className="w-16 h-11 shrink-0 rounded-lg border-2 border-dashed border-neutral-700 hover:border-[var(--dept)] bg-neutral-900/50 flex flex-col items-center justify-center text-neutral-400 hover:text-[var(--dept)] text-[9px] font-bold"
+                          className="w-16 h-12 shrink-0 rounded-xl border-2 border-dashed border-neutral-700 hover:border-[var(--dept)] bg-neutral-950 flex flex-col items-center justify-center text-neutral-400 hover:text-[var(--dept)] text-[9px] font-bold"
                           title="Upload new deliverable"
                         >
                           <span className="text-sm">+</span>
@@ -3714,31 +3716,9 @@ export default function MeetingRoom() {
                     </div>
                   </div>
 
-                  <div className="flex items-start justify-between gap-2 pt-1 border-t border-neutral-700/60">
-                    <div className="min-w-0">
-                      <h4 className="font-display text-xs font-bold uppercase text-white truncate">
-                        {activeMockup.title}
-                      </h4>
-                      <p className="font-meta text-[9px] text-neutral-400">
-                        Category: {activeMockup.category} {activeMockup.uploadedBy ? `· by ${activeMockup.uploadedBy}` : ""}
-                      </p>
-                    </div>
-
-                    {isHost && proofingMockups.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveArtwork(activeMockup.id)}
-                        className="text-red-400 hover:text-red-300 font-meta text-[9px] px-1.5 py-0.5 rounded border border-red-500/30 hover:bg-red-500/20 shrink-0"
-                        title="Remove this deliverable from meeting canvas"
-                      >
-                        🗑️ Delete
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Clean Deliverable Header & Quick Actions */}
-                  <div className="flex items-center justify-between gap-2 p-2 bg-neutral-900/90 rounded-xl border border-neutral-700/80">
-                    <div className="min-w-0">
+                  {/* Single Unified Deliverable Header & Tools */}
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-800">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <h4 className="font-display text-xs font-bold uppercase text-white truncate">
                           {activeMockup.title}
@@ -3750,42 +3730,42 @@ export default function MeetingRoom() {
                         )}
                       </div>
                       <p className="font-meta text-[8.5px] text-neutral-400 truncate">
-                        Deliverable {proofingIndex + 1} of {proofingMockups.length} · {activeMockup.category}
+                        {activeMockup.category} {activeMockup.uploadedBy ? `· by ${activeMockup.uploadedBy}` : ""}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => setShowApprovedArchiveModal(true)}
-                        className="px-2 py-1 rounded-lg bg-cyan-950/70 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/30 text-[9px] font-bold flex items-center gap-1"
+                        className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-cyan-300 border border-neutral-700 text-[10px] font-bold"
                         title="View Approved Deliverables & Preserved Pins"
                       >
-                        <span>📜</span>
-                        <span className="hidden sm:inline">Sign-Offs</span>
+                        📜
                       </button>
 
                       <button
                         type="button"
                         onClick={() => setCompareMode(true)}
-                        className="px-2 py-1 rounded-lg bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/30 text-[9px] font-bold flex items-center gap-1"
+                        className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-purple-300 border border-neutral-700 text-[10px] font-bold"
                         title="A/B Split Version Comparison"
                       >
-                        <span>↔️</span>
-                        <span className="hidden sm:inline">A/B Diff</span>
+                        ↔️
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setIsProofingMaximized(true)}
-                        className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white text-[9px] font-bold flex items-center gap-1"
-                        title="Open Theater Mode / Fullscreen"
-                      >
-                        <span>⛶</span>
-                        <span className="hidden sm:inline">Theater</span>
-                      </button>
+                      {isHost && proofingMockups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveArtwork(activeMockup.id)}
+                          className="p-1.5 rounded-lg bg-neutral-800 hover:bg-red-900/50 text-red-400 border border-neutral-700 text-[10px] font-bold"
+                          title="Remove this deliverable"
+                        >
+                          🗑️
+                        </button>
+                      )}
                     </div>
                   </div>
+                </div>
 
                   {/* Interactive Proofing Canvas with Markup SVG Overlay & Right-Click */}
                   <div
@@ -3995,7 +3975,6 @@ export default function MeetingRoom() {
                     </div>
                   </div>
                 </div>
-              </div>
             )}
 
             {/* DRAWER: PARTICIPANTS & HOST MODERATION */}
@@ -4208,37 +4187,37 @@ export default function MeetingRoom() {
       {/* Bottom Control Bar: Dual Layout (Mobile 5-Action Dock + Desktop Expanded Bar) */}
       
       {/* MOBILE CONTROL DOCK (< md screens) */}
-      <div className="flex md:hidden h-20 px-4 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-xl items-center justify-between shrink-0 z-40 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] w-full">
+      <div className="flex md:hidden h-20 px-3 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-xl items-center justify-between gap-2 shrink-0 z-40 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] w-full">
         {/* 1. Microphone Toggle */}
         <button
           type="button"
           onClick={handleToggleMic}
-          className={`w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+          className={`flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
             isMicMuted
-              ? "bg-red-500/20 text-red-400 border border-red-500/50"
-              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+              ? "bg-red-500/15 text-red-400 border border-red-500/40"
+              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
           }`}
           title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
           aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
         >
-          <span className="text-lg">{isMicMuted ? "🔇" : "🎙️"}</span>
-          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
+          <span className="text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
+          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
         </button>
 
         {/* 2. Camera Toggle */}
         <button
           type="button"
           onClick={handleToggleVideo}
-          className={`w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+          className={`flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
             isVideoOff
-              ? "bg-red-500/20 text-red-400 border border-red-500/50"
-              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+              ? "bg-red-500/15 text-red-400 border border-red-500/40"
+              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
           }`}
           title={isVideoOff ? "Start Video" : "Stop Video"}
           aria-label={isVideoOff ? "Start Camera" : "Stop Camera"}
         >
-          <span className="text-lg">{isVideoOff ? "🚫" : "📹"}</span>
-          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
+          <span className="text-base">{isVideoOff ? "🚫" : "📹"}</span>
+          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
         </button>
 
         {/* 3. In-Call Public Chat */}
@@ -4249,10 +4228,10 @@ export default function MeetingRoom() {
             setActiveDrawer(next);
             if (next === "chat") setUnreadChatCount(0);
           }}
-          className={`relative w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+          className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
             activeDrawer === "chat"
-              ? "bg-[var(--dept)] text-black border border-[var(--dept)]"
-              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+              ? "bg-[var(--dept)] text-black border border-[var(--dept)] font-extrabold"
+              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
           }`}
           title="Toggle In-Meeting Chat"
           aria-label="Toggle Chat"
@@ -4262,18 +4241,18 @@ export default function MeetingRoom() {
               {unreadChatCount}
             </span>
           )}
-          <span className="text-lg">💬</span>
-          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">Chat</span>
+          <span className="text-base">💬</span>
+          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">Chat</span>
         </button>
 
         {/* 4. More Actions Sheet Trigger (•••) */}
         <button
           type="button"
           onClick={() => setShowMobileActionsSheet(true)}
-          className={`relative w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
-            showMobileActionsSheet || isHandRaised || activeDrawer !== "none" && activeDrawer !== "chat"
-              ? "bg-cyan-500/25 text-cyan-300 border-2 border-cyan-400"
-              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+          className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
+            showMobileActionsSheet || isHandRaised || (activeDrawer !== "none" && activeDrawer !== "chat")
+              ? "bg-cyan-500/20 text-cyan-300 border border-cyan-400/60"
+              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
           }`}
           title="More Meeting Actions"
           aria-label="Open Meeting Tools"
@@ -4289,7 +4268,7 @@ export default function MeetingRoom() {
             </span>
           )}
           <span className="text-base">⚙️</span>
-          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">More</span>
+          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">Tools</span>
         </button>
 
         {/* 5. End / Leave Call */}
@@ -4297,23 +4276,23 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={handleEndForAll}
-            className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all shrink-0 border border-red-400/40"
+            className="flex-1 h-14 rounded-2xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all border border-red-400/40"
             title="End Meeting for All"
             aria-label="End Meeting"
           >
             <span className="text-base">📞</span>
-            <span className="font-meta text-[7px] uppercase font-bold mt-0.5">End</span>
+            <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">End</span>
           </button>
         ) : (
           <button
             type="button"
             onClick={handleLeaveMeeting}
-            className="w-12 h-12 rounded-full bg-red-600/90 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all shrink-0 border border-red-400/40"
+            className="flex-1 h-14 rounded-2xl bg-red-600/90 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all border border-red-400/40"
             title="Leave Meeting"
             aria-label="Leave Meeting"
           >
             <span className="text-base">📞</span>
-            <span className="font-meta text-[7px] uppercase font-bold mt-0.5">Leave</span>
+            <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">Leave</span>
           </button>
         )}
       </div>
