@@ -43,21 +43,41 @@ const DODGE_SPOTS = [
 ];
 
 /** Gamified bundle-savings meter — nudges toward the next discount tier. */
-function DiscountMeter({ subtotal, itemCount, money }: { subtotal: number; itemCount: number; money: (n: number) => string }) {
-  const TIERS = [{ at: 250, pct: 5 }, { at: 500, pct: 10 }, { at: 1000, pct: 15 }];
-  const next = TIERS.find((t) => subtotal < t.at);
-  const target = next ? next.at : TIERS[TIERS.length - 1].at;
-  const pct = Math.min(100, Math.round((subtotal / target) * 100));
+function DiscountMeter({
+  subtotal,
+  itemCount,
+  money,
+  discounts,
+}: {
+  subtotal: number;
+  itemCount: number;
+  money: (n: number) => string;
+  discounts?: { id: string; name: string; value: number; minSubtotal: number; minItems: number; active?: boolean }[];
+}) {
+  const activeDiscounts = (discounts && discounts.length > 0 ? discounts : [
+    { id: "tier-250", name: "5% Tier", value: 5, minSubtotal: 250, minItems: 2 },
+    { id: "tier-500", name: "10% Tier", value: 10, minSubtotal: 500, minItems: 2 },
+    { id: "tier-1000", name: "15% Tier", value: 15, minSubtotal: 1000, minItems: 2 },
+  ])
+    .filter((d) => d.active !== false)
+    .sort((a, b) => a.minSubtotal - b.minSubtotal);
+
+  const next = activeDiscounts.find((t) => subtotal < t.minSubtotal);
+  const target = next ? next.minSubtotal : (activeDiscounts[activeDiscounts.length - 1]?.minSubtotal ?? 1000);
+  const pct = Math.min(100, Math.round((subtotal / Math.max(1, target)) * 100));
+  const topTier = activeDiscounts[activeDiscounts.length - 1];
+
   const label = !next
-    ? "Top bundle tier unlocked — 15% off. Nicely done."
-    : itemCount < 2
-      ? `Add 2+ services and bundle discounts start at ${money(next.at)}.`
-      : `You're ${money(next.at - subtotal)} away from ${next.pct}% off.`;
+    ? `Top bundle tier unlocked — ${topTier ? `${topTier.value}%` : "15%"} off. Nicely done.`
+    : itemCount < (next.minItems ?? 2)
+      ? `Add ${next.minItems ?? 2}+ services and bundle discounts start at ${money(next.minSubtotal)}.`
+      : `You're ${money(next.minSubtotal - subtotal)} away from ${next.value}% off.`;
+
   return (
     <div className="mb-5" aria-label="Bundle savings progress">
       <div className="flex justify-between font-meta text-[9px] text-[var(--muted)] mb-1.5">
         <span>/bundle-savings</span>
-        <span className={next ? "" : "dept-accent"}>{next ? `${next.pct}% next` : "MAX TIER"}</span>
+        <span className={next ? "" : "dept-accent"}>{next ? `${next.value}% next` : "MAX TIER"}</span>
       </div>
       <div className="h-1 w-full" style={{ background: "var(--line)" }}>
         <div className="h-full dept-bg transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -118,7 +138,7 @@ function TierBurst({ tierId }: { tierId: string | null }) {
 
 export default function CustomPackage() {
   useDepartment("brand");
-  const { packages, services } = useDesignCatalog();
+  const { packages, services, categories, discounts } = useDesignCatalog();
   const pkg = useDesignPackage();
   const { user } = useAuth();
   const money = useMoney();
@@ -129,7 +149,6 @@ export default function CustomPackage() {
   const [busy, setBusy] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [mode, setMode] = useState<"quote" | "purchase">("quote");
-  const { categories } = useDesignCatalog();
   const briefRef = useRef<HTMLDivElement>(null);
 
   /* playful empty-package continue button state */
@@ -368,7 +387,7 @@ export default function CustomPackage() {
               ))}
             </div>
             <div className="p-6 border-t border-[var(--line-strong)]">
-              <DiscountMeter subtotal={pkg.subtotal} itemCount={pkg.count} money={money} />
+              <DiscountMeter subtotal={pkg.subtotal} itemCount={pkg.count} money={money} discounts={discounts} />
               <dl className="flex flex-col gap-1.5 text-sm">
                 <div className="flex justify-between"><dt className="text-[var(--muted)]">Subtotal</dt><dd>{money(pkg.subtotal)}</dd></div>
                 {pkg.discount && (

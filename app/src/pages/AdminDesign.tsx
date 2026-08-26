@@ -2,108 +2,1512 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   addManaged, listManaged, logAudit, removeManaged, updateManaged,
-  type ManagedItem, type ManagedKind,
+  type ManagedItem,
 } from "../lib/backend";
 import { useAuth } from "../lib/auth";
-import { isQuoteOnly, priceLabel } from "../lib/design";
+import {
+  isQuoteOnly, packageValue,
+  type DesignCategory, type DesignSize, type DesignOption, type DesignPackage, type DesignDiscount,
+  type SizeUnit, type Orientation, type FormatType, type AdjType, type OptionScope,
+} from "../lib/design";
 import { useDesignCatalog } from "../lib/design-shop";
+import { useMoney } from "../lib/money";
 
 /* ------------------------------------------------------------------
    STUDIO → DESIGN (PRD §32–§41, §58)
    Full no-code control of the graphic design commerce catalog:
    services (inline price editing, duplicate, deactivate, bulk ops,
    CSV import/export), categories, sizes, options, packages, bundle
-   discounts and the audit trail. Every write is audit-logged.
+   discounts and the audit trail. Every write is audit-logged and
+   broadcasted live to the store instantly.
 ------------------------------------------------------------------- */
 
-const inputCls = "bg-transparent border border-[var(--line)] px-3 py-2 text-sm outline-none focus:border-[var(--dept)] transition-colors w-full";
-const labelCls = "font-meta text-[9px] text-[var(--muted)] block";
+const inputCls = "bg-transparent border border-[var(--line)] px-3 py-2 text-sm outline-none focus:border-[var(--dept)] transition-colors w-full rounded-xl";
+const labelCls = "font-meta text-[9px] text-[var(--muted)] block font-semibold mb-1";
 
 async function mutate(fn: () => Promise<unknown>, ok: string) {
   try { await fn(); toast.success(ok); return true; }
   catch (e) { toast.error(e instanceof Error ? e.message : "Something went wrong"); return false; }
 }
 
-/* ============ generic entity manager (categories/sizes/options/packages/discounts) ============ */
+/* ============ CATEGORIES MANAGER ============ */
 
-interface FieldDef { key: string; label: string; area?: boolean; optional?: boolean; hint?: string }
-
-function EntityManager({ kind, fields, noun, keyField, blurb }: {
-  kind: ManagedKind; fields: FieldDef[]; noun: string; keyField: string; blurb: string;
-}) {
+function CategoriesManager() {
   const { user } = useAuth();
-  const [items, setItems] = useState<ManagedItem[]>([]);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const reload = () => listManaged(kind).then(setItems);
-  useEffect(() => { reload(); }, [kind]);
+  const { categories, services } = useDesignCatalog();
+  const [managed, setManaged] = useState<ManagedItem[]>([]);
+  const [slug, setSlug] = useState("");
+  const [name, setName] = useState("");
+  const [sort, setSort] = useState("1");
+  const [blurb, setBlurb] = useState("");
+  const [active, setActive] = useState(true);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const reload = () => listManaged("designCategories").then(setManaged);
+  useEffect(() => { reload(); }, []);
+
+  const managedIdBySlug = useMemo(() => {
+    const m = new Map<string, string>();
+    managed.forEach((x) => m.set(String(x.slug ?? ""), x.id));
+    return m;
+  }, [managed]);
+
+  const startEdit = (c: DesignCategory) => {
+    setSlug(c.slug);
+    setName(c.name);
+    setSort(String(c.sort ?? 99));
+    setBlurb(c.blurb ?? "");
+    setActive(c.active !== false);
+    setEditingSlug(c.slug);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setSlug("");
+    setName("");
+    setSort("1");
+    setBlurb("");
+    setActive(true);
+    setEditingSlug(null);
+  };
 
   const submit = async () => {
-    const missing = fields.find((f) => !f.optional && !draft[f.key]?.trim());
-    if (missing) { toast.error(`Fill in ${missing.label} first.`); return; }
-    const data: Record<string, unknown> = { ...draft };
-    ["w", "h", "price", "value", "sort", "minSubtotal", "minItems", "priority", "dpi"].forEach((k) => {
-      if (data[k] !== undefined && data[k] !== "") data[k] = Number(data[k]);
-    });
-    ["featured", "active", "allowCustomSize"].forEach((k) => {
-      if (data[k] !== undefined) data[k] = data[k] === "true" || data[k] === true;
-    });
-    if (typeof data.items === "string") { try { data.items = JSON.parse(data.items as string); } catch { /* keep */ } }
-    const auditAction = editingId ? `${noun}_updated` : `${noun}_created`;
+    if (!name.trim()) { toast.error("Category name is required."); return; }
+    const finalSlug = (slug.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, "-")).replace(/^-|-$/g, "");
+    const data = {
+      slug: finalSlug,
+      name: name.trim(),
+      sort: Number(sort) || 1,
+      blurb: blurb.trim(),
+      active,
+    };
+    const existingId = managedIdBySlug.get(finalSlug);
     const ok = await mutate(
-      () => (editingId ? updateManaged(kind, editingId, data) : addManaged(kind, data)),
-      editingId ? "Updated — live now" : "Added — live now"
+      () => (existingId ? updateManaged("designCategories", existingId, data) : addManaged("designCategories", data)),
+      editingSlug ? `Category "${name}" updated — live now` : `Category "${name}" added — live now`
     );
     if (ok) {
-      logAudit({ user: user?.email ?? "studio", action: auditAction, entity: `${kind}:${String(data[keyField])}`, after: data });
-      setDraft({}); setEditingId(null); reload();
+      logAudit({ user: user?.email ?? "studio", action: editingSlug ? "category_updated" : "category_created", entity: `category:${finalSlug}`, after: data });
+      cancelEdit();
+      reload();
     }
   };
 
+  const toggleActive = async (c: DesignCategory) => {
+    const nextActive = c.active === false;
+    const existingId = managedIdBySlug.get(c.slug);
+    const data = { ...c, active: nextActive };
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designCategories", existingId, data) : addManaged("designCategories", data)),
+      nextActive ? `"${c.name}" activated` : `"${c.name}" hidden`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "category_toggled", entity: `category:${c.slug}`, after: { active: nextActive } });
+      reload();
+    }
+  };
+
+  const revertOrDelete = async (c: DesignCategory) => {
+    const existingId = managedIdBySlug.get(c.slug);
+    if (!existingId) {
+      await toggleActive(c);
+      return;
+    }
+    const ok = await mutate(() => removeManaged("designCategories", existingId), "Removed override — reverted to default");
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "category_reverted", entity: `category:${c.slug}` });
+      reload();
+    }
+  };
+
+  const filtered = categories.filter((c) => {
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return c.name.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q) || (c.blurb ?? "").toLowerCase().includes(q);
+    }
+    return true;
+  });
+
   return (
-    <div>
-      <p className="font-meta text-[10px] text-[var(--muted)] mb-6 max-w-2xl">{blurb}</p>
-      <div className="border border-[var(--line-strong)] p-5 mb-6" style={{ background: "var(--panel)" }}>
+    <div className="space-y-6">
+      <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
+        Design categories (PRD §6) — organized sections in the Design Services Store and Catalog. Edits and additions sync live across all navigation points.
+      </p>
+
+      {/* Editor Card */}
+      <div className="border border-[var(--line-strong)] p-5 rounded-2xl bg-[var(--panel)] shadow-xs">
         <div className="flex items-center justify-between">
-          <span className="idx">/{editingId ? `edit-${noun}` : `add-${noun}`}</span>
-          {editingId && <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => { setEditingId(null); setDraft({}); }}>Cancel ✕</button>}
+          <span className="idx">/{editingSlug ? `edit-category (${editingSlug})` : "add-category"}</span>
+          {editingSlug && (
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]" onClick={cancelEdit}>
+              Cancel ✕
+            </button>
+          )}
         </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
-          {fields.map((f) => (
-            <label key={f.key} className={`${labelCls} ${f.area ? "sm:col-span-2 lg:col-span-3" : ""}`}>
-              {f.label.toUpperCase()}{f.optional ? " (OPT)" : ""}
-              {f.area
-                ? <textarea rows={2} className={`${inputCls} mt-1.5`} value={draft[f.key] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))} />
-                : <input className={`${inputCls} mt-1.5`} value={draft[f.key] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))} />}
-              {f.hint && <span className="block font-meta text-[8px] normal-case tracking-normal mt-1">{f.hint}</span>}
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          <label className={labelCls}>
+            CATEGORY NAME *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. Social Media Graphics" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            SLUG (URL KEY)
+            <input className={`${inputCls} mt-1`} placeholder="e.g. social-media" value={slug} onChange={(e) => setSlug(e.target.value)} disabled={!!editingSlug} />
+          </label>
+          <label className={labelCls}>
+            SORT ORDER #
+            <input type="number" min="1" className={`${inputCls} mt-1`} value={sort} onChange={(e) => setSort(e.target.value)} />
+          </label>
+          <div className="flex items-center pt-6">
+            <label className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold">
+              <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              ACTIVE / VISIBLE IN STORE
             </label>
-          ))}
-        </div>
-        <button className="btn btn-dept !py-2.5 mt-4" onClick={submit}>{editingId ? "Update" : "Add"}</button>
-      </div>
-      <div className="flex flex-col gap-2">
-        {items.map((it) => (
-          <div key={it.id} className="border border-[var(--line)] px-5 py-3 flex items-center justify-between gap-4 text-sm" style={{ background: "var(--panel)" }}>
-            <span className="truncate">{String(it[fields[1]?.key] ?? it[keyField] ?? "")}</span>
-            <span className="flex gap-4 shrink-0">
-              <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
-                onClick={() => { const d: Record<string, string> = {}; fields.forEach((f) => { d[f.key] = typeof it[f.key] === "object" ? JSON.stringify(it[f.key]) : String(it[f.key] ?? ""); }); setDraft(d); setEditingId(it.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                Edit
-              </button>
-              <button className="font-meta text-[10px] text-red-600"
-                onClick={async () => { const ok = await mutate(() => removeManaged(kind, it.id), "Removed"); if (ok) { logAudit({ user: user?.email ?? "studio", action: `${noun}_deleted`, entity: `${kind}:${String(it[keyField])}` }); reload(); } }}>
-                Remove
-              </button>
-            </span>
           </div>
-        ))}
-        {items.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">Nothing overridden yet — the shipped defaults are live.</p>}
+          <label className={`${labelCls} sm:col-span-2 lg:col-span-4`}>
+            DESCRIPTION / BLURB
+            <textarea rows={2} className={`${inputCls} mt-1`} placeholder="Short summary displayed on category headers and catalog filters..." value={blurb} onChange={(e) => setBlurb(e.target.value)} />
+          </label>
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button className="btn btn-dept !py-2 !px-4 text-xs font-bold rounded-xl" onClick={submit}>
+            {editingSlug ? "Save Category Changes" : "+ Add Category"}
+          </button>
+          {editingSlug && (
+            <button className="btn btn-ghost !py-2 !px-4 text-xs font-bold rounded-xl" onClick={cancelEdit}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter & Search */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="font-meta text-[10px] text-[var(--muted)] font-semibold">
+          {categories.length} Total Categories ({categories.filter((c) => c.active !== false).length} Active)
+        </span>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search categories by name, slug..."
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
+      </div>
+
+      {/* Categories Cards List */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map((c) => {
+          const isOverridden = managedIdBySlug.has(c.slug);
+          const svcCount = services.filter((s) => s.category === c.slug).length;
+          const isLive = c.active !== false;
+          return (
+            <div key={c.slug} className="border border-[var(--line)] p-4 rounded-2xl bg-[var(--panel)] flex flex-col justify-between gap-3 shadow-xs">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full border border-[var(--line)] bg-[var(--bg)] font-bold text-[var(--muted)]">
+                    Sort #{c.sort ?? 99}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`font-meta text-[8px] px-2 py-0.5 rounded-full border font-bold ${
+                      isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"
+                    }`}>
+                      {isLive ? "LIVE" : "HIDDEN"}
+                    </span>
+                    {isOverridden && (
+                      <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
+                        OVERRIDE
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <h4 className="font-display text-sm font-bold uppercase">{c.name}</h4>
+                <span className="font-meta text-[9px] text-[var(--muted)] block mt-0.5">/{c.slug}</span>
+                <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2">{c.blurb || "No description set."}</p>
+                <span className="font-meta text-[9px] dept-accent font-bold mt-2 block">
+                  {svcCount} service{svcCount === 1 ? "" : "s"} in this category
+                </span>
+              </div>
+
+              <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => startEdit(c)}
+                  className="font-meta text-[10px] dept-accent font-bold hover:underline"
+                >
+                  ✏️ Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleActive(c)}
+                  className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  {isLive ? "Hide" : "Activate"}
+                </button>
+                {isOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => revertOrDelete(c)}
+                    className="font-meta text-[10px] text-red-500 hover:underline"
+                  >
+                    Revert
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/* ============ services manager (PRD §33–§35, §38–§39) ============ */
+/* ============ SIZES MANAGER ============ */
+
+function SizesManager() {
+  const { user } = useAuth();
+  const { sizes, services } = useDesignCatalog();
+  const [managed, setManaged] = useState<ManagedItem[]>([]);
+  const [filterFormat, setFilterFormat] = useState<"ALL" | "digital" | "print" | "large_format">("ALL");
+  const [search, setSearch] = useState("");
+
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [w, setW] = useState("1080");
+  const [h, setH] = useState("1080");
+  const [unit, setUnit] = useState<SizeUnit>("px");
+  const [orientation, setOrientation] = useState<Orientation>("square");
+  const [format, setFormat] = useState<FormatType>("digital");
+  const [bleed, setBleed] = useState("");
+  const [safeArea, setSafeArea] = useState("");
+  const [dpi, setDpi] = useState("300");
+  const [colorMode, setColorMode] = useState("RGB");
+  const [fileFormat, setFileFormat] = useState("PNG / JPG");
+  const [active, setActive] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const reload = () => listManaged("designSizes").then(setManaged);
+  useEffect(() => { reload(); }, []);
+
+  const managedIdById = useMemo(() => {
+    const m = new Map<string, string>();
+    managed.forEach((x) => m.set(String(x.id ?? ""), x.id));
+    return m;
+  }, [managed]);
+
+  const startEdit = (s: DesignSize) => {
+    setId(s.id);
+    setName(s.name);
+    setW(String(s.w));
+    setH(String(s.h));
+    setUnit(s.unit);
+    setOrientation(s.orientation);
+    setFormat(s.format);
+    setBleed(s.bleed ?? "");
+    setSafeArea(s.safeArea ?? "");
+    setDpi(s.dpi ? String(s.dpi) : "300");
+    setColorMode(s.colorMode ?? "RGB");
+    setFileFormat(s.fileFormat ?? "PNG / JPG");
+    setActive(s.active !== false);
+    setEditingId(s.id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setId("");
+    setName("");
+    setW("1080");
+    setH("1080");
+    setUnit("px");
+    setOrientation("square");
+    setFormat("digital");
+    setBleed("");
+    setSafeArea("");
+    setDpi("300");
+    setColorMode("RGB");
+    setFileFormat("PNG / JPG");
+    setActive(true);
+    setEditingId(null);
+  };
+
+  const submit = async () => {
+    if (!name.trim() || !id.trim()) { toast.error("Size ID and Name are required."); return; }
+    const data = {
+      id: id.trim(),
+      name: name.trim(),
+      w: Number(w) || 0,
+      h: Number(h) || 0,
+      unit,
+      orientation,
+      format,
+      bleed: bleed.trim() || undefined,
+      safeArea: safeArea.trim() || undefined,
+      dpi: Number(dpi) || 300,
+      colorMode: colorMode.trim() || undefined,
+      fileFormat: fileFormat.trim() || undefined,
+      active,
+    };
+    const existingId = managedIdById.get(id.trim());
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designSizes", existingId, data) : addManaged("designSizes", data)),
+      editingId ? `Size "${name}" updated — live now` : `Size "${name}" added — live now`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: editingId ? "size_updated" : "size_created", entity: `size:${id.trim()}`, after: data });
+      cancelEdit();
+      reload();
+    }
+  };
+
+  const toggleActive = async (s: DesignSize) => {
+    const nextActive = s.active === false;
+    const existingId = managedIdById.get(s.id);
+    const data = { ...s, active: nextActive };
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designSizes", existingId, data) : addManaged("designSizes", data)),
+      nextActive ? `"${s.name}" activated` : `"${s.name}" hidden`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "size_toggled", entity: `size:${s.id}`, after: { active: nextActive } });
+      reload();
+    }
+  };
+
+  const revertOrDelete = async (s: DesignSize) => {
+    const existingId = managedIdById.get(s.id);
+    if (!existingId) {
+      await toggleActive(s);
+      return;
+    }
+    const ok = await mutate(() => removeManaged("designSizes", existingId), "Removed override — reverted to default");
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "size_reverted", entity: `size:${s.id}` });
+      reload();
+    }
+  };
+
+  const filtered = sizes.filter((s) => {
+    if (filterFormat !== "ALL" && s.format !== filterFormat) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || `${s.w}x${s.h}`.includes(q);
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-6">
+      <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
+        Size presets (PRD §8/§13) — dimensions, units, orientation, and production specs. Reusable across services and integrated into the Kon10 Vector Editor.
+      </p>
+
+      {/* Editor Card */}
+      <div className="border border-[var(--line-strong)] p-5 rounded-2xl bg-[var(--panel)] shadow-xs">
+        <div className="flex items-center justify-between">
+          <span className="idx">/{editingId ? `edit-size (${editingId})` : "add-size-preset"}</span>
+          {editingId && (
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]" onClick={cancelEdit}>
+              Cancel ✕
+            </button>
+          )}
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          <label className={labelCls}>
+            SIZE ID *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. d-ig-post" value={id} onChange={(e) => setId(e.target.value)} disabled={!!editingId} />
+          </label>
+          <label className={labelCls}>
+            SIZE NAME *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. Instagram Square Post" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            WIDTH *
+            <input type="number" step="any" className={`${inputCls} mt-1`} value={w} onChange={(e) => setW(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            HEIGHT *
+            <input type="number" step="any" className={`${inputCls} mt-1`} value={h} onChange={(e) => setH(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            UNIT
+            <select className={`${inputCls} mt-1`} value={unit} onChange={(e) => setUnit(e.target.value as SizeUnit)}>
+              {["px", "in", "mm", "cm", "ft"].map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </label>
+          <label className={labelCls}>
+            ORIENTATION
+            <select className={`${inputCls} mt-1`} value={orientation} onChange={(e) => setOrientation(e.target.value as Orientation)}>
+              {["square", "portrait", "landscape", "auto"].map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+          <label className={labelCls}>
+            FORMAT
+            <select className={`${inputCls} mt-1`} value={format} onChange={(e) => setFormat(e.target.value as FormatType)}>
+              {["digital", "print", "large_format"].map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
+          <label className={labelCls}>
+            DPI
+            <input type="number" className={`${inputCls} mt-1`} value={dpi} onChange={(e) => setDpi(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            BLEED (OPTIONAL)
+            <input className={`${inputCls} mt-1`} placeholder="e.g. 0.125 in" value={bleed} onChange={(e) => setBleed(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            SAFE AREA (OPTIONAL)
+            <input className={`${inputCls} mt-1`} placeholder="e.g. 0.25 in" value={safeArea} onChange={(e) => setSafeArea(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            COLOR MODE
+            <input className={`${inputCls} mt-1`} placeholder="e.g. CMYK or RGB" value={colorMode} onChange={(e) => setColorMode(e.target.value)} />
+          </label>
+          <div className="flex items-center pt-6">
+            <label className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold">
+              <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              ACTIVE IN CATALOG
+            </label>
+          </div>
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button className="btn btn-dept !py-2 !px-4 text-xs font-bold rounded-xl" onClick={submit}>
+            {editingId ? "Save Size Changes" : "+ Add Size Preset"}
+          </button>
+          {editingId && (
+            <button className="btn btn-ghost !py-2 !px-4 text-xs font-bold rounded-xl" onClick={cancelEdit}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter Format Pills & Search */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          {[
+            { id: "ALL", label: `All Sizes (${sizes.length})` },
+            { id: "digital", label: `Digital (${sizes.filter((s) => s.format === "digital").length})` },
+            { id: "print", label: `Print (${sizes.filter((s) => s.format === "print").length})` },
+            { id: "large_format", label: `Large Format (${sizes.filter((s) => s.format === "large_format").length})` },
+          ].map((pill) => (
+            <button
+              key={pill.id}
+              onClick={() => setFilterFormat(pill.id as any)}
+              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+                filterFormat === pill.id
+                  ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs"
+                  : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              }`}
+            >
+              {pill.label}
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search sizes by name, ID, dimensions…"
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
+      </div>
+
+      {/* Sizes Cards Grid */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {filtered.map((s) => {
+          const isOverridden = managedIdById.has(s.id);
+          const isLive = s.active !== false;
+          const usageCount = services.filter((svc) => svc.sizes?.some((z) => z.sizeId === s.id)).length;
+          return (
+            <div key={s.id} className="border border-[var(--line)] p-4 rounded-2xl bg-[var(--panel)] flex flex-col justify-between gap-3 shadow-xs">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full border border-[var(--line)] bg-[var(--bg)] font-bold uppercase text-[var(--muted)]">
+                    {s.format} · {s.orientation}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`font-meta text-[8px] px-2 py-0.5 rounded-full border font-bold ${
+                      isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"
+                    }`}>
+                      {isLive ? "LIVE" : "HIDDEN"}
+                    </span>
+                    {isOverridden && (
+                      <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
+                        OVERRIDE
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <h4 className="font-display text-xs font-bold uppercase truncate">{s.name}</h4>
+                <p className="font-display font-bold text-sm dept-accent mt-1">
+                  {s.w} × {s.h} {s.unit}
+                </p>
+                <span className="font-meta text-[8.5px] text-[var(--muted)] block mt-1">ID: {s.id} · {s.dpi ?? 300} DPI · {s.colorMode ?? "RGB"}</span>
+                {s.bleed && <span className="font-meta text-[8px] text-[var(--muted)] block">Bleed: {s.bleed}</span>}
+                <span className="font-meta text-[8.5px] text-[var(--muted)] mt-2 block">
+                  Used by {usageCount} service{usageCount === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => startEdit(s)}
+                  className="font-meta text-[10px] dept-accent font-bold hover:underline"
+                >
+                  ✏️ Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleActive(s)}
+                  className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  {isLive ? "Hide" : "Activate"}
+                </button>
+                {isOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => revertOrDelete(s)}
+                    className="font-meta text-[10px] text-red-500 hover:underline"
+                  >
+                    Revert
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============ OPTIONS MANAGER ============ */
+
+function OptionsManager() {
+  const { user } = useAuth();
+  const money = useMoney();
+  const { options, services } = useDesignCatalog();
+  const [managed, setManaged] = useState<ManagedItem[]>([]);
+  const [search, setSearch] = useState("");
+
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [pricing, setPricing] = useState<AdjType>("fixed");
+  const [price, setPrice] = useState("50");
+  const [scope, setScope] = useState<OptionScope>("project");
+  const [description, setDescription] = useState("");
+  const [active, setActive] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const reload = () => listManaged("designOptions").then(setManaged);
+  useEffect(() => { reload(); }, []);
+
+  const managedIdById = useMemo(() => {
+    const m = new Map<string, string>();
+    managed.forEach((x) => m.set(String(x.id ?? ""), x.id));
+    return m;
+  }, [managed]);
+
+  const startEdit = (o: DesignOption) => {
+    setId(o.id);
+    setName(o.name);
+    setPricing(o.pricing);
+    setPrice(String(o.price));
+    setScope(o.scope);
+    setDescription(o.description ?? "");
+    setActive(o.active !== false);
+    setEditingId(o.id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setId("");
+    setName("");
+    setPricing("fixed");
+    setPrice("50");
+    setScope("project");
+    setDescription("");
+    setActive(true);
+    setEditingId(null);
+  };
+
+  const submit = async () => {
+    if (!name.trim() || !id.trim()) { toast.error("Option ID and Name are required."); return; }
+    const data = {
+      id: id.trim(),
+      name: name.trim(),
+      pricing,
+      price: Number(price) || 0,
+      scope,
+      description: description.trim(),
+      active,
+    };
+    const existingId = managedIdById.get(id.trim());
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designOptions", existingId, data) : addManaged("designOptions", data)),
+      editingId ? `Option "${name}" updated — live now` : `Option "${name}" added — live now`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: editingId ? "option_updated" : "option_created", entity: `option:${id.trim()}`, after: data });
+      cancelEdit();
+      reload();
+    }
+  };
+
+  const toggleActive = async (o: DesignOption) => {
+    const nextActive = o.active === false;
+    const existingId = managedIdById.get(o.id);
+    const data = { ...o, active: nextActive };
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designOptions", existingId, data) : addManaged("designOptions", data)),
+      nextActive ? `"${o.name}" activated` : `"${o.name}" hidden`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "option_toggled", entity: `option:${o.id}`, after: { active: nextActive } });
+      reload();
+    }
+  };
+
+  const revertOrDelete = async (o: DesignOption) => {
+    const existingId = managedIdById.get(o.id);
+    if (!existingId) {
+      await toggleActive(o);
+      return;
+    }
+    const ok = await mutate(() => removeManaged("designOptions", existingId), "Removed override — reverted to default");
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "option_reverted", entity: `option:${o.id}` });
+      reload();
+    }
+  };
+
+  const filtered = options.filter((o) => {
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return o.name.toLowerCase().includes(q) || o.id.toLowerCase().includes(q) || o.description.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-6">
+      <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
+        Production add-on options (PRD §14) — optional enhancements selectable during service customization (e.g. Rush 24h, Vector Source Files, Foil Stamping).
+      </p>
+
+      {/* Editor Card */}
+      <div className="border border-[var(--line-strong)] p-5 rounded-2xl bg-[var(--panel)] shadow-xs">
+        <div className="flex items-center justify-between">
+          <span className="idx">/{editingId ? `edit-option (${editingId})` : "add-addon-option"}</span>
+          {editingId && (
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]" onClick={cancelEdit}>
+              Cancel ✕
+            </button>
+          )}
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          <label className={labelCls}>
+            OPTION ID *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. rush-24h" value={id} onChange={(e) => setId(e.target.value)} disabled={!!editingId} />
+          </label>
+          <label className={labelCls}>
+            OPTION NAME *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. 24h Rush Delivery" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            PRICING MODE
+            <select className={`${inputCls} mt-1`} value={pricing} onChange={(e) => setPricing(e.target.value as AdjType)}>
+              <option value="fixed">Fixed Dollar ($)</option>
+              <option value="percentage">Percentage of Line Base (%)</option>
+            </select>
+          </label>
+          <label className={labelCls}>
+            PRICE ({pricing === "fixed" ? "USD $" : "%"}) *
+            <input type="number" min="0" className={`${inputCls} mt-1`} value={price} onChange={(e) => setPrice(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            BILLING SCOPE
+            <select className={`${inputCls} mt-1`} value={scope} onChange={(e) => setScope(e.target.value as OptionScope)}>
+              <option value="project">Per Project (one-time fee)</option>
+              <option value="design">Per Design (multiplies by design count)</option>
+              <option value="quantity">Per Quantity (multiplies by print quantity)</option>
+            </select>
+          </label>
+          <div className="flex items-center pt-6 lg:col-span-3">
+            <label className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold">
+              <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              ACTIVE / AVAILABLE IN CUSTOMIZATION
+            </label>
+          </div>
+          <label className={`${labelCls} sm:col-span-2 lg:col-span-4`}>
+            DESCRIPTION
+            <textarea rows={2} className={`${inputCls} mt-1`} placeholder="Explain what the client receives with this add-on..." value={description} onChange={(e) => setDescription(e.target.value)} />
+          </label>
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button className="btn btn-dept !py-2 !px-4 text-xs font-bold rounded-xl" onClick={submit}>
+            {editingId ? "Save Option Changes" : "+ Add Option"}
+          </button>
+          {editingId && (
+            <button className="btn btn-ghost !py-2 !px-4 text-xs font-bold rounded-xl" onClick={cancelEdit}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Search & Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="font-meta text-[10px] text-[var(--muted)] font-semibold">
+          {options.length} Production Add-Ons ({options.filter((o) => o.active !== false).length} Active)
+        </span>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search options by name, ID, scope..."
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
+      </div>
+
+      {/* Options Cards Grid */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map((o) => {
+          const isOverridden = managedIdById.has(o.id);
+          const isLive = o.active !== false;
+          const usageCount = services.filter((s) => s.optionIds?.includes(o.id)).length;
+          return (
+            <div key={o.id} className="border border-[var(--line)] p-4 rounded-2xl bg-[var(--panel)] flex flex-col justify-between gap-3 shadow-xs">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full border border-[var(--line)] bg-[var(--bg)] font-bold uppercase text-[var(--muted)]">
+                    Scope: {o.scope}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`font-meta text-[8px] px-2 py-0.5 rounded-full border font-bold ${
+                      isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"
+                    }`}>
+                      {isLive ? "LIVE" : "HIDDEN"}
+                    </span>
+                    {isOverridden && (
+                      <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
+                        OVERRIDE
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <h4 className="font-display text-sm font-bold uppercase">{o.name}</h4>
+                <p className="font-display font-bold text-sm dept-accent mt-1">
+                  {o.pricing === "percentage" ? `+${o.price}% of base` : `+${money(o.price)}`}
+                </p>
+                <span className="font-meta text-[8.5px] text-[var(--muted)] block mt-0.5">ID: {o.id}</span>
+                <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2">{o.description || "No description set."}</p>
+                <span className="font-meta text-[8.5px] text-[var(--muted)] mt-2 block">
+                  Enabled on {usageCount} service{usageCount === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => startEdit(o)}
+                  className="font-meta text-[10px] dept-accent font-bold hover:underline"
+                >
+                  ✏️ Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleActive(o)}
+                  className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  {isLive ? "Hide" : "Activate"}
+                </button>
+                {isOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => revertOrDelete(o)}
+                    className="font-meta text-[10px] text-red-500 hover:underline"
+                  >
+                    Revert
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============ PACKAGES MANAGER ============ */
+
+function PackagesManager() {
+  const { user } = useAuth();
+  const money = useMoney();
+  const { packages, services } = useDesignCatalog();
+  const [managed, setManaged] = useState<ManagedItem[]>([]);
+  const [search, setSearch] = useState("");
+
+  const [slug, setSlug] = useState("");
+  const [name, setName] = useState("");
+  const [pricing, setPricing] = useState<"calculated" | "fixed" | "pct_off" | "fixed_off">("calculated");
+  const [price, setPrice] = useState("");
+  const [value, setValue] = useState("20");
+  const [featured, setFeatured] = useState(false);
+  const [blurb, setBlurb] = useState("");
+  const [items, setItems] = useState<{ slug: string; qty: number }[]>([]);
+  const [active, setActive] = useState(true);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+
+  // Service picker for adding items visually
+  const [pickerSlug, setPickerSlug] = useState("");
+  const [pickerQty, setPickerQty] = useState("1");
+
+  const reload = () => listManaged("designPackages").then(setManaged);
+  useEffect(() => { reload(); }, []);
+
+  const managedIdBySlug = useMemo(() => {
+    const m = new Map<string, string>();
+    managed.forEach((x) => m.set(String(x.slug ?? ""), x.id));
+    return m;
+  }, [managed]);
+
+  const startEdit = (p: DesignPackage) => {
+    setSlug(p.slug);
+    setName(p.name);
+    setPricing(p.pricing);
+    setPrice(p.price ? String(p.price) : "");
+    setValue(p.value ? String(p.value) : "20");
+    setFeatured(!!p.featured);
+    setBlurb(p.blurb ?? "");
+    setItems(Array.isArray(p.items) ? p.items : []);
+    setActive(p.active !== false);
+    setEditingSlug(p.slug);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setSlug("");
+    setName("");
+    setPricing("calculated");
+    setPrice("");
+    setValue("20");
+    setFeatured(false);
+    setBlurb("");
+    setItems([]);
+    setActive(true);
+    setEditingSlug(null);
+  };
+
+  const addItemToPackage = () => {
+    if (!pickerSlug) return;
+    const qty = Number(pickerQty) || 1;
+    setItems((prev) => {
+      const idx = prev.findIndex((x) => x.slug === pickerSlug);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: next[idx].qty + qty };
+        return next;
+      }
+      return [...prev, { slug: pickerSlug, qty }];
+    });
+    setPickerSlug("");
+    setPickerQty("1");
+  };
+
+  const removeItem = (sl: string) => {
+    setItems((prev) => prev.filter((x) => x.slug !== sl));
+  };
+
+  const submit = async () => {
+    if (!name.trim() || !slug.trim()) { toast.error("Package Slug and Name are required."); return; }
+    if (items.length === 0) { toast.error("Add at least one design service to this package."); return; }
+    const data = {
+      slug: slug.trim(),
+      name: name.trim(),
+      pricing,
+      price: pricing === "fixed" && price ? Number(price) : undefined,
+      value: (pricing === "pct_off" || pricing === "fixed_off") && value ? Number(value) : undefined,
+      featured,
+      blurb: blurb.trim(),
+      items,
+      active,
+    };
+    const existingId = managedIdBySlug.get(slug.trim());
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designPackages", existingId, data) : addManaged("designPackages", data)),
+      editingSlug ? `Package "${name}" updated — live now` : `Package "${name}" added — live now`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: editingSlug ? "package_updated" : "package_created", entity: `package:${slug.trim()}`, after: data });
+      cancelEdit();
+      reload();
+    }
+  };
+
+  const toggleActive = async (p: DesignPackage) => {
+    const nextActive = p.active === false;
+    const existingId = managedIdBySlug.get(p.slug);
+    const data = { ...p, active: nextActive };
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designPackages", existingId, data) : addManaged("designPackages", data)),
+      nextActive ? `"${p.name}" activated` : `"${p.name}" hidden`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "package_toggled", entity: `package:${p.slug}`, after: { active: nextActive } });
+      reload();
+    }
+  };
+
+  const revertOrDelete = async (p: DesignPackage) => {
+    const existingId = managedIdBySlug.get(p.slug);
+    if (!existingId) {
+      await toggleActive(p);
+      return;
+    }
+    const ok = await mutate(() => removeManaged("designPackages", existingId), "Removed override — reverted to default");
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "package_reverted", entity: `package:${p.slug}` });
+      reload();
+    }
+  };
+
+  const filtered = packages.filter((p) => {
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return p.name.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q) || p.blurb.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-6">
+      <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
+        Predefined design packages (PRD §21–§23) — bundled service packages featured in the Custom Package Builder and Design Store.
+      </p>
+
+      {/* Editor Card */}
+      <div className="border border-[var(--line-strong)] p-5 rounded-2xl bg-[var(--panel)] shadow-xs">
+        <div className="flex items-center justify-between">
+          <span className="idx">/{editingSlug ? `edit-package (${editingSlug})` : "add-design-package"}</span>
+          {editingSlug && (
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]" onClick={cancelEdit}>
+              Cancel ✕
+            </button>
+          )}
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          <label className={labelCls}>
+            PACKAGE SLUG *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. brand-identity-suite" value={slug} onChange={(e) => setSlug(e.target.value)} disabled={!!editingSlug} />
+          </label>
+          <label className={labelCls}>
+            PACKAGE NAME *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. Brand Identity Suite" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            PRICING MODE
+            <select className={`${inputCls} mt-1`} value={pricing} onChange={(e) => setPricing(e.target.value as any)}>
+              <option value="calculated">Calculated (Sum of standard services)</option>
+              <option value="pct_off">Percentage Off Bundle (%)</option>
+              <option value="fixed">Fixed Package Price ($)</option>
+              <option value="fixed_off">Fixed Dollar Discount ($ Off)</option>
+            </select>
+          </label>
+          {pricing === "fixed" && (
+            <label className={labelCls}>
+              FIXED PRICE (USD $) *
+              <input type="number" min="0" className={`${inputCls} mt-1`} value={price} onChange={(e) => setPrice(e.target.value)} />
+            </label>
+          )}
+          {(pricing === "pct_off" || pricing === "fixed_off") && (
+            <label className={labelCls}>
+              DISCOUNT AMOUNT ({pricing === "pct_off" ? "% Off" : "$ Off"}) *
+              <input type="number" min="0" className={`${inputCls} mt-1`} value={value} onChange={(e) => setValue(e.target.value)} />
+            </label>
+          )}
+          <div className="flex items-center pt-6">
+            <label className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold mr-4">
+              <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={featured} onChange={(e) => setFeatured(e.target.checked)} />
+              FEATURED
+            </label>
+            <label className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold">
+              <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              ACTIVE
+            </label>
+          </div>
+          <label className={`${labelCls} sm:col-span-2 lg:col-span-4`}>
+            DESCRIPTION / BLURB
+            <textarea rows={2} className={`${inputCls} mt-1`} placeholder="Highlights what this package delivers and why clients save..." value={blurb} onChange={(e) => setBlurb(e.target.value)} />
+          </label>
+        </div>
+
+        {/* Visual Package Item Picker */}
+        <div className="mt-4 pt-4 border-t border-[var(--line)]">
+          <span className="font-meta text-[10px] font-bold uppercase tracking-wider block mb-2">
+            Included Services in Package ({items.length})
+          </span>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <select
+              className={`${inputCls} !w-auto !py-1.5 text-xs font-bold`}
+              value={pickerSlug}
+              onChange={(e) => setPickerSlug(e.target.value)}
+              aria-label="Pick service to add"
+            >
+              <option value="">Select a design service to add…</option>
+              {services.map((s) => (
+                <option key={s.slug} value={s.slug}>
+                  {s.name} ({money(s.price)})
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              className={`${inputCls} !w-20 !py-1.5 text-xs`}
+              value={pickerQty}
+              onChange={(e) => setPickerQty(e.target.value)}
+              aria-label="Service quantity"
+            />
+            <button
+              type="button"
+              className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] font-bold rounded-xl"
+              onClick={addItemToPackage}
+            >
+              + Add to Package
+            </button>
+          </div>
+
+          {items.length === 0 ? (
+            <p className="font-meta text-[10px] text-amber-600">No services added yet. Pick a service above to bundle it.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {items.map((it) => {
+                const s = services.find((x) => x.slug === it.slug);
+                return (
+                  <span key={it.slug} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-xs font-bold">
+                    <span>{it.qty}×</span>
+                    <span>{s?.name ?? it.slug}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeItem(it.slug)}
+                      className="text-red-500 hover:text-red-700 ml-1 font-bold"
+                      title="Remove item"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5 flex gap-2">
+          <button className="btn btn-dept !py-2 !px-4 text-xs font-bold rounded-xl" onClick={submit}>
+            {editingSlug ? "Save Package Changes" : "+ Add Package"}
+          </button>
+          {editingSlug && (
+            <button className="btn btn-ghost !py-2 !px-4 text-xs font-bold rounded-xl" onClick={cancelEdit}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="font-meta text-[10px] text-[var(--muted)] font-semibold">
+          {packages.length} Predefined Packages ({packages.filter((p) => p.active !== false).length} Active)
+        </span>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search packages by name, slug..."
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
+      </div>
+
+      {/* Packages Cards Grid */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map((p) => {
+          const isOverridden = managedIdBySlug.has(p.slug);
+          const isLive = p.active !== false;
+          const pkgTotal = packageValue(p, services);
+          return (
+            <div key={p.slug} className="border border-[var(--line)] p-4 rounded-2xl bg-[var(--panel)] flex flex-col justify-between gap-3 shadow-xs">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full border border-[var(--line)] bg-[var(--bg)] font-bold uppercase text-[var(--muted)]">
+                    {p.pricing.replace("_", " ")}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {p.featured && (
+                      <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 font-bold">
+                        FEATURED
+                      </span>
+                    )}
+                    <span className={`font-meta text-[8px] px-2 py-0.5 rounded-full border font-bold ${
+                      isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"
+                    }`}>
+                      {isLive ? "LIVE" : "HIDDEN"}
+                    </span>
+                    {isOverridden && (
+                      <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
+                        OVERRIDE
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <h4 className="font-display text-sm font-bold uppercase">{p.name}</h4>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="font-display font-bold text-base dept-accent">
+                    {money(pkgTotal.price)}
+                  </span>
+                  {pkgTotal.savings > 0 && (
+                    <span className="font-meta text-[10px] text-[var(--muted)] line-through">
+                      {money(pkgTotal.regular)}
+                    </span>
+                  )}
+                  {pkgTotal.savings > 0 && (
+                    <span className="font-meta text-[9px] text-emerald-600 font-bold">
+                      Save {money(pkgTotal.savings)}
+                    </span>
+                  )}
+                </div>
+                <span className="font-meta text-[8.5px] text-[var(--muted)] block mt-0.5">/{p.slug}</span>
+                <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2">{p.blurb || "No description set."}</p>
+
+                {/* Included items summary */}
+                <div className="mt-3 pt-2 border-t border-[var(--line)]">
+                  <span className="font-meta text-[8.5px] text-[var(--muted)] uppercase font-bold block mb-1">
+                    Includes {p.items?.length ?? 0} Services:
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {p.items?.map((it) => {
+                      const s = services.find((x) => x.slug === it.slug);
+                      return (
+                        <span key={it.slug} className="font-meta text-[8.5px] px-2 py-0.5 rounded-md bg-[var(--bg)] border border-[var(--line)]">
+                          {it.qty}× {s?.name ?? it.slug}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => startEdit(p)}
+                  className="font-meta text-[10px] dept-accent font-bold hover:underline"
+                >
+                  ✏️ Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleActive(p)}
+                  className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  {isLive ? "Hide" : "Activate"}
+                </button>
+                {isOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => revertOrDelete(p)}
+                    className="font-meta text-[10px] text-red-500 hover:underline"
+                  >
+                    Revert
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============ DISCOUNTS MANAGER ============ */
+
+function DiscountsManager() {
+  const { user } = useAuth();
+  const money = useMoney();
+  const { discounts } = useDesignCatalog();
+  const [managed, setManaged] = useState<ManagedItem[]>([]);
+  const [search, setSearch] = useState("");
+
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [type, setType] = useState<"percentage" | "fixed">("percentage");
+  const [value, setValue] = useState("10");
+  const [minSubtotal, setMinSubtotal] = useState("500");
+  const [minItems, setMinItems] = useState("2");
+  const [priority, setPriority] = useState("2");
+  const [active, setActive] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const reload = () => listManaged("designDiscounts").then(setManaged);
+  useEffect(() => { reload(); }, []);
+
+  const managedIdById = useMemo(() => {
+    const m = new Map<string, string>();
+    managed.forEach((x) => m.set(String(x.id ?? ""), x.id));
+    return m;
+  }, [managed]);
+
+  const startEdit = (d: DesignDiscount) => {
+    setId(d.id);
+    setName(d.name);
+    setType(d.type);
+    setValue(String(d.value));
+    setMinSubtotal(String(d.minSubtotal));
+    setMinItems(String(d.minItems));
+    setPriority(String(d.priority));
+    setActive(d.active !== false);
+    setEditingId(d.id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setId("");
+    setName("");
+    setType("percentage");
+    setValue("10");
+    setMinSubtotal("500");
+    setMinItems("2");
+    setPriority("2");
+    setActive(true);
+    setEditingId(null);
+  };
+
+  const submit = async () => {
+    if (!name.trim() || !id.trim()) { toast.error("Discount Tier ID and Name are required."); return; }
+    const data = {
+      id: id.trim(),
+      name: name.trim(),
+      type,
+      value: Number(value) || 0,
+      minSubtotal: Number(minSubtotal) || 0,
+      minItems: Number(minItems) || 2,
+      priority: Number(priority) || 1,
+      active,
+    };
+    const existingId = managedIdById.get(id.trim());
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designDiscounts", existingId, data) : addManaged("designDiscounts", data)),
+      editingId ? `Discount tier "${name}" updated — live now` : `Discount tier "${name}" added — live now`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: editingId ? "discount_updated" : "discount_created", entity: `discount:${id.trim()}`, after: data });
+      cancelEdit();
+      reload();
+    }
+  };
+
+  const toggleActive = async (d: DesignDiscount) => {
+    const nextActive = d.active === false;
+    const existingId = managedIdById.get(d.id);
+    const data = { ...d, active: nextActive };
+    const ok = await mutate(
+      () => (existingId ? updateManaged("designDiscounts", existingId, data) : addManaged("designDiscounts", data)),
+      nextActive ? `"${d.name}" activated` : `"${d.name}" hidden`
+    );
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "discount_toggled", entity: `discount:${d.id}`, after: { active: nextActive } });
+      reload();
+    }
+  };
+
+  const revertOrDelete = async (d: DesignDiscount) => {
+    const existingId = managedIdById.get(d.id);
+    if (!existingId) {
+      await toggleActive(d);
+      return;
+    }
+    const ok = await mutate(() => removeManaged("designDiscounts", existingId), "Removed override — reverted to default");
+    if (ok) {
+      logAudit({ user: user?.email ?? "studio", action: "discount_reverted", entity: `discount:${d.id}` });
+      reload();
+    }
+  };
+
+  const filtered = discounts.filter((d) => {
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-6">
+      <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
+        Automatic bundle discounts (PRD §20) — applied automatically in Custom Package Builder and Checkout when order subtotal and item count criteria are met.
+      </p>
+
+      {/* Editor Card */}
+      <div className="border border-[var(--line-strong)] p-5 rounded-2xl bg-[var(--panel)] shadow-xs">
+        <div className="flex items-center justify-between">
+          <span className="idx">/{editingId ? `edit-discount-tier (${editingId})` : "add-discount-tier"}</span>
+          {editingId && (
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]" onClick={cancelEdit}>
+              Cancel ✕
+            </button>
+          )}
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          <label className={labelCls}>
+            TIER ID *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. tier-250" value={id} onChange={(e) => setId(e.target.value)} disabled={!!editingId} />
+          </label>
+          <label className={labelCls}>
+            TIER NAME *
+            <input className={`${inputCls} mt-1`} placeholder="e.g. Starter Bundle Savings" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            DISCOUNT TYPE
+            <select className={`${inputCls} mt-1`} value={type} onChange={(e) => setType(e.target.value as any)}>
+              <option value="percentage">Percentage Off (%)</option>
+              <option value="fixed">Fixed Dollar Off ($)</option>
+            </select>
+          </label>
+          <label className={labelCls}>
+            DISCOUNT VALUE ({type === "percentage" ? "%" : "USD $"}) *
+            <input type="number" min="0" className={`${inputCls} mt-1`} value={value} onChange={(e) => setValue(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            MIN SUBTOTAL (USD $) *
+            <input type="number" min="0" className={`${inputCls} mt-1`} value={minSubtotal} onChange={(e) => setMinSubtotal(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            MIN ITEMS COUNT *
+            <input type="number" min="1" className={`${inputCls} mt-1`} value={minItems} onChange={(e) => setMinItems(e.target.value)} />
+          </label>
+          <label className={labelCls}>
+            TIER PRIORITY (HIGHER WINS) *
+            <input type="number" min="1" className={`${inputCls} mt-1`} value={priority} onChange={(e) => setPriority(e.target.value)} />
+          </label>
+          <div className="flex items-center pt-6">
+            <label className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold">
+              <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              ACTIVE / AUTOMATIC
+            </label>
+          </div>
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button className="btn btn-dept !py-2 !px-4 text-xs font-bold rounded-xl" onClick={submit}>
+            {editingId ? "Save Discount Changes" : "+ Add Discount Tier"}
+          </button>
+          {editingId && (
+            <button className="btn btn-ghost !py-2 !px-4 text-xs font-bold rounded-xl" onClick={cancelEdit}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="font-meta text-[10px] text-[var(--muted)] font-semibold">
+          {discounts.length} Discount Tiers ({discounts.filter((d) => d.active !== false).length} Active)
+        </span>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search discount tiers by name, ID..."
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
+      </div>
+
+      {/* Discounts Cards Grid */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map((d) => {
+          const isOverridden = managedIdById.has(d.id);
+          const isLive = d.active !== false;
+          return (
+            <div key={d.id} className="border border-[var(--line)] p-4 rounded-2xl bg-[var(--panel)] flex flex-col justify-between gap-3 shadow-xs">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full border border-[var(--line)] bg-[var(--bg)] font-bold uppercase text-[var(--muted)]">
+                    Priority #{d.priority ?? 1}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`font-meta text-[8px] px-2 py-0.5 rounded-full border font-bold ${
+                      isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30" : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"
+                    }`}>
+                      {isLive ? "ACTIVE" : "DISABLED"}
+                    </span>
+                    {isOverridden && (
+                      <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
+                        OVERRIDE
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <h4 className="font-display text-sm font-bold uppercase">{d.name}</h4>
+                <p className="font-display font-bold text-lg text-emerald-600 mt-1">
+                  {d.type === "percentage" ? `${d.value}% OFF` : `${money(d.value)} OFF`}
+                </p>
+                <span className="font-meta text-[8.5px] text-[var(--muted)] block mt-0.5">Tier ID: {d.id}</span>
+                <div className="mt-3 p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--line)] font-meta text-[9.5px] space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--muted)]">Minimum Subtotal:</span>
+                    <span className="font-bold text-[var(--ink)]">{money(d.minSubtotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--muted)]">Minimum Items:</span>
+                    <span className="font-bold text-[var(--ink)]">{d.minItems}+ services</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => startEdit(d)}
+                  className="font-meta text-[10px] dept-accent font-bold hover:underline"
+                >
+                  ✏️ Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleActive(d)}
+                  className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]"
+                >
+                  {isLive ? "Disable" : "Activate"}
+                </button>
+                {isOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => revertOrDelete(d)}
+                    className="font-meta text-[10px] text-red-500 hover:underline"
+                  >
+                    Revert
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============ SERVICES MANAGER (PRD §33–§35, §38–§39) ============ */
 
 interface ServiceDraft {
   slug: string; name: string; category: string; short: string; price: string;
@@ -125,6 +1529,7 @@ const blankDraft: ServiceDraft = {
 
 function ServicesManager() {
   const { user } = useAuth();
+  const money = useMoney();
   const { services, categories, sizes, options } = useDesignCatalog();
   const [managed, setManaged] = useState<ManagedItem[]>([]);
   const [draft, setDraft] = useState<ServiceDraft>(blankDraft);
@@ -132,6 +1537,9 @@ function ServicesManager() {
   const [priceEdit, setPriceEdit] = useState<{ slug: string; value: string } | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkPct, setBulkPct] = useState("10");
+  const [search, setSearch] = useState("");
+  const [filterCat, setFilterCat] = useState("ALL");
+
   const reload = () => listManaged("designServices").then(setManaged);
   useEffect(() => { reload(); }, []);
 
@@ -141,7 +1549,7 @@ function ServicesManager() {
     return m;
   }, [managed]);
 
-  /** Save an override for a service (seed or managed) keyed by slug. */
+  /** Save an override for a service keyed by slug. */
   const saveOverride = async (slug: string, data: Record<string, unknown>, action: string, before?: unknown) => {
     const existingId = managedIdBySlug.get(slug);
     const ok = await mutate(
@@ -152,7 +1560,7 @@ function ServicesManager() {
     return ok;
   };
 
-  /* inline price editing (PRD §34) + price history via audit (§31) */
+  /* inline price editing */
   const commitPrice = async (slug: string, oldPrice: number) => {
     if (!priceEdit) return;
     const next = Number(priceEdit.value);
@@ -229,7 +1637,7 @@ function ServicesManager() {
     toast.success("Duplicated into the editor — adjust and save.");
   };
 
-  /* bulk operations with preview (PRD §38) */
+  /* bulk operations */
   const bulk = async (action: "activate" | "deactivate" | "delete" | "price") => {
     if (selected.length === 0) { toast.error("Select services first."); return; }
     if (action === "price") {
@@ -256,7 +1664,7 @@ function ServicesManager() {
     reload();
   };
 
-  /* CSV export / import (PRD §39) */
+  /* CSV export / import */
   const exportCsv = () => {
     const head = "Service Name,Slug,Category,Description,Price USD,Pricing Type,Turnaround,Revisions,Active,Featured,Package Eligible,Custom Size Allowed";
     const rows = services.map((s) =>
@@ -294,126 +1702,189 @@ function ServicesManager() {
     reader.readAsText(file);
   };
 
+  const filteredServices = services.filter((s) => {
+    if (filterCat !== "ALL" && s.category !== filterCat) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return s.name.toLowerCase().includes(q) || s.slug.toLowerCase().includes(q) || s.short.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
   return (
-    <div>
-      {/* toolbar */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <button className="btn btn-ghost !py-2" onClick={exportCsv}>Export CSV</button>
-        <label className="btn btn-ghost !py-2 cursor-pointer">Import CSV
-          <input type="file" accept=".csv" className="hidden" onChange={(e) => importCsv(e.target.files?.[0])} />
-        </label>
-        <span className="font-meta text-[9px] text-[var(--muted)] ml-auto">{services.length} live services</span>
+    <div className="space-y-6">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn btn-ghost !py-1.5 !px-3 font-meta text-[10px] rounded-xl" onClick={exportCsv}>
+            ⬇️ Export CSV
+          </button>
+          <label className="btn btn-ghost !py-1.5 !px-3 font-meta text-[10px] rounded-xl cursor-pointer">
+            ⬆️ Import CSV
+            <input type="file" accept=".csv" className="hidden" onChange={(e) => importCsv(e.target.files?.[0])} />
+          </label>
+        </div>
+        <span className="font-meta text-[10px] text-[var(--muted)] font-semibold">
+          {services.length} Total Services ({services.filter((s) => s.active !== false).length} Active)
+        </span>
       </div>
 
-      {/* bulk bar (PRD §38) */}
+      {/* Bulk Toolbar */}
       {selected.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 mb-4 border border-[var(--line-strong)] px-4 py-3" style={{ background: "var(--dept-soft)" }}>
-          <span className="font-meta text-[10px]">{selected.length} selected</span>
-          <button className="font-meta text-[10px] dept-accent" onClick={() => bulk("activate")}>Activate</button>
-          <button className="font-meta text-[10px] dept-accent" onClick={() => bulk("deactivate")}>Deactivate</button>
+        <div className="flex flex-wrap items-center gap-3 border border-[var(--dept)] p-3.5 rounded-2xl bg-[var(--dept-soft)] shadow-xs">
+          <span className="font-meta text-[10px] font-bold">{selected.length} Selected</span>
+          <button className="btn btn-dept !py-1 !px-3 font-meta text-[9px] rounded-lg" onClick={() => bulk("activate")}>Activate</button>
+          <button className="btn btn-dept !py-1 !px-3 font-meta text-[9px] rounded-lg" onClick={() => bulk("deactivate")}>Deactivate</button>
           <span className="inline-flex items-center gap-1">
-            <input className={`${inputCls} !w-16 !py-1`} value={bulkPct} onChange={(e) => setBulkPct(e.target.value)} aria-label="Bulk price percent" />
-            <button className="font-meta text-[10px] dept-accent" onClick={() => bulk("price")}>Price % (preview)</button>
+            <input className={`${inputCls} !w-16 !py-1 text-xs`} value={bulkPct} onChange={(e) => setBulkPct(e.target.value)} aria-label="Bulk price percent" />
+            <button className="btn btn-dept !py-1 !px-3 font-meta text-[9px] rounded-lg" onClick={() => bulk("price")}>Price % (preview)</button>
           </span>
-          <button className="font-meta text-[10px] text-red-600" onClick={() => bulk("delete")}>Delete</button>
-          <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => setSelected([])}>Clear</button>
+          <button className="btn btn-ghost !py-1 !px-3 font-meta text-[9px] !text-red-500 rounded-lg" onClick={() => bulk("delete")}>Delete</button>
+          <button className="font-meta text-[10px] text-[var(--muted)] hover:underline ml-auto" onClick={() => setSelected([])}>Clear</button>
         </div>
       )}
 
-      {/* editor (PRD §35) */}
-      <div className="border border-[var(--line-strong)] p-5 mb-6" style={{ background: "var(--panel)" }}>
+      {/* Service Editor */}
+      <div className="border border-[var(--line-strong)] p-5 rounded-2xl bg-[var(--panel)] shadow-xs">
         <div className="flex items-center justify-between">
-          <span className="idx">/{editingSlug ? "edit-service" : "add-service"}</span>
-          {editingSlug && <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => { setEditingSlug(null); setDraft(blankDraft); }}>Cancel ✕</button>}
+          <span className="idx">/{editingSlug ? `edit-service (${editingSlug})` : "add-service"}</span>
+          {editingSlug && (
+            <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)]" onClick={() => { setEditingSlug(null); setDraft(blankDraft); }}>
+              Cancel ✕
+            </button>
+          )}
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
-          <label className={labelCls}>SERVICE NAME *<input className={`${inputCls} mt-1.5`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
-          <label className={labelCls}>SLUG *<input className={`${inputCls} mt-1.5`} value={draft.slug} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></label>
+          <label className={labelCls}>SERVICE NAME *<input className={`${inputCls} mt-1`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
+          <label className={labelCls}>SLUG *<input className={`${inputCls} mt-1`} value={draft.slug} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} disabled={!!editingSlug} /></label>
           <label className={labelCls}>CATEGORY
-            <select className={`${inputCls} mt-1.5`} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
+            <select className={`${inputCls} mt-1`} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
               {categories.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
             </select>
           </label>
-          <label className={`${labelCls} sm:col-span-2 lg:col-span-3`}>SHORT DESCRIPTION<input className={`${inputCls} mt-1.5`} value={draft.short} onChange={(e) => setDraft({ ...draft, short: e.target.value })} /></label>
-          <label className={labelCls}>BASE PRICE USD (0 = quote)<input type="number" min="0" className={`${inputCls} mt-1.5`} value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} /></label>
+          <label className={`${labelCls} sm:col-span-2 lg:col-span-3`}>SHORT DESCRIPTION<input className={`${inputCls} mt-1`} value={draft.short} onChange={(e) => setDraft({ ...draft, short: e.target.value })} /></label>
+          <label className={labelCls}>BASE PRICE USD (0 = quote)<input type="number" min="0" className={`${inputCls} mt-1`} value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} /></label>
           <label className={labelCls}>PRICING TYPE
-            <select className={`${inputCls} mt-1.5`} value={draft.pricingType} onChange={(e) => setDraft({ ...draft, pricingType: e.target.value })}>
+            <select className={`${inputCls} mt-1`} value={draft.pricingType} onChange={(e) => setDraft({ ...draft, pricingType: e.target.value })}>
               {["fixed", "starting_at", "per_quantity", "custom_quote"].map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </label>
           <label className={labelCls}>PURCHASE MODE
-            <select className={`${inputCls} mt-1.5`} value={draft.purchaseMode} onChange={(e) => setDraft({ ...draft, purchaseMode: e.target.value })}>
+            <select className={`${inputCls} mt-1`} value={draft.purchaseMode} onChange={(e) => setDraft({ ...draft, purchaseMode: e.target.value })}>
               <option value="">Auto (from price/type)</option>
               <option value="DIRECT_PURCHASE">DIRECT_PURCHASE</option>
               <option value="QUOTE_ONLY">QUOTE_ONLY</option>
             </select>
           </label>
           <label className={`${labelCls} lg:col-span-3`}>PACKAGE TIERS (JSON, optional — replaces base price when picked)
-            <textarea rows={2} className={`${inputCls} mt-1.5`} placeholder='[{"id":"basic","name":"Basic","price":45,"blurb":"1 concept, 1 revision"},{"id":"standard","name":"Standard","price":65,"blurb":"2 concepts, 2 revisions"}]'
+            <textarea rows={2} className={`${inputCls} mt-1`} placeholder='[{"id":"basic","name":"Basic","price":45,"blurb":"1 concept, 1 revision"},{"id":"standard","name":"Standard","price":65,"blurb":"2 concepts, 2 revisions"}]'
               value={draft.tiers} onChange={(e) => setDraft({ ...draft, tiers: e.target.value })} />
             <span className="block font-meta text-[8px] normal-case tracking-normal mt-1">Each tier: id, name, price (USD), blurb; optional turnaround + revisions. Leave empty to sell at base price only.</span>
           </label>
-          <label className={labelCls}>TURNAROUND<input className={`${inputCls} mt-1.5`} value={draft.turnaround} onChange={(e) => setDraft({ ...draft, turnaround: e.target.value })} /></label>
-          <label className={labelCls}>MIN QTY<input type="number" min="1" className={`${inputCls} mt-1.5`} value={draft.minQty} onChange={(e) => setDraft({ ...draft, minQty: e.target.value })} /></label>
-          <label className={labelCls}>MAX QTY<input type="number" min="1" className={`${inputCls} mt-1.5`} value={draft.maxQty} onChange={(e) => setDraft({ ...draft, maxQty: e.target.value })} /></label>
-          <label className={labelCls}>REVISIONS<input type="number" min="0" className={`${inputCls} mt-1.5`} value={draft.revisions} onChange={(e) => setDraft({ ...draft, revisions: e.target.value })} /></label>
+          <label className={labelCls}>TURNAROUND<input className={`${inputCls} mt-1`} value={draft.turnaround} onChange={(e) => setDraft({ ...draft, turnaround: e.target.value })} /></label>
+          <label className={labelCls}>MIN QTY<input type="number" min="1" className={`${inputCls} mt-1`} value={draft.minQty} onChange={(e) => setDraft({ ...draft, minQty: e.target.value })} /></label>
+          <label className={labelCls}>MAX QTY<input type="number" min="1" className={`${inputCls} mt-1`} value={draft.maxQty} onChange={(e) => setDraft({ ...draft, maxQty: e.target.value })} /></label>
+          <label className={labelCls}>REVISIONS<input type="number" min="0" className={`${inputCls} mt-1`} value={draft.revisions} onChange={(e) => setDraft({ ...draft, revisions: e.target.value })} /></label>
           <label className={`${labelCls} lg:col-span-2`}>SIZE IDS (comma-separated)
-            <input className={`${inputCls} mt-1.5`} placeholder="d-square, d-story, p-letter" value={draft.sizeIds} onChange={(e) => setDraft({ ...draft, sizeIds: e.target.value })} />
+            <input className={`${inputCls} mt-1`} placeholder="d-square, d-story, p-letter" value={draft.sizeIds} onChange={(e) => setDraft({ ...draft, sizeIds: e.target.value })} />
             <span className="block font-meta text-[8px] normal-case tracking-normal mt-1">Available: {sizes.map((z) => z.id).join(", ")}</span>
           </label>
-          <label className={labelCls}>DEFAULT SIZE ID<input className={`${inputCls} mt-1.5`} value={draft.defaultSize} onChange={(e) => setDraft({ ...draft, defaultSize: e.target.value })} /></label>
+          <label className={labelCls}>DEFAULT SIZE ID<input className={`${inputCls} mt-1`} value={draft.defaultSize} onChange={(e) => setDraft({ ...draft, defaultSize: e.target.value })} /></label>
           <label className={`${labelCls} lg:col-span-2`}>OPTION IDS (comma-separated)
-            <input className={`${inputCls} mt-1.5`} placeholder="double-sided, rush, source-file" value={draft.optionIds} onChange={(e) => setDraft({ ...draft, optionIds: e.target.value })} />
+            <input className={`${inputCls} mt-1`} placeholder="double-sided, rush, source-file" value={draft.optionIds} onChange={(e) => setDraft({ ...draft, optionIds: e.target.value })} />
             <span className="block font-meta text-[8px] normal-case tracking-normal mt-1">Available: {options.map((o) => o.id).join(", ")}</span>
           </label>
-          <label className={labelCls}>RECOMMENDED (service slugs)<input className={`${inputCls} mt-1.5`} value={draft.recommended} onChange={(e) => setDraft({ ...draft, recommended: e.target.value })} /></label>
+          <label className={labelCls}>RECOMMENDED (service slugs)<input className={`${inputCls} mt-1`} value={draft.recommended} onChange={(e) => setDraft({ ...draft, recommended: e.target.value })} /></label>
           <div className="flex flex-wrap gap-4 lg:col-span-3 pt-2">
             {([["featured", "Featured"], ["popular", "Popular"], ["packageEligible", "Package eligible"], ["allowCustomSize", "Custom size allowed"], ["active", "Active"]] as const).map(([k, label]) => (
-              <label key={k} className="font-meta text-[10px] flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" className="accent-[var(--dept)]" checked={draft[k]} onChange={(e) => setDraft({ ...draft, [k]: e.target.checked })} /> {label.toUpperCase()}
+              <label key={k} className="font-meta text-[10px] flex items-center gap-2 cursor-pointer font-bold">
+                <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded" checked={draft[k]} onChange={(e) => setDraft({ ...draft, [k]: e.target.checked })} /> {label.toUpperCase()}
               </label>
             ))}
           </div>
           {draft.allowCustomSize && (
             <label className={`${labelCls} lg:col-span-3`}>CUSTOM LIMITS (JSON)
-              <input className={`${inputCls} mt-1.5`} placeholder='{"minW":4,"maxW":40,"minH":4,"maxH":12,"unit":"ft"}' value={draft.customLimits} onChange={(e) => setDraft({ ...draft, customLimits: e.target.value })} />
+              <input className={`${inputCls} mt-1`} placeholder='{"minW":4,"maxW":40,"minH":4,"maxH":12,"unit":"ft"}' value={draft.customLimits} onChange={(e) => setDraft({ ...draft, customLimits: e.target.value })} />
             </label>
           )}
         </div>
-        <button className="btn btn-dept !py-2.5 mt-4" onClick={submitEditor}>{editingSlug ? "Update service" : "Add service"}</button>
+        <div className="mt-4 flex gap-2">
+          <button className="btn btn-dept !py-2 !px-4 text-xs font-bold rounded-xl" onClick={submitEditor}>{editingSlug ? "Save Service Changes" : "+ Add Service"}</button>
+          {editingSlug && (
+            <button className="btn btn-ghost !py-2 !px-4 text-xs font-bold rounded-xl" onClick={() => { setEditingSlug(null); setDraft(blankDraft); }}>Cancel</button>
+          )}
+        </div>
       </div>
 
-      {/* table (PRD §33) */}
-      <div className="overflow-x-auto border border-[var(--line)]">
+      {/* Category Pills & Search */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <button
+            onClick={() => setFilterCat("ALL")}
+            className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+              filterCat === "ALL" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            All ({services.length})
+          </button>
+          {categories.map((c) => (
+            <button
+              key={c.slug}
+              onClick={() => setFilterCat(c.slug)}
+              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
+                filterCat === c.slug ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              }`}
+            >
+              {c.name} ({services.filter((s) => s.category === c.slug).length})
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search services by name, slug..."
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
+      </div>
+
+      {/* Services Table */}
+      <div className="overflow-x-auto border border-[var(--line)] rounded-2xl bg-[var(--panel)]">
         <table className="w-full text-sm min-w-[900px]">
           <thead>
-            <tr className="font-meta text-[9px] text-[var(--muted)] text-left border-b border-[var(--line-strong)]">
-              <th className="p-3 w-8"></th><th className="p-3">Service</th><th className="p-3">Category</th>
-              <th className="p-3">Price (click to edit)</th><th className="p-3">Type</th><th className="p-3">Turnaround</th>
-              <th className="p-3">Flags</th><th className="p-3">Actions</th>
+            <tr className="font-meta text-[9px] text-[var(--muted)] text-left border-b border-[var(--line)] bg-[var(--bg)]">
+              <th className="p-3 w-8"></th>
+              <th className="p-3">Service</th>
+              <th className="p-3">Category</th>
+              <th className="p-3">Price (click to edit)</th>
+              <th className="p-3">Type</th>
+              <th className="p-3">Turnaround</th>
+              <th className="p-3">Flags</th>
+              <th className="p-3">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {services.map((s) => (
+            {filteredServices.map((s) => (
               <tr key={s.slug} className="border-b border-[var(--line)] hover:bg-[var(--dept-soft)] transition-colors">
                 <td className="p-3">
                   <input type="checkbox" className="accent-[var(--dept)]" aria-label={`Select ${s.name}`}
                     checked={selected.includes(s.slug)}
                     onChange={(e) => setSelected((xs) => (e.target.checked ? [...xs, s.slug] : xs.filter((x) => x !== s.slug)))} />
                 </td>
-                <td className="p-3 font-semibold">{s.name}<span className="block font-meta text-[8px] text-[var(--muted)] font-normal">{s.slug}</span></td>
+                <td className="p-3 font-semibold">{s.name}<span className="block font-meta text-[8px] text-[var(--muted)] font-normal">/{s.slug}</span></td>
                 <td className="p-3 font-meta text-[10px]">{s.category}</td>
                 <td className="p-3">
                   {priceEdit?.slug === s.slug ? (
                     <span className="inline-flex items-center gap-2">
-                      <input autoFocus type="number" min="0" className={`${inputCls} !w-24 !py-1`} value={priceEdit.value}
+                      <input autoFocus type="number" min="0" className={`${inputCls} !w-24 !py-1 text-xs`} value={priceEdit.value}
                         onChange={(e) => setPriceEdit({ slug: s.slug, value: e.target.value })}
                         onKeyDown={(e) => { if (e.key === "Enter") commitPrice(s.slug, s.price); if (e.key === "Escape") setPriceEdit(null); }} />
-                      <button className="font-meta text-[10px] dept-accent" onClick={() => commitPrice(s.slug, s.price)}>Save</button>
+                      <button className="font-meta text-[10px] dept-accent font-bold" onClick={() => commitPrice(s.slug, s.price)}>Save</button>
                     </span>
                   ) : (
                     <button className="font-display-wide font-bold hover:text-[var(--dept)] transition-colors" onClick={() => setPriceEdit({ slug: s.slug, value: String(s.price) })}>
-                      {priceLabel(s)}
+                      {isQuoteOnly(s) ? "Quote" : money(s.price)}
                     </button>
                   )}
                 </td>
@@ -424,7 +1895,7 @@ function ServicesManager() {
                 </td>
                 <td className="p-3">
                   <span className="flex gap-3 font-meta text-[10px]">
-                    <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => startEdit(s.slug)}>Edit</button>
+                    <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors font-bold" onClick={() => startEdit(s.slug)}>Edit</button>
                     <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => duplicate(s.slug)}>Dupe</button>
                     <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
                       onClick={() => saveOverride(s.slug, { active: s.active === false }, s.active === false ? "service_updated" : "service_deleted")}>
@@ -441,20 +1912,20 @@ function ServicesManager() {
   );
 }
 
-/* ============ audit log (PRD §41) ============ */
+/* ============ AUDIT LOG (PRD §41) ============ */
 
 function AuditLog() {
   const [entries, setEntries] = useState<ManagedItem[]>([]);
   useEffect(() => { listManaged("designAudit").then(setEntries); }, []);
   return (
-    <div>
-      <p className="font-meta text-[10px] text-[var(--muted)] mb-6 max-w-2xl">
+    <div className="space-y-6">
+      <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
         Every catalog change is recorded — user, action, before/after, timestamp (PRD §31/§41). Price history is the stream of <em>price_changed</em> entries.
       </p>
       <div className="flex flex-col gap-2">
         {entries.slice(0, 100).map((e) => (
-          <div key={e.id} className="border border-[var(--line)] px-5 py-3 text-sm flex flex-wrap items-baseline gap-x-4 gap-y-1" style={{ background: "var(--panel)" }}>
-            <span className="font-meta text-[9px] dept-accent">{String(e.action ?? "")}</span>
+          <div key={e.id} className="border border-[var(--line)] px-5 py-3 text-sm flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-2xl" style={{ background: "var(--panel)" }}>
+            <span className="font-meta text-[9px] dept-accent font-bold">{String(e.action ?? "")}</span>
             <span className="font-meta text-[10px]">{String(e.entity ?? "")}</span>
             <span className="font-meta text-[9px] text-[var(--muted)]">{String(e.user ?? "")}</span>
             <span className="font-meta text-[9px] text-[var(--muted)] ml-auto">{String(e.at ?? "").slice(0, 19).replace("T", " ")}</span>
@@ -471,73 +1942,43 @@ function AuditLog() {
   );
 }
 
-/* ============ studio shell ============ */
+/* ============ STUDIO SHELL ============ */
 
 const SUBS = ["Services", "Categories", "Sizes", "Options", "Packages", "Discounts", "Audit"] as const;
 
 export function DesignStudio() {
   const [sub, setSub] = useState<(typeof SUBS)[number]>("Services");
   return (
-    <div>
-      <p className="font-meta text-[10px] text-[var(--muted)] mb-6 max-w-2xl">
-        Graphic Design commerce control (PRD §32) — every price, size, option, package and discount is database-driven;
-        changes go live instantly, no code deploy. Shipped defaults stay live until you override them here.
-      </p>
-      <div className="flex flex-wrap gap-2 mb-8" role="tablist" aria-label="Design studio sections">
-        {SUBS.map((s) => (
-          <button key={s} role="tab" aria-selected={sub === s} onClick={() => setSub(s)}
-            className="font-meta text-[10px] px-3 py-1.5 border transition-colors"
-            style={sub === s ? { background: "var(--ink)", borderColor: "var(--ink)", color: "var(--bg)" } : { borderColor: "var(--line)" }}>
-            {s.toUpperCase()}
-          </button>
-        ))}
+    <div className="space-y-6">
+      <div className="border-b border-[var(--line)] pb-4">
+        <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
+          Graphic Design commerce control (PRD §32) — every service, category, size preset, production add-on, bundle package, and discount tier is database-driven. Changes go live instantly site-wide.
+        </p>
+        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar pt-3" role="tablist" aria-label="Design studio sections">
+          {SUBS.map((s) => (
+            <button
+              key={s}
+              role="tab"
+              aria-selected={sub === s}
+              onClick={() => setSub(s)}
+              className={`font-meta text-[10px] sm:text-[10.5px] px-3.5 py-2 rounded-xl border transition-all shrink-0 active:scale-95 ${
+                sub === s
+                  ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)] font-bold shadow-xs"
+                  : "border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
+              }`}
+            >
+              {s.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
 
       {sub === "Services" && <ServicesManager />}
-      {sub === "Categories" && (
-        <EntityManager kind="designCategories" noun="category" keyField="slug"
-          blurb="Design categories (PRD §6). Use a seed slug to override a default category; a new slug adds one."
-          fields={[
-            { key: "slug", label: "Slug" }, { key: "name", label: "Name" }, { key: "sort", label: "Sort order" },
-            { key: "blurb", label: "Description", area: true },
-          ]} />
-      )}
-      {sub === "Sizes" && (
-        <EntityManager kind="designSizes" noun="size" keyField="id"
-          blurb="Size presets (PRD §8/§13) — dimensions, units, orientation and production specs. Reusable across services."
-          fields={[
-            { key: "id", label: "ID (e.g. p-letter)" }, { key: "name", label: "Name" }, { key: "unit", label: "Unit (px/in/mm/cm/ft)" },
-            { key: "w", label: "Width" }, { key: "h", label: "Height" }, { key: "orientation", label: "Orientation" },
-            { key: "format", label: "Format (digital/print/large_format)" }, { key: "bleed", label: "Bleed", optional: true }, { key: "safeArea", label: "Safe area", optional: true },
-            { key: "dpi", label: "DPI", optional: true }, { key: "colorMode", label: "Colour mode", optional: true }, { key: "fileFormat", label: "File format", optional: true },
-          ]} />
-      )}
-      {sub === "Options" && (
-        <EntityManager kind="designOptions" noun="option" keyField="id"
-          blurb="Production add-ons (PRD §14). Pricing: fixed $ or percentage. Scope: project / design / quantity (PRD §16)."
-          fields={[
-            { key: "id", label: "ID (e.g. rush)" }, { key: "name", label: "Name" }, { key: "pricing", label: "Pricing (fixed/percentage)" },
-            { key: "price", label: "Price ($ or %)" }, { key: "scope", label: "Scope (project/design/quantity)" },
-            { key: "description", label: "Description", area: true },
-          ]} />
-      )}
-      {sub === "Packages" && (
-        <EntityManager kind="designPackages" noun="package" keyField="slug"
-          blurb='Predefined packages (PRD §21–§23). Pricing: calculated / fixed / pct_off / fixed_off. Items as JSON: [{"slug":"logo-design","qty":1}]'
-          fields={[
-            { key: "slug", label: "Slug" }, { key: "name", label: "Name" }, { key: "pricing", label: "Pricing mode" },
-            { key: "price", label: "Fixed price", optional: true }, { key: "value", label: "% or $ off", optional: true }, { key: "featured", label: "Featured (true/false)", optional: true },
-            { key: "blurb", label: "Description", area: true }, { key: "items", label: "Items (JSON)", area: true },
-          ]} />
-      )}
-      {sub === "Discounts" && (
-        <EntityManager kind="designDiscounts" noun="discount" keyField="id"
-          blurb="Automatic bundle discounts (PRD §20) — highest priority eligible tier wins. Defaults: 5% over $250, 10% over $500, 15% over $1,000."
-          fields={[
-            { key: "id", label: "ID (e.g. tier-250)" }, { key: "name", label: "Name" }, { key: "type", label: "Type (percentage/fixed)" },
-            { key: "value", label: "Value" }, { key: "minSubtotal", label: "Min subtotal $" }, { key: "minItems", label: "Min items" }, { key: "priority", label: "Priority" },
-          ]} />
-      )}
+      {sub === "Categories" && <CategoriesManager />}
+      {sub === "Sizes" && <SizesManager />}
+      {sub === "Options" && <OptionsManager />}
+      {sub === "Packages" && <PackagesManager />}
+      {sub === "Discounts" && <DiscountsManager />}
       {sub === "Audit" && <AuditLog />}
     </div>
   );

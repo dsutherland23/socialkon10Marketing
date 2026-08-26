@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { formatMoney } from "../lib/data";
 import {
   addManaged, getFileBuffer, getSettings, listAllOrders, listManaged, logAudit, removeManaged,
   saveSettings, updateManaged, uploadImage, uploadPrivateFile,
@@ -13,6 +12,7 @@ import {
   LICENSES, TEMPLATE_FEATURES, currentVersion, effectivePrice, useTemplates,
   type Template, type TemplateReview, type TemplateStatus, type TemplateVersion,
 } from "../lib/templates";
+import { useMoney } from "../lib/money";
 
 /* ------------------------------------------------------------------
    ADMIN — TEMPLATE STUDIO (Templates PRD §37–§43)
@@ -275,6 +275,7 @@ function TemplateForm({ initial, managedId, onDone }: {
 /* ---------------- templates list ---------------- */
 
 function TemplatesManager() {
+  const money = useMoney();
   const { templates } = useTemplates();
   const [managed, setManaged] = useState<ManagedItem[]>([]);
   const [editing, setEditing] = useState<{ tpl: Template; id?: string } | null>(null);
@@ -321,7 +322,7 @@ function TemplatesManager() {
                   <strong>{t.name}</strong>
                   <span className="font-meta text-[9px] text-[var(--muted)] block">/{t.slug} · v{currentVersion(t)?.version}</span>
                 </td>
-                <td className="py-3 pr-4">{effectivePrice(t) === 0 ? "Free" : formatMoney(effectivePrice(t))}</td>
+                <td className="py-3 pr-4">{effectivePrice(t) === 0 ? "Free" : money(effectivePrice(t))}</td>
                 <td className="py-3 pr-4">
                   <span className="font-meta text-[9px] px-2 py-1 border" style={{
                     borderColor: t.status === "published" ? "var(--dept)" : "var(--line)",
@@ -403,6 +404,7 @@ function CategoriesManager() {
 }
 
 function BundlesManager() {
+  const money = useMoney();
   const { bundles, templates } = useTemplates();
   const [name, setName] = useState("");
   const [slugs, setSlugs] = useState("");
@@ -432,7 +434,7 @@ function BundlesManager() {
         {bundles.map((b) => (
           <div key={b.slug} className="border border-[var(--line)] px-4 py-3 flex flex-wrap items-center justify-between gap-3" style={{ background: "var(--panel)" }}>
             <div>
-              <strong className="text-sm">{b.name}</strong> <span className="font-meta text-[10px] dept-accent">{formatMoney(b.price)}</span>
+              <strong className="text-sm">{b.name}</strong> <span className="font-meta text-[10px] dept-accent">{money(b.price)}</span>
               <span className="font-meta text-[9px] text-[var(--muted)] block">{b.templateSlugs.join(" · ")}</span>
             </div>
             <button className="font-meta text-[9px] px-2 py-1 border border-[var(--line)]"
@@ -516,6 +518,7 @@ function WatermarkSettings() {
 /* ---------------- performance (§43) ---------------- */
 
 function TemplatePerformance() {
+  const money = useMoney();
   const { templates } = useTemplates();
   const [stats, setStats] = useState<Record<string, { revenue: number; sales: number }>>({});
   const [downloads, setDownloads] = useState<Record<string, number>>({});
@@ -558,7 +561,7 @@ function TemplatePerformance() {
             {rows.map(({ t, revenue, sales, dls }) => (
               <tr key={t.slug} className="border-b border-[var(--line)]">
                 <td className="py-2.5 pr-4">{t.name}</td>
-                <td className="py-2.5 pr-4 font-bold">{formatMoney(revenue)}</td>
+                <td className="py-2.5 pr-4 font-bold">{money(revenue)}</td>
                 <td className="py-2.5 pr-4">{sales}</td>
                 <td className="py-2.5">{dls}</td>
               </tr>
