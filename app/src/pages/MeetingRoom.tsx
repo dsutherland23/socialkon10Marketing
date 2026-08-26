@@ -291,6 +291,8 @@ export default function MeetingRoom() {
     proofingMockups[Math.min(proofingIndex, proofingMockups.length - 1)] || proofingMockups[0];
 
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
+  const [showMobileActionsSheet, setShowMobileActionsSheet] = useState(false);
+  const [showDeviceSettingsModal, setShowDeviceSettingsModal] = useState(false);
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
   const [newRoomName, setNewRoomName] = useState("");
 
@@ -814,8 +816,26 @@ export default function MeetingRoom() {
   const handleToggleMic = async () => {
     const next = !isMicMuted;
     setIsMicMuted(next);
-    if (localStream) {
+    if (localStream && localStream.getAudioTracks().length > 0) {
       localStream.getAudioTracks().forEach((t) => (t.enabled = !next));
+    } else if (!next) {
+      try {
+        const newStream = await getLocalUserMedia({
+          audioDeviceId: selectedAudioInput || undefined,
+          videoDeviceId: selectedVideoInput || undefined,
+          audio: true,
+          video: !isVideoOff,
+        });
+        newStream.getAudioTracks().forEach((t) => (t.enabled = true));
+        newStream.getVideoTracks().forEach((t) => (t.enabled = !isVideoOff));
+        setLocalStream(newStream);
+        meshRef.current?.setLocalStream(newStream);
+      } catch (err) {
+        console.warn("Could not acquire mic track:", err);
+        setIsMicMuted(true);
+        toast.error("Microphone access unavailable. Check browser permissions.");
+        return;
+      }
     }
     if (meeting && phase === "in_meeting") {
       await updateParticipant(meeting.id, myParticipantId, { isMuted: next });
@@ -826,10 +846,26 @@ export default function MeetingRoom() {
   const handleToggleVideo = async () => {
     const next = !isVideoOff;
     setIsVideoOff(next);
-    if (localStream) {
+    if (localStream && localStream.getVideoTracks().length > 0) {
       localStream.getVideoTracks().forEach((t) => (t.enabled = !next));
     } else if (!next) {
-      await requestMediaPermissions();
+      try {
+        const newStream = await getLocalUserMedia({
+          audioDeviceId: selectedAudioInput || undefined,
+          videoDeviceId: selectedVideoInput || undefined,
+          audio: !isMicMuted,
+          video: true,
+        });
+        newStream.getVideoTracks().forEach((t) => (t.enabled = true));
+        newStream.getAudioTracks().forEach((t) => (t.enabled = !isMicMuted));
+        setLocalStream(newStream);
+        meshRef.current?.setLocalStream(newStream);
+      } catch (err) {
+        console.warn("Could not acquire video track:", err);
+        setIsVideoOff(true);
+        toast.error("Camera access unavailable. Check browser permissions.");
+        return;
+      }
     }
     if (meeting && phase === "in_meeting") {
       await updateParticipant(meeting.id, myParticipantId, { isVideoOff: next });
@@ -2507,20 +2543,20 @@ export default function MeetingRoom() {
       )}
 
       {/* Top Header Bar */}
-      <div className="h-12 sm:h-14 px-3 sm:px-6 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <h2 className="font-display text-sm font-bold uppercase tracking-wider truncate max-w-xs sm:max-w-md">
+      <div className="h-12 sm:h-14 px-2.5 sm:px-6 border-b border-neutral-800 bg-neutral-900/90 flex items-center justify-between shrink-0 gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+          <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+          <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wider truncate max-w-[130px] sm:max-w-xs md:max-w-md">
             {meeting.title}
           </h2>
-          <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 hidden sm:inline">
+          <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 hidden sm:inline shrink-0">
             {activeParticipants.length} Connected
           </span>
           {meeting.liveProofing?.active && (
             <button
               type="button"
               onClick={() => setActiveDrawer("proofing")}
-              className={`font-meta text-[9px] px-2 py-0.5 rounded border flex items-center gap-1 transition-colors ${
+              className={`font-meta text-[9px] px-2 py-0.5 rounded border flex items-center gap-1 transition-colors shrink-0 ${
                 activeDrawer === "proofing" || isProofingMaximized
                   ? "bg-[var(--dept)] text-black border-[var(--dept)] font-bold"
                   : "bg-neutral-800 text-cyan-300 border-cyan-500/40 hover:bg-cyan-950/60"
@@ -2532,12 +2568,12 @@ export default function MeetingRoom() {
             </button>
           )}
           {pinnedParticipantId && (
-            <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
+            <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hidden sm:flex items-center gap-1 shrink-0">
               <span>⭐</span> Spotlight View
             </span>
           )}
           {meeting.meetingLocked && (
-            <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40">
+            <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 hidden sm:inline shrink-0">
               🔒 Locked
             </span>
           )}
@@ -2554,18 +2590,18 @@ export default function MeetingRoom() {
                   setActiveDrawer("none");
                   setIsProofingMaximized(false);
                 }}
-                className="font-meta text-[9px] px-2.5 py-1 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-500/50 flex items-center gap-1.5 shadow-md animate-pulse font-bold"
+                className="font-meta text-[9px] px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-500/50 flex items-center gap-1 shadow-md animate-pulse font-bold shrink-0"
                 title="Click to spotlight live screen presentation"
               >
-                <span className="h-2 w-2 rounded-full bg-cyan-400" />
-                <span>{isScreenSharing ? "🔴 Broadcasting (1080p)" : `🔴 ${remoteSharer?.displayName} Presenting`}</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                <span className="truncate max-w-[90px] sm:max-w-none">{isScreenSharing ? "🔴 Sharing" : `🔴 ${remoteSharer?.displayName}`}</span>
               </button>
             );
           })()}
         </div>
 
         {/* Top Actions */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Host Auto-Spotlight Toggle */}
           {isHost && (
             <button
@@ -2590,7 +2626,7 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "proofing" ? "none" : "proofing")}
-            className={`font-meta text-[10px] px-3 py-1.5 rounded-full font-bold flex items-center gap-1.5 border transition-all ${
+            className={`font-meta text-[10px] px-2.5 sm:px-3 py-1.5 rounded-full font-bold flex items-center gap-1 sm:gap-1.5 border transition-all ${
               activeDrawer === "proofing"
                 ? "bg-[var(--dept)] text-black border-[var(--dept)]"
                 : "bg-neutral-800 border-neutral-700 text-white hover:border-[var(--dept)]"
@@ -2600,11 +2636,21 @@ export default function MeetingRoom() {
             <span className="hidden sm:inline">Proof Canvas</span>
           </button>
 
+          {/* Settings Modal Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowDeviceSettingsModal(true)}
+            className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex items-center justify-center text-xs text-neutral-300 hover:text-white transition-colors"
+            title="Audio & Video Settings"
+          >
+            ⚙️
+          </button>
+
           {/* Fullscreen Toggle */}
           <button
             type="button"
             onClick={handleToggleFullscreen}
-            className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex items-center justify-center text-xs text-neutral-300 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hidden sm:flex items-center justify-center text-xs text-neutral-300 hover:text-white transition-colors"
             title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
           >
             {isFullscreen ? "↙️" : "⛶"}
@@ -2612,7 +2658,7 @@ export default function MeetingRoom() {
 
           <button
             onClick={() => setShareModalOpen(true)}
-            className="font-meta text-[10px] px-3 py-1.5 rounded-full bg-[var(--dept)] text-[var(--on-dept)] font-bold flex items-center gap-1.5 hover:brightness-110 shadow-sm transition-all"
+            className="font-meta text-[10px] px-2.5 sm:px-3 py-1.5 rounded-full bg-[var(--dept)] text-[var(--on-dept)] font-bold flex items-center gap-1 sm:gap-1.5 hover:brightness-110 shadow-sm transition-all"
           >
             <span>🔗</span> <span className="hidden sm:inline">Share</span>
           </button>
@@ -3257,30 +3303,32 @@ export default function MeetingRoom() {
             </div>
           ) : (
             /* STANDARD PARTICIPANT VIDEO GRID */
-            <div className={`grid gap-4 flex-1 ${
-              activeParticipants.length <= 1 ? "grid-cols-1 max-w-3xl mx-auto w-full" :
-              activeParticipants.length === 2 ? "grid-cols-1 sm:grid-cols-2" :
-              activeParticipants.length <= 4 ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4"
+            <div className={`grid gap-2.5 sm:gap-4 flex-1 h-full min-h-0 ${
+              activeParticipants.length <= 1 ? "grid-cols-1 max-w-4xl mx-auto w-full h-full" :
+              activeParticipants.length === 2 ? "grid-cols-1 sm:grid-cols-2 grid-rows-2 sm:grid-rows-1 h-full w-full" :
+              activeParticipants.length <= 4 ? "grid-cols-2 grid-rows-2 h-full w-full" :
+              "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 auto-rows-fr h-full w-full"
             }`}>
               {/* My Local Tile */}
-              <div className={`group relative aspect-video bg-neutral-900 rounded-2xl overflow-hidden border transition-all flex items-center justify-center ${
+              <div className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center ${
                 isHandRaised
                   ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] border-amber-400 animate-pulse"
                   : "border-neutral-800 shadow-md"
               }`}>
                 {!isVideoOff && localStream ? (
-                  <VideoTile stream={localStream} muted={true} isMirrored={true} />
+                  <VideoTile stream={localStream} muted={true} isMirrored={true} className="w-full h-full object-cover" />
                 ) : (
-                  <div className="flex flex-col items-center justify-center p-4 text-center">
-                    <div className="w-16 h-16 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-xl font-bold dept-accent mb-2">
+                  <div className="flex flex-col items-center justify-center p-3 sm:p-4 text-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-xl sm:text-2xl font-bold dept-accent mb-2 shadow-inner">
                       {displayName.slice(0, 2).toUpperCase()}
                     </div>
+                    <p className="font-meta text-[10px] text-neutral-400 mb-2">Camera is paused</p>
                     <button
                       type="button"
                       onClick={handleToggleVideo}
-                      className="font-meta text-[9.5px] px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 hover:text-white rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+                      className="font-meta text-[11px] font-bold px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 border border-neutral-700 text-white rounded-xl flex items-center gap-2 transition-all shadow-md min-h-[42px] cursor-pointer"
                     >
-                      <span>📹</span> Enable Camera
+                      <span className="text-base">📹</span> Enable Camera
                     </button>
                   </div>
                 )}
@@ -3304,9 +3352,9 @@ export default function MeetingRoom() {
                 </div>
 
                 {/* Tile Badges */}
-                <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg text-[10px] font-display font-bold uppercase flex items-center gap-2">
-                  <span>{displayName} (You)</span>
-                  {isHost && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded">HOST</span>}
+                <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-display font-bold uppercase flex items-center gap-2 max-w-[85%] truncate">
+                  <span className="truncate">{displayName} (You)</span>
+                  {isHost && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded shrink-0">HOST</span>}
                 </div>
 
                 <div className="absolute top-2 right-2 flex items-center gap-1.5">
@@ -3331,20 +3379,22 @@ export default function MeetingRoom() {
                 return (
                   <div
                     key={p.id}
-                    className={`group relative aspect-video bg-neutral-900 rounded-2xl overflow-hidden border transition-all flex items-center justify-center ${
+                    className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center ${
                       p.isHandRaised
                         ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] border-amber-400 animate-pulse"
                         : "border-neutral-800 shadow-md"
                     }`}
                   >
                     {hasVideo && rStream ? (
-                      <VideoTile stream={rStream} muted={false} />
+                      <VideoTile stream={rStream} muted={false} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="text-center">
-                        <div className="w-16 h-16 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-xl font-bold text-neutral-300 mx-auto mb-1">
+                      <div className="text-center p-3 sm:p-4">
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-xl sm:text-2xl font-bold text-neutral-300 mx-auto mb-2 shadow-inner">
                           {p.displayName.slice(0, 2).toUpperCase()}
                         </div>
-                        <p className="font-meta text-[9px] text-neutral-500">Audio Active</p>
+                        <p className="font-meta text-[11px] font-bold text-neutral-300">
+                          {p.isMuted ? "Muted" : "Audio Active"}
+                        </p>
                         {rStream && (
                           <audio
                             ref={(el) => {
@@ -3371,10 +3421,10 @@ export default function MeetingRoom() {
                       </button>
                     </div>
 
-                    <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg text-[10px] font-display font-bold uppercase flex items-center gap-2">
-                      <span>{p.displayName}</span>
-                      {p.role === "host" && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded">HOST</span>}
-                      {p.role === "cohost" && <span className="text-cyan-400 text-[8px] bg-cyan-400/20 px-1 rounded">CO-HOST</span>}
+                    <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-display font-bold uppercase flex items-center gap-2 max-w-[85%] truncate">
+                      <span className="truncate">{p.displayName}</span>
+                      {p.role === "host" && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded shrink-0">HOST</span>}
+                      {p.role === "cohost" && <span className="text-cyan-400 text-[8px] bg-cyan-400/20 px-1 rounded shrink-0">CO-HOST</span>}
                     </div>
 
                     <div className="absolute top-2 right-2 flex items-center gap-1.5">
@@ -4155,30 +4205,143 @@ export default function MeetingRoom() {
         )}
       </div>
 
-      {/* Bottom Control Bar */}
-      <div className="h-16 sm:h-20 px-2 sm:px-6 border-t border-neutral-800 bg-neutral-900/95 flex items-center justify-between shrink-0 gap-1.5 overflow-x-auto">
+      {/* Bottom Control Bar: Dual Layout (Mobile 5-Action Dock + Desktop Expanded Bar) */}
+      
+      {/* MOBILE CONTROL DOCK (< md screens) */}
+      <div className="flex md:hidden h-20 px-4 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-xl items-center justify-between shrink-0 z-40 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] w-full">
+        {/* 1. Microphone Toggle */}
+        <button
+          type="button"
+          onClick={handleToggleMic}
+          className={`w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+            isMicMuted
+              ? "bg-red-500/20 text-red-400 border border-red-500/50"
+              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+          }`}
+          title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
+          aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
+        >
+          <span className="text-lg">{isMicMuted ? "🔇" : "🎙️"}</span>
+          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
+        </button>
+
+        {/* 2. Camera Toggle */}
+        <button
+          type="button"
+          onClick={handleToggleVideo}
+          className={`w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+            isVideoOff
+              ? "bg-red-500/20 text-red-400 border border-red-500/50"
+              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+          }`}
+          title={isVideoOff ? "Start Video" : "Stop Video"}
+          aria-label={isVideoOff ? "Start Camera" : "Stop Camera"}
+        >
+          <span className="text-lg">{isVideoOff ? "🚫" : "📹"}</span>
+          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
+        </button>
+
+        {/* 3. In-Call Public Chat */}
+        <button
+          type="button"
+          onClick={() => {
+            const next = activeDrawer === "chat" ? "none" : "chat";
+            setActiveDrawer(next);
+            if (next === "chat") setUnreadChatCount(0);
+          }}
+          className={`relative w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+            activeDrawer === "chat"
+              ? "bg-[var(--dept)] text-black border border-[var(--dept)]"
+              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+          }`}
+          title="Toggle In-Meeting Chat"
+          aria-label="Toggle Chat"
+        >
+          {unreadChatCount > 0 && activeDrawer !== "chat" && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+              {unreadChatCount}
+            </span>
+          )}
+          <span className="text-lg">💬</span>
+          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">Chat</span>
+        </button>
+
+        {/* 4. More Actions Sheet Trigger (•••) */}
+        <button
+          type="button"
+          onClick={() => setShowMobileActionsSheet(true)}
+          className={`relative w-12 h-12 rounded-full flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md shrink-0 ${
+            showMobileActionsSheet || isHandRaised || activeDrawer !== "none" && activeDrawer !== "chat"
+              ? "bg-cyan-500/25 text-cyan-300 border-2 border-cyan-400"
+              : "bg-neutral-800 text-white border border-neutral-700 hover:bg-neutral-700"
+          }`}
+          title="More Meeting Actions"
+          aria-label="Open Meeting Tools"
+        >
+          {isHandRaised && (
+            <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 w-4 rounded-full flex items-center justify-center animate-bounce shadow-md">
+              ✋
+            </span>
+          )}
+          {isHost && waitingParticipants.length > 0 && !isHandRaised && (
+            <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+              {waitingParticipants.length}
+            </span>
+          )}
+          <span className="text-base">⚙️</span>
+          <span className="font-meta text-[7px] uppercase font-bold mt-0.5">More</span>
+        </button>
+
+        {/* 5. End / Leave Call */}
+        {isHost ? (
+          <button
+            type="button"
+            onClick={handleEndForAll}
+            className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all shrink-0 border border-red-400/40"
+            title="End Meeting for All"
+            aria-label="End Meeting"
+          >
+            <span className="text-base">📞</span>
+            <span className="font-meta text-[7px] uppercase font-bold mt-0.5">End</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleLeaveMeeting}
+            className="w-12 h-12 rounded-full bg-red-600/90 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all shrink-0 border border-red-400/40"
+            title="Leave Meeting"
+            aria-label="Leave Meeting"
+          >
+            <span className="text-base">📞</span>
+            <span className="font-meta text-[7px] uppercase font-bold mt-0.5">Leave</span>
+          </button>
+        )}
+      </div>
+
+      {/* DESKTOP EXPANDED CONTROL BAR (>= md screens) */}
+      <div className="hidden md:flex h-20 px-6 border-t border-neutral-800 bg-neutral-900/95 items-center justify-between shrink-0 gap-3">
         {/* Left: Audio, Video & Screen Share */}
-        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={handleToggleMic}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
               isMicMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
           >
-            <span className="text-sm sm:text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
+            <span className="text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
           </button>
 
           <button
             onClick={handleToggleVideo}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
               isVideoOff ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title={isVideoOff ? "Start Video" : "Stop Video"}
           >
-            <span className="text-sm sm:text-base">{isVideoOff ? "🚫" : "📹"}</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
+            <span className="text-base">{isVideoOff ? "🚫" : "📹"}</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
           </button>
 
           <button
@@ -4189,34 +4352,34 @@ export default function MeetingRoom() {
                 setShowScreenShareMenu(true);
               }
             }}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
               isScreenSharing ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title={isScreenSharing ? "Stop Screen Share" : "Share Window or Screen"}
           >
-            <span className="text-sm sm:text-base">🖥️</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">{isScreenSharing ? "Sharing" : "Share"}</span>
+            <span className="text-base">🖥️</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">{isScreenSharing ? "Sharing" : "Share"}</span>
           </button>
 
           {/* Dedicated Studio Co-Design Button */}
           <button
             onClick={() => setShowStudioCoDesignModal(true)}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
               isStudioBroadcasting
                 ? "bg-purple-500/25 text-purple-300 border-2 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.5)] animate-pulse"
                 : "bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 text-purple-300 hover:text-white"
             }`}
             title="Launch Live Studio Co-Design & Broadcast"
           >
-            <span className="text-sm sm:text-base">🎨</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5 font-bold">Co-Design</span>
+            <span className="text-base">🎨</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5 font-bold">Co-Design</span>
           </button>
         </div>
 
         {/* Center: Collaboration Tools (Reactions, Hand, Proofing, Chat, People, AI) */}
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Reaction Triggers */}
-          <div className="hidden md:flex items-center gap-1 bg-neutral-800/80 p-1.5 rounded-xl border border-neutral-700/60">
+          <div className="flex items-center gap-1 bg-neutral-800/80 p-1.5 rounded-xl border border-neutral-700/60">
             <button onClick={() => handleSendReaction("thumbs_up")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Thumbs Up">👍</button>
             <button onClick={() => handleSendReaction("heart")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Heart">❤️</button>
             <button onClick={() => handleSendReaction("clap")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Clap">👏</button>
@@ -4226,24 +4389,24 @@ export default function MeetingRoom() {
 
           <button
             onClick={handleToggleRaiseHand}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               isHandRaised ? "bg-amber-500/25 text-amber-300 border-2 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.5)] animate-pulse" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="Raise / Lower Hand"
           >
-            <span className="text-sm sm:text-base">✋</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">Hand</span>
+            <span className="text-base">✋</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">Hand</span>
           </button>
 
           <button
             onClick={() => setActiveDrawer(activeDrawer === "proofing" ? "none" : "proofing")}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "proofing" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="Live Proofing & Concepts"
           >
-            <span className="text-sm sm:text-base">🎨</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">Proof</span>
+            <span className="text-base">🎨</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">Proof</span>
           </button>
 
           <button
@@ -4252,7 +4415,7 @@ export default function MeetingRoom() {
               setActiveDrawer(next);
               if (next === "chat") setUnreadChatCount(0);
             }}
-            className={`relative flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "chat" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="Toggle Chat"
@@ -4262,13 +4425,13 @@ export default function MeetingRoom() {
                 {unreadChatCount}
               </span>
             )}
-            <span className="text-sm sm:text-base">💬</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">Chat</span>
+            <span className="text-base">💬</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">Chat</span>
           </button>
 
           <button
             onClick={() => setActiveDrawer(activeDrawer === "participants" ? "none" : "participants")}
-            className={`relative flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "participants" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="Toggle Participants"
@@ -4278,27 +4441,35 @@ export default function MeetingRoom() {
                 {waitingParticipants.length}
               </span>
             )}
-            <span className="text-sm sm:text-base">👥</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">People</span>
+            <span className="text-base">👥</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">People</span>
           </button>
 
           <button
             onClick={() => setActiveDrawer(activeDrawer === "intelligence" ? "none" : "intelligence")}
-            className={`flex flex-col items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "intelligence" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
             title="AI Meeting Intelligence"
           >
-            <span className="text-sm sm:text-base">✨</span>
-            <span className="font-meta text-[7px] sm:text-[8px] uppercase mt-0.5">AI</span>
+            <span className="text-base">✨</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">AI</span>
           </button>
         </div>
 
-        {/* Right: Fullscreen & Leave / End Meeting */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* Right: Settings, Fullscreen & Leave / End Meeting */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowDeviceSettingsModal(true)}
+            className="w-10 h-10 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white flex items-center justify-center text-xs"
+            title="Device & Audio Settings"
+          >
+            ⚙️
+          </button>
+
           <button
             onClick={handleToggleFullscreen}
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white flex items-center justify-center text-xs"
+            className="w-10 h-10 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white flex items-center justify-center text-xs"
             title="Fullscreen"
           >
             {isFullscreen ? "↙️" : "⛶"}
@@ -4307,14 +4478,14 @@ export default function MeetingRoom() {
           {isHost ? (
             <button
               onClick={handleEndForAll}
-              className="px-2.5 sm:px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-display text-[10px] sm:text-xs font-bold uppercase rounded-xl transition-colors shadow-sm"
+              className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-display text-xs font-bold uppercase rounded-xl transition-colors shadow-sm"
             >
               End
             </button>
           ) : (
             <button
               onClick={handleLeaveMeeting}
-              className="px-2.5 sm:px-4 py-2 bg-red-600/80 hover:bg-red-500 text-white font-display text-[10px] sm:text-xs font-bold uppercase rounded-xl transition-colors"
+              className="px-4 py-2 bg-red-600/80 hover:bg-red-500 text-white font-display text-xs font-bold uppercase rounded-xl transition-colors"
             >
               Leave
             </button>
@@ -5411,6 +5582,308 @@ export default function MeetingRoom() {
             <span className="font-meta text-xs text-neutral-400 bg-neutral-900 px-3 py-1 rounded-full border border-neutral-800">
               Drag anywhere horizontally across the screen to slide comparison ({compareSplitPos}% Split)
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* 2026 MOBILE ACTION SHEET MODAL */}
+      {showMobileActionsSheet && (
+        <div 
+          className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex flex-col justify-end md:hidden animate-in fade-in duration-150 select-none"
+          onClick={() => setShowMobileActionsSheet(false)}
+        >
+          <div
+            className="w-full bg-neutral-900 border-t border-neutral-700 rounded-t-3xl p-4 sm:p-5 shadow-2xl space-y-4 max-h-[85dvh] overflow-y-auto animate-in slide-in-from-bottom duration-200 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sheet Header */}
+            <div className="flex items-center justify-between pb-2 border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                <h3 className="font-display text-xs font-bold uppercase tracking-wider text-white">
+                  Meeting Tools &amp; Actions
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMobileActionsSheet(false)}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Emoji Reactions Bar */}
+            <div className="space-y-1.5">
+              <span className="font-meta text-[9px] uppercase font-bold text-neutral-400 px-1">
+                Send Live Reaction
+              </span>
+              <div className="grid grid-cols-6 gap-2 bg-neutral-950/70 p-2 rounded-2xl border border-neutral-800">
+                {[
+                  { id: "thumbs_up", icon: "👍", label: "Thumbs Up" },
+                  { id: "heart", icon: "❤️", label: "Heart" },
+                  { id: "clap", icon: "👏", label: "Clap" },
+                  { id: "celebrate", icon: "🎉", label: "Celebrate" },
+                  { id: "laugh", icon: "🔥", label: "Fire" },
+                  { id: "laugh", icon: "😂", label: "Laugh" },
+                ].map((r, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      handleSendReaction(r.id as any);
+                      setShowMobileActionsSheet(false);
+                    }}
+                    className="py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 active:scale-125 text-lg flex items-center justify-center transition-transform"
+                    title={r.label}
+                  >
+                    {r.icon}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Main Action Grid */}
+            <div className="grid grid-cols-3 gap-2.5 pt-1">
+              {/* Hand Raise */}
+              <button
+                type="button"
+                onClick={() => {
+                  handleToggleRaiseHand();
+                  setShowMobileActionsSheet(false);
+                }}
+                className={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1.5 transition-all text-center ${
+                  isHandRaised
+                    ? "bg-amber-500/20 text-amber-300 border-amber-400 shadow-md animate-pulse"
+                    : "bg-neutral-950/80 border-neutral-800 hover:border-neutral-700 text-white"
+                }`}
+              >
+                <span className="text-xl">✋</span>
+                <span className="font-meta text-[10px] font-bold uppercase">{isHandRaised ? "Lower Hand" : "Raise Hand"}</span>
+              </button>
+
+              {/* Proof Canvas */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDrawer("proofing");
+                  setShowMobileActionsSheet(false);
+                }}
+                className="p-3 rounded-2xl border border-cyan-500/30 bg-cyan-950/25 hover:bg-cyan-900/40 text-cyan-300 flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-xl">🎨</span>
+                <span className="font-meta text-[10px] font-bold uppercase">Proof Canvas</span>
+              </button>
+
+              {/* KON10 Co-Design */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStudioCoDesignModal(true);
+                  setShowMobileActionsSheet(false);
+                }}
+                className="p-3 rounded-2xl border border-purple-500/30 bg-purple-950/25 hover:bg-purple-900/40 text-purple-300 flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-xl">🛠️</span>
+                <span className="font-meta text-[10px] font-bold uppercase">Co-Design</span>
+              </button>
+
+              {/* Screen Share */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMobileActionsSheet(false);
+                  if (isScreenSharing) {
+                    handleStartScreenShare(false);
+                  } else {
+                    setShowScreenShareMenu(true);
+                  }
+                }}
+                className={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1.5 transition-all text-center ${
+                  isScreenSharing
+                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-400"
+                    : "bg-neutral-950/80 border-neutral-800 hover:border-neutral-700 text-white"
+                }`}
+              >
+                <span className="text-xl">🖥️</span>
+                <span className="font-meta text-[10px] font-bold uppercase">{isScreenSharing ? "Stop Share" : "Share Screen"}</span>
+              </button>
+
+              {/* People & Waiting Room */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDrawer("participants");
+                  setShowMobileActionsSheet(false);
+                }}
+                className="relative p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                {isHost && waitingParticipants.length > 0 && (
+                  <span className="absolute top-1.5 right-1.5 bg-amber-400 text-black text-[8px] font-extrabold px-1 rounded-full">
+                    {waitingParticipants.length}
+                  </span>
+                )}
+                <span className="text-xl">👥</span>
+                <span className="font-meta text-[10px] font-bold uppercase">People ({activeParticipants.length})</span>
+              </button>
+
+              {/* AI Meeting Intelligence */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDrawer("intelligence");
+                  setShowMobileActionsSheet(false);
+                }}
+                className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-xl">✨</span>
+                <span className="font-meta text-[10px] font-bold uppercase">AI Notes</span>
+              </button>
+
+              {/* Audio & Video Device Settings */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeviceSettingsModal(true);
+                  setShowMobileActionsSheet(false);
+                }}
+                className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-xl">⚙️</span>
+                <span className="font-meta text-[10px] font-bold uppercase">A/V Settings</span>
+              </button>
+
+              {/* Breakout Rooms */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDrawer("breakouts");
+                  setShowMobileActionsSheet(false);
+                }}
+                className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-xl">🔀</span>
+                <span className="font-meta text-[10px] font-bold uppercase">Breakouts</span>
+              </button>
+
+              {/* Share / Invite Link */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShareModalOpen(true);
+                  setShowMobileActionsSheet(false);
+                }}
+                className="p-3 rounded-2xl border border-[var(--dept)]/40 bg-[var(--dept)]/10 hover:bg-[var(--dept)]/20 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-xl">🔗</span>
+                <span className="font-meta text-[10px] font-bold uppercase">Invite Link</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2026 CAMERA & AUDIO DEVICE SETTINGS MODAL */}
+      {showDeviceSettingsModal && (
+        <div className="fixed inset-0 z-[150] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150 select-none">
+          <div className="w-full max-w-md bg-neutral-900 border border-neutral-700 rounded-3xl p-5 sm:p-6 shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚙️</span>
+                <h3 className="font-display text-sm font-bold uppercase text-white">
+                  Audio &amp; Video Hardware Settings
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeviceSettingsModal(false)}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Camera Switcher */}
+            <div className="space-y-1.5">
+              <label className="font-meta text-[10px] font-bold uppercase text-neutral-400 flex items-center gap-1">
+                <span>📹</span> Camera Source
+              </label>
+              <select
+                value={selectedVideoInput}
+                onChange={(e) => setSelectedVideoInput(e.target.value)}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-[var(--dept)]"
+              >
+                {devices.videoInputs.length === 0 && (
+                  <option value="">Default System Camera</option>
+                )}
+                {devices.videoInputs.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Camera (${d.deviceId.slice(0, 5)})`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Microphone Switcher */}
+            <div className="space-y-1.5">
+              <label className="font-meta text-[10px] font-bold uppercase text-neutral-400 flex items-center gap-1">
+                <span>🎙️</span> Microphone Source
+              </label>
+              <select
+                value={selectedAudioInput}
+                onChange={(e) => setSelectedAudioInput(e.target.value)}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-[var(--dept)]"
+              >
+                {devices.audioInputs.length === 0 && (
+                  <option value="">Default System Microphone</option>
+                )}
+                {devices.audioInputs.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Microphone (${d.deviceId.slice(0, 5)})`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Live Mic Volume Level Meter */}
+            <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800 space-y-1.5">
+              <div className="flex justify-between items-center text-[10px] font-meta text-neutral-400">
+                <span>Live Mic Signal:</span>
+                <span className={micVolume > 10 ? "text-emerald-400 font-bold" : "text-neutral-500"}>
+                  {micVolume > 10 ? "Receiving Input" : "Silent"}
+                </span>
+              </div>
+              <div className="h-2 w-full bg-neutral-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-75"
+                  style={{ width: `${Math.min(100, micVolume * 2)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Speaker Test */}
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsTestingSpeaker(true);
+                  await playSpeakerTestSound();
+                  setIsTestingSpeaker(false);
+                }}
+                disabled={isTestingSpeaker}
+                className="btn btn-ghost !py-2 !px-3 font-meta text-[10px] font-bold uppercase flex items-center gap-1.5"
+              >
+                <span>🔊</span> {isTestingSpeaker ? "Testing Chime…" : "Test Speaker"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowDeviceSettingsModal(false)}
+                className="btn btn-dept !py-2 !px-4 font-display text-[10px] font-bold uppercase"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}
