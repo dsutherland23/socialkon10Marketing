@@ -98,8 +98,8 @@ function Hero() {
             </Reveal>
           </div>
 
-          {/* Right: 3D Scroll Picture Reel Stack feeding from Graphic Portfolio */}
-          <div className="lg:col-span-5 flex items-center justify-center relative w-full pt-4 lg:pt-0">
+          {/* Right: 3D Scroll Picture Reel Stack feeding from Graphic Portfolio (Desktop/Tablet only) */}
+          <div className="hidden lg:flex lg:col-span-5 items-center justify-center relative w-full pt-4 lg:pt-0">
             <Reveal delay={300}>
               <VerticalImageStack items={portfolioStackItems} />
             </Reveal>
