@@ -24,6 +24,19 @@ export interface DeliverablesPopoverProps {
   className?: string;
 }
 
+/**
+ * Automatically converts any hardcoded dollar values (e.g. "$750", "$1,500") embedded in deliverable strings
+ * to the currently selected active currency (e.g. "J$118,793", "C$1,020", "$750").
+ */
+function formatCurrencyInText(text: string, code: CurrencyCode): string {
+  if (code === "USD" || code === "BMD") return text;
+  return text.replace(/\$([0-9,]+)/g, (match, rawAmount) => {
+    const num = Number(rawAmount.replace(/,/g, ""));
+    if (isNaN(num)) return match;
+    return formatMoney(num, code);
+  });
+}
+
 export function DeliverablesPopover({
   title,
   tagline,
@@ -34,7 +47,7 @@ export function DeliverablesPopover({
   addons = [],
   serviceSlug,
   price,
-  currency = "USD",
+  currency,
   billing,
   triggerText,
   countExtra,
@@ -51,7 +64,7 @@ export function DeliverablesPopover({
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { currency: shopCurrency } = useShop();
-  const curr = currency || shopCurrency || "USD";
+  const curr: CurrencyCode = currency || shopCurrency || "USD";
 
   useEffect(() => {
     setMounted(true);
@@ -206,7 +219,7 @@ export function DeliverablesPopover({
         </div>
       </div>
 
-      {/* All Deliverables List */}
+      {/* All Deliverables List with dynamic currency conversion */}
       <div className="mt-3">
         <p className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2 flex items-center justify-between">
           <span>What's inside this package ({deliverables.length})</span>
@@ -221,13 +234,15 @@ export function DeliverablesPopover({
               <div className="w-4 h-4 rounded-full bg-[var(--dept-soft)] text-[var(--dept)] flex items-center justify-center shrink-0 mt-0.5">
                 <Check className="w-3 h-3 stroke-[2.5]" />
               </div>
-              <span className="text-[var(--ink)] leading-snug font-medium">{item}</span>
+              <span className="text-[var(--ink)] leading-snug font-medium">
+                {formatCurrencyInText(item, curr)}
+              </span>
             </li>
           ))}
         </ul>
       </div>
 
-      {/* Optional Add-Ons Summary */}
+      {/* Optional Add-Ons Summary with dynamic currency conversion */}
       {addons.length > 0 && (
         <div className="mt-3 pt-3 border-t border-[var(--line)]">
           <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider mb-1.5">
@@ -251,7 +266,7 @@ export function DeliverablesPopover({
         </div>
       )}
 
-      {/* Footer CTA */}
+      {/* Footer CTA with dynamic currency conversion */}
       <div className="mt-4 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-3">
         {price !== undefined && (
           <div>
