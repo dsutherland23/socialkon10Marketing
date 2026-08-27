@@ -1,6 +1,8 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { CONTACT, formatMoney } from "../lib/data";
+import { toast } from "sonner";
+import { Trash2, Copy, Bookmark, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { CONTACT, formatMoney, serviceBySlug } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useShop } from "../lib/shop";
 import { useDesignPackage } from "../lib/design-shop";
@@ -15,6 +17,7 @@ import { IntakeWizard, type IntakeOrderContext } from "../components/IntakeWizar
 import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type IntakePackage, type ClientProfile } from "../lib/intake";
 import { useContent } from "../lib/content";
 import { sendEmail, orderConfirmationEmail, adminNewOrderEmail } from "../lib/email";
+import { DeliverablesPopover } from "../components/DeliverablesPopover";
 
 /* ------------------------------------------------------------------
    CHECKOUT (PRD §29–31)
@@ -43,7 +46,7 @@ interface Details { name: string; company: string; email: string; phone: string;
 
 export default function Checkout() {
   useDepartment(null);
-  const { items, remove, currency, promo, applyPromo, clearPromo, subtotal: shopSubtotal, discount: shopDiscount, clear } = useShop();
+  const { items, remove, currency, promo, applyPromo, clearPromo, subtotal: shopSubtotal, discount: shopDiscount, clear, add } = useShop();
   const pkg = useDesignPackage();
   const [step, setStep] = useState(0);
   const payMode = "full" as const;
@@ -120,6 +123,190 @@ export default function Checkout() {
       setStep(1); // straight to Your details
     }
   }, [hasAnyItems]);
+
+  // 2026 Batch Processing & Cart Management State
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [savedItems, setSavedItems] = useState<{ id: string; type: "agency" | "pkg"; item: any; date: string }[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sk-saved-cart") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [showSavedShelf, setShowSavedShelf] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sk-saved-cart", JSON.stringify(savedItems));
+    } catch {}
+  }, [savedItems]);
+
+  const allCartKeys = useMemo(() => {
+    return [...items.map((i) => i.key), ...pkg.lines.map((l) => l.key)];
+  }, [items, pkg.lines]);
+
+  const isAllSelected = allCartKeys.length > 0 && selectedKeys.length === allCartKeys.length;
+  const isSomeSelected = selectedKeys.length > 0;
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedKeys([]);
+    } else {
+      setSelectedKeys([...allCartKeys]);
+    }
+  };
+
+  const toggleSelectKey = (key: string) => {
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
+
+  // Undo buffer for single / batch deletes
+  const handleBatchDelete = () => {
+    if (selectedKeys.length === 0) return;
+    const deletedAgency = items.filter((i) => selectedKeys.includes(i.key));
+    const deletedPkg = pkg.lines.filter((l) => selectedKeys.includes(l.key));
+    const count = selectedKeys.length;
+
+    // Execute deletion
+    selectedKeys.forEach((key) => {
+      remove(key);
+      pkg.remove(key);
+    });
+    setSelectedKeys([]);
+
+    toast.success(`Removed ${count} item${count === 1 ? "" : "s"} from cart`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          deletedAgency.forEach((item) => add(item));
+          deletedPkg.forEach((line) => {
+            pkg.add(line.service.slug, { tierId: line.tier?.id, sizeId: line.size?.id, optionIds: line.options?.map((o: any) => o.id), qty: line.qty });
+          });
+          toast.success("Restored items to cart");
+        },
+      },
+    });
+  };
+
+  const handleSingleDelete = (key: string, name: string) => {
+    const agencyItem = items.find((i) => i.key === key);
+    const pkgLine = pkg.lines.find((l) => l.key === key);
+
+    remove(key);
+    pkg.remove(key);
+    setSelectedKeys((prev) => prev.filter((k) => k !== key));
+
+    toast.success(`Removed "${name}" from cart`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (agencyItem) add(agencyItem);
+          if (pkgLine) {
+            pkg.add(pkgLine.service.slug, { tierId: pkgLine.tier?.id, sizeId: pkgLine.size?.id, optionIds: pkgLine.options?.map((o: any) => o.id), qty: pkgLine.qty });
+          }
+          toast.success(`Restored "${name}"`);
+        },
+      },
+    });
+  };
+
+  const handleDuplicate = (type: "agency" | "pkg", item: any) => {
+    if (type === "agency") {
+      add({
+        serviceSlug: item.serviceSlug,
+        name: item.name,
+        unitPrice: item.unitPrice,
+        tierLabel: item.tierLabel,
+        addons: item.addons,
+        rush: item.rush,
+        billing: item.billing,
+        depositPct: item.depositPct,
+      });
+      toast.success(`Duplicated "${item.name}"`);
+    } else {
+      pkg.add(item.service.slug, { tierId: item.tier?.id, sizeId: item.size?.id, optionIds: item.options?.map((o: any) => o.id), qty: item.qty });
+      toast.success(`Duplicated "${item.service.name}"`);
+    }
+  };
+
+  const handleBatchSaveForLater = () => {
+    if (selectedKeys.length === 0) return;
+    const toSaveAgency = items.filter((i) => selectedKeys.includes(i.key));
+    const toSavePkg = pkg.lines.filter((l) => selectedKeys.includes(l.key));
+
+    const newSaved = [
+      ...toSaveAgency.map((i) => ({ id: `saved-${Date.now()}-${Math.random()}`, type: "agency" as const, item: i, date: new Date().toLocaleDateString() })),
+      ...toSavePkg.map((l) => ({ id: `saved-${Date.now()}-${Math.random()}`, type: "pkg" as const, item: l, date: new Date().toLocaleDateString() })),
+    ];
+
+    setSavedItems((prev) => [...prev, ...newSaved]);
+    selectedKeys.forEach((key) => {
+      remove(key);
+      pkg.remove(key);
+    });
+    setSelectedKeys([]);
+    setShowSavedShelf(true);
+
+    toast.success(`Moved ${newSaved.length} item${newSaved.length === 1 ? "" : "s"} to Saved for Later`);
+  };
+
+  const handleRestoreSaved = (saved: { id: string; type: "agency" | "pkg"; item: any }) => {
+    if (saved.type === "agency") {
+      add(saved.item);
+    } else {
+      pkg.add(saved.item.service.slug, { tierId: saved.item.tier?.id, sizeId: saved.item.size?.id, optionIds: saved.item.options?.map((o: any) => o.id), qty: saved.item.qty });
+    }
+    setSavedItems((prev) => prev.filter((s) => s.id !== saved.id));
+    toast.success("Item moved back to cart");
+  };
+
+  const handleRemoveSaved = (id: string) => {
+    setSavedItems((prev) => prev.filter((s) => s.id !== id));
+    toast.success("Item removed from saved list");
+  };
+
+  const handleBatchExportEstimate = () => {
+    const activeAgency = items.filter((i) => selectedKeys.length === 0 || selectedKeys.includes(i.key));
+    const activePkg = pkg.lines.filter((l) => selectedKeys.length === 0 || selectedKeys.includes(l.key));
+
+    const lines = [
+      "============================================================",
+      " SOCIAL KON10 MARKETING — PROJECT ESTIMATE & SCOPE SUMMARY",
+      ` Date: ${new Date().toLocaleDateString()} | Currency: ${currency}`,
+      ` Reference: SK-EST-${Date.now().toString().slice(-6)}`,
+      "============================================================",
+      "",
+      "--- SERVICES & PACKAGES ---",
+      ...activeAgency.map(
+        (i, idx) =>
+          `${idx + 1}. ${i.name} [${i.billing === "monthly" ? "Retainer" : "Project"}] — ${formatMoney((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1), currency)}\n   Inclusions: ${serviceBySlug(i.serviceSlug)?.deliverables.join(", ") || "Standard scope"}\n   Deposit: ${i.depositPct}% upfront`
+      ),
+      ...activePkg.map(
+        (l, idx) =>
+          `${activeAgency.length + idx + 1}. ${l.service.name} (${l.tier ? l.tier.name : "Custom"} ${l.sizeLabel ? `· ${l.sizeLabel}` : ""}) — ${formatMoney(l.lineTotal, currency)}\n   Turnaround: ${l.turnaround}\n   Options: ${l.options.map((o) => o.name).join(", ") || "Standard production"}`
+      ),
+      "",
+      "------------------------------------------------------------",
+      ` Subtotal:  ${formatMoney(subtotal, currency)}`,
+      discount > 0 ? ` Discount: -${formatMoney(discount, currency)}` : "",
+      ` Total:     ${formatMoney(total, currency)}`,
+      "============================================================",
+      " 50% deposit secures project kickoff. Remaining balance due",
+      " only upon final design & deliverables approval.",
+      " Questions? hello@socialkon10.com | Kingston, Jamaica",
+    ].filter(Boolean).join("\n");
+
+    const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SocialKon10_Estimate_${Date.now().toString().slice(-6)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Quote estimate downloaded");
+  };
 
   useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure and complete payment for your project or template.", path: "/checkout" });
 
@@ -321,7 +508,7 @@ export default function Checkout() {
       </ol>
 
       <div className="mt-12">
-        {/* STEP 1 — project summary */}
+        {/* STEP 1 — project summary with 2026 Batch Processing */}
         {step === 0 && (
           <div>
             {!hasAnyItems ? (
@@ -335,30 +522,150 @@ export default function Checkout() {
               </div>
             ) : (
               <>
+                {/* 2026 Master Selection & Batch Operations Header */}
+                <div className="mb-4 p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium select-none">
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={toggleSelectAll}
+                      className="accent-[var(--dept)] w-4 h-4 rounded"
+                    />
+                    <span className="font-meta text-[11px]">
+                      {isAllSelected ? "Deselect All" : "Select All"} ({allCartKeys.length} items)
+                    </span>
+                  </label>
+
+                  {/* Batch Action Bar (Triggered when 1 or more items are selected) */}
+                  {isSomeSelected ? (
+                    <div className="flex flex-wrap items-center gap-2 animate-in fade-in duration-150">
+                      <span className="px-2.5 py-1 rounded bg-[var(--dept-soft)] text-[var(--dept)] font-mono text-[10px] font-bold">
+                        {selectedKeys.length} SELECTED
+                      </span>
+
+                      <button
+                        onClick={handleBatchDelete}
+                        className="px-2.5 py-1.5 rounded border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all font-meta text-[10px] flex items-center gap-1.5"
+                        title="Delete selected items"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Selected</span>
+                      </button>
+
+                      <button
+                        onClick={handleBatchSaveForLater}
+                        className="px-2.5 py-1.5 rounded border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-[var(--ink)] hover:text-[var(--dept)] transition-all font-meta text-[10px] flex items-center gap-1.5"
+                        title="Save selected items for later"
+                      >
+                        <Bookmark className="w-3.5 h-3.5 text-[var(--dept)]" />
+                        <span>Save for Later</span>
+                      </button>
+
+                      <button
+                        onClick={handleBatchExportEstimate}
+                        className="px-2.5 py-1.5 rounded border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-[var(--ink)] hover:text-[var(--dept)] transition-all font-meta text-[10px] flex items-center gap-1.5"
+                        title="Export itemized quote estimate"
+                      >
+                        <Download className="w-3.5 h-3.5 text-[var(--dept)]" />
+                        <span>Export Estimate</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 text-[var(--muted)] font-meta text-[10px]">
+                      <button
+                        onClick={handleBatchExportEstimate}
+                        className="hover:text-[var(--dept)] flex items-center gap-1 transition-colors"
+                      >
+                        <Download className="w-3 h-3 text-[var(--dept)]" />
+                        <span>Export Full Cart Estimate</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Agency Services Section */}
                 {items.length > 0 && (
                   <div>
                     {pkg.lines.length > 0 && <span className="idx block mb-3">/agency-services</span>}
-                    <ul>
-                      {items.map((i) => (
-                        <li key={i.key} className="file-row grid-cols-[1fr_auto_auto]">
-                          <div>
-                            <span className="font-display text-base font-bold uppercase">{i.name}</span>
-                            <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
-                              {i.addons.length > 0 && `+ ${i.addons.map((a) => a.name).join(", ")} · `}
-                              {i.rush && "Rush +25% · "}
-                              {i.billing === "monthly" ? "Monthly retainer" : "Full payment upfront"}
+                    <ul className="space-y-2">
+                      {items.map((i) => {
+                        const matchedSvc = serviceBySlug(i.serviceSlug);
+                        const isSelected = selectedKeys.includes(i.key);
+                        const itemPrice = (i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1);
+
+                        return (
+                          <li
+                            key={i.key}
+                            className={`p-4 border rounded-xl transition-all duration-200 grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 ${
+                              isSelected
+                                ? "border-[var(--dept)] bg-[var(--dept-soft)]/20 shadow-sm"
+                                : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectKey(i.key)}
+                              className="accent-[var(--dept)] w-4 h-4 rounded cursor-pointer mt-0.5"
+                              aria-label={`Select ${i.name}`}
+                            />
+
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-display text-base font-bold uppercase">{i.name}</span>
+                                {matchedSvc && (
+                                  <DeliverablesPopover
+                                    title={i.name}
+                                    tagline={matchedSvc.tagline}
+                                    deliverables={matchedSvc.deliverables}
+                                    timeline={matchedSvc.timeline}
+                                    revisions={matchedSvc.revisions}
+                                    depositPct={i.depositPct}
+                                    addons={matchedSvc.addons}
+                                    serviceSlug={matchedSvc.slug}
+                                    price={itemPrice}
+                                    billing={i.billing}
+                                    triggerText="View Scope"
+                                  />
+                                )}
+                              </div>
+                              <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
+                                {i.addons.length > 0 && `+ ${i.addons.map((a) => a.name).join(", ")} · `}
+                                {i.rush && "Rush +25% · "}
+                                {i.billing === "monthly" ? "Monthly retainer" : `${i.depositPct}% kickoff deposit`}
+                              </span>
+                            </div>
+
+                            <span className="font-display font-bold text-sm sm:text-base">
+                              {formatMoney(itemPrice, currency)}
                             </span>
-                          </div>
-                          <span className="font-display font-bold">
-                            {formatMoney((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1), currency)}
-                          </span>
-                          <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => remove(i.key)} aria-label={`Remove ${i.name}`}>Remove</button>
-                        </li>
-                      ))}
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleDuplicate("agency", i)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+                                title="Duplicate this line item"
+                                aria-label={`Duplicate ${i.name}`}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleSingleDelete(i.key, i.name)}
+                                className="p-1.5 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 transition-colors"
+                                title="Remove from cart"
+                                aria-label={`Remove ${i.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 )}
 
+                {/* Custom Design Package Section */}
                 {pkg.lines.length > 0 && (
                   <div className={items.length > 0 ? "mt-8 pt-8 rule-t" : ""}>
                     <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
@@ -367,33 +674,145 @@ export default function Checkout() {
                         Customize in Package Builder ({pkg.lines.length} service{pkg.lines.length === 1 ? "" : "s"}) →
                       </Link>
                     </div>
-                    <ul>
-                      {pkg.lines.map((l) => (
-                        <li key={l.key} className="file-row grid-cols-[1fr_auto_auto]">
-                          <div>
-                            <span className="font-display text-base font-bold uppercase">{l.service.name}</span>
-                            <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
-                              {[
-                                l.tier ? `${l.tier.name} tier` : null,
-                                l.sizeLabel ? `Size: ${l.sizeLabel}` : null,
-                                l.qty > 1 ? `Qty: ${l.qty}` : null,
-                                l.options.length > 0 ? `+ ${l.options.map((o) => o.name).join(", ")}` : null,
-                                l.turnaround,
-                              ].filter(Boolean).join(" · ")}
+                    <ul className="space-y-2">
+                      {pkg.lines.map((l) => {
+                        const isSelected = selectedKeys.includes(l.key);
+
+                        return (
+                          <li
+                            key={l.key}
+                            className={`p-4 border rounded-xl transition-all duration-200 grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 ${
+                              isSelected
+                                ? "border-[var(--dept)] bg-[var(--dept-soft)]/20 shadow-sm"
+                                : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectKey(l.key)}
+                              className="accent-[var(--dept)] w-4 h-4 rounded cursor-pointer mt-0.5"
+                              aria-label={`Select ${l.service.name}`}
+                            />
+
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-display text-base font-bold uppercase">{l.service.name}</span>
+                                <DeliverablesPopover
+                                  title={l.service.name}
+                                  deliverables={[
+                                    l.tier ? `${l.tier.name} tier scope` : "Standard design scope",
+                                    l.sizeLabel ? `Output size: ${l.sizeLabel}` : "Master vector output",
+                                    `Estimated turnaround: ${l.turnaround}`,
+                                    ...l.options.map((o) => `Add-on: ${o.name}`),
+                                  ]}
+                                  timeline={l.turnaround}
+                                  price={l.lineTotal}
+                                  triggerText="View Scope"
+                                />
+                              </div>
+                              <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
+                                {[
+                                  l.tier ? `${l.tier.name} tier` : null,
+                                  l.sizeLabel ? `Size: ${l.sizeLabel}` : null,
+                                  l.qty > 1 ? `Qty: ${l.qty}` : null,
+                                  l.options.length > 0 ? `+ ${l.options.map((o) => o.name).join(", ")}` : null,
+                                  l.turnaround,
+                                ].filter(Boolean).join(" · ")}
+                              </span>
+                            </div>
+
+                            <span className="font-display font-bold text-sm sm:text-base">
+                              {formatMoney(l.lineTotal, currency)}
                             </span>
-                          </div>
-                          <span className="font-display font-bold">
-                            {formatMoney(l.lineTotal, currency)}
-                          </span>
-                          <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => pkg.remove(l.key)} aria-label={`Remove ${l.service.name}`}>Remove</button>
-                        </li>
-                      ))}
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleDuplicate("pkg", l)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+                                title="Duplicate this line item"
+                                aria-label={`Duplicate ${l.service.name}`}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleSingleDelete(l.key, l.service.name)}
+                                className="p-1.5 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 transition-colors"
+                                title="Remove from cart"
+                                aria-label={`Remove ${l.service.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
+
                     {pkg.discount && (
-                      <div className="mt-3 flex items-center justify-between border border-[var(--dept)] px-4 py-2 text-xs" style={{ background: "var(--dept-soft)" }}>
-                        <span className="font-meta text-[10px] dept-accent uppercase tracking-wider">✓ Automatic Bundle Discount</span>
+                      <div className="mt-3 flex items-center justify-between border border-[var(--dept)] px-4 py-2.5 rounded-lg text-xs" style={{ background: "var(--dept-soft)" }}>
+                        <span className="font-meta text-[10px] dept-accent uppercase tracking-wider font-bold">✓ Automatic Bundle Discount</span>
                         <span className="font-semibold">{pkg.discount.name} (−{formatMoney(pkg.discount.amount, currency)})</span>
                       </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Saved for Later Shelf */}
+                {savedItems.length > 0 && (
+                  <div className="mt-8 pt-6 border-t border-[var(--line)]">
+                    <button
+                      type="button"
+                      onClick={() => setShowSavedShelf((prev) => !prev)}
+                      className="flex items-center justify-between w-full py-2 text-left font-meta text-[11px] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Bookmark className="w-3.5 h-3.5 text-[var(--dept)]" />
+                        <span className="font-bold uppercase tracking-wider text-[var(--ink)]">
+                          Saved for later ({savedItems.length})
+                        </span>
+                      </span>
+                      {showSavedShelf ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+
+                    {showSavedShelf && (
+                      <ul className="mt-3 space-y-2 animate-in fade-in duration-200">
+                        {savedItems.map((s) => {
+                          const name = s.type === "agency" ? s.item.name : s.item.service?.name || "Design Item";
+                          const price = s.type === "agency"
+                            ? (s.item.unitPrice + s.item.addons.reduce((a: number, b: any) => a + b.price, 0)) * (s.item.rush ? 1.25 : 1)
+                            : s.item.lineTotal;
+
+                          return (
+                            <li
+                              key={s.id}
+                              className="p-3.5 rounded-lg border border-[var(--line)] bg-[var(--bg)] flex items-center justify-between gap-4 text-xs"
+                            >
+                              <div>
+                                <span className="font-display font-bold uppercase">{name}</span>
+                                <span className="block font-meta text-[9px] text-[var(--muted)] mt-0.5">
+                                  Saved on {s.date} · {formatMoney(price, currency)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleRestoreSaved(s)}
+                                  className="btn btn-dept !py-1 !px-2.5 text-[10px] font-meta"
+                                >
+                                  Move to Cart
+                                </button>
+                                <button
+                                  onClick={() => handleRemoveSaved(s.id)}
+                                  className="p-1 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400"
+                                  title="Delete saved item"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
                   </div>
                 )}

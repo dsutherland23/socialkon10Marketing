@@ -7,6 +7,7 @@ import { useShop } from "../lib/shop";
 import { useSEO, track } from "../lib/seo";
 import { Reveal } from "../lib/motion";
 import { FinalCta, SectionHead, ServiceCard } from "../components/blocks";
+import { DeliverablesPopover } from "../components/DeliverablesPopover";
 
 /* ------------------------------------------------------------------
    PACKAGES + BUILD-YOUR-PACKAGE CONFIGURATOR (PRD §27, §35)
@@ -170,6 +171,26 @@ function Bundle() {
         </div>
         <span className="dept-bg font-meta text-[10px] px-3 py-1.5">Save {formatMoney(full - bundle, currency)}</span>
       </div>
+
+      <div className="mt-6">
+        <DeliverablesPopover
+          title="Brand Launch Bundle"
+          tagline="Complete multi-department creative ecosystem"
+          deliverables={[
+            "Complete Brand Identity System (Logos, colors, typography, brand guidelines)",
+            "Custom 6-Page Business Website (Home, About, Services, Portfolio, Blog, Contact)",
+            "Mobile-First Responsive Web Design & CMS Setup",
+            "Social Media Launch Kit (Avatar, banners, 10 launch templates)",
+            "Search Engine Optimization (SEO) & Google Indexing",
+            "Deliverables Vault Access with Master Vector Files",
+            "3 Comprehensive Revision Rounds",
+            "50% Kickoff Deposit · Final Approval Sign-Off"
+          ]}
+          price={5850}
+          triggerText="View full bundle scope"
+        />
+      </div>
+
       <Link to="/start?intent=quote&service=brand-launch-bundle" className="btn mt-8 !text-current !border-current hover:!border-[var(--dept)] hover:!text-[var(--dept)]">
         Request the bundle <span className="btn-arrow" aria-hidden>→</span>
       </Link>
@@ -244,7 +265,16 @@ export default function Packages() {
                     <span className="font-meta text-[9px] text-[var(--muted)] mt-4 block">{t.bestFor}</span>
                     <h3 className="font-display text-lg font-bold uppercase mt-2">{t.name}</h3>
                     <p className="font-display-wide text-3xl font-bold mt-4">{formatMoney(t.price, currency)}</p>
-                    <p className="font-meta text-[9px] opacity-60 mt-2">{t.includes.length} deliverables included</p>
+                    <div className="mt-3">
+                      <DeliverablesPopover
+                        title={`Event Creative — ${t.name}`}
+                        tagline={t.tagline}
+                        deliverables={t.includes}
+                        price={t.price}
+                        serviceSlug="event-branding"
+                        triggerText={`View all ${t.includes.length} deliverables`}
+                      />
+                    </div>
                   </div>
                   <div className="mt-6 flex items-center justify-between gap-2 pt-4 border-t border-[var(--line)]">
                     <Link to="/services/event-branding" className="font-meta text-[10px] dept-accent u-line">Details →</Link>
@@ -273,13 +303,28 @@ export default function Packages() {
             <SectionHead index="/02/monthly-tiers" title={["Monthly", "management."]} meta="Content, community and reporting as a retainer. Pause or upgrade between cycles." />
             <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
               {SOCIAL_TIERS.map((t) => (
-                <div key={t.id} className="p-6" style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}>
-                  <h3 className="font-display text-lg font-bold uppercase mt-2">{t.name}</h3>
-                  <p className="font-display-wide text-3xl font-bold mt-4">
-                    {t.quote ? "Custom" : <>{formatMoney(t.price, currency)}<span className="text-sm font-meta font-normal opacity-60">{t.period}</span></>}
-                  </p>
-                  <p className="text-[12px] opacity-70 mt-2">{t.blurb}</p>
-                  <Link to="/services/social-media-management" className="font-meta text-[10px] dept-accent inline-block mt-5 u-line">Configure →</Link>
+                <div key={t.id} className="p-6 flex flex-col justify-between" style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}>
+                  <div>
+                    <h3 className="font-display text-lg font-bold uppercase mt-2">{t.name}</h3>
+                    <p className="font-display-wide text-3xl font-bold mt-4">
+                      {t.quote ? "Custom" : <>{formatMoney(t.price, currency)}<span className="text-sm font-meta font-normal opacity-60">{t.period}</span></>}
+                    </p>
+                    <p className="text-[12px] opacity-70 mt-2">{t.blurb}</p>
+                    <div className="mt-3">
+                      <DeliverablesPopover
+                        title={`Social Management — ${t.name}`}
+                        tagline={t.blurb}
+                        deliverables={t.features.map((f) => `${f.label}: ${f.value}`)}
+                        price={t.quote ? undefined : t.price}
+                        billing="monthly"
+                        serviceSlug="social-media-management"
+                        triggerText="View monthly features"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-6 pt-4 border-t border-[var(--line)]">
+                    <Link to="/services/social-media-management" className="font-meta text-[10px] dept-accent inline-block u-line">Configure retainer →</Link>
+                  </div>
                 </div>
               ))}
             </div>

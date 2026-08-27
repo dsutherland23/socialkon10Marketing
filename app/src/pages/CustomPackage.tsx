@@ -10,6 +10,7 @@ import { attachFiles, createOrder } from "../lib/backend";
 import { activeProviders } from "../lib/payments";
 import { Reveal } from "../lib/motion";
 import { useMoney } from "../lib/money";
+import { DeliverablesPopover } from "../components/DeliverablesPopover";
 
 /* ------------------------------------------------------------------
    CUSTOM PACKAGE BUILDER (PRD §17–§23, §26–§30, §52–§53)
@@ -302,6 +303,18 @@ export default function CustomPackage() {
                       <h3 className="font-display text-lg font-bold uppercase">{p.name}</h3>
                       <p className="text-[13px] text-[var(--muted)] mt-2 flex-1">{p.blurb}</p>
                       <p className="font-meta text-[9px] text-[var(--muted)] mt-3">{p.items.map((i) => `${i.qty}× ${services.find((s) => s.slug === i.slug)?.name ?? i.slug}`).join(" · ")}</p>
+                      <div className="mt-2.5">
+                        <DeliverablesPopover
+                          title={p.name}
+                          tagline={p.blurb}
+                          deliverables={p.items.map((i) => {
+                            const matched = services.find((s) => s.slug === i.slug);
+                            return `${i.qty}× ${matched?.name || i.slug} (${matched?.turnaround || "Standard production"})`;
+                          })}
+                          price={v.price}
+                          triggerText="View full package breakdown"
+                        />
+                      </div>
                       <div className="flex items-baseline gap-3 mt-4">
                         {v.savings > 0 && <span className="font-meta text-[10px] text-[var(--muted)] line-through">{money(v.regular)}</span>}
                         <span className="font-display-wide text-2xl font-bold">{money(v.price)}</span>

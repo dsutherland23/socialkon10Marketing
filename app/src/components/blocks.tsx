@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Reveal, ClipLines } from "../lib/motion";
 import { formatMoney, type ServiceProduct } from "../lib/data";
 import { useShop } from "../lib/shop";
+import { DeliverablesPopover } from "./DeliverablesPopover";
 
 /* Section heading: index marker + clipped display title + meta side note */
 export function SectionHead({
@@ -71,8 +72,38 @@ export function ServiceCard({ service, delay = 0 }: { service: ServiceProduct; d
           {service.deliverables.slice(0, 4).map((d) => (
             <li key={d} className="flex gap-2"><span className="dept-accent" aria-hidden>+</span>{d}</li>
           ))}
-          {service.deliverables.length > 4 && (
-            <li className="font-meta text-[9px] text-[var(--muted)] mt-1">+ {service.deliverables.length - 4} more</li>
+          {service.deliverables.length > 4 ? (
+            <li className="mt-2 pt-1 border-t border-[var(--line)]/50">
+              <DeliverablesPopover
+                title={service.name}
+                tagline={service.tagline}
+                deliverables={service.deliverables}
+                timeline={service.timeline}
+                revisions={service.revisions}
+                depositPct={service.depositPct}
+                addons={service.addons}
+                serviceSlug={service.slug}
+                price={service.price}
+                billing={service.billing}
+                countExtra={service.deliverables.length - 4}
+              />
+            </li>
+          ) : (
+            <li className="mt-2 pt-1 border-t border-[var(--line)]/50">
+              <DeliverablesPopover
+                title={service.name}
+                tagline={service.tagline}
+                deliverables={service.deliverables}
+                timeline={service.timeline}
+                revisions={service.revisions}
+                depositPct={service.depositPct}
+                addons={service.addons}
+                serviceSlug={service.slug}
+                price={service.price}
+                billing={service.billing}
+                triggerText="View full package scope"
+              />
+            </li>
           )}
         </ul>
         <div className="mt-6 pt-4 rule-t flex items-center justify-between">
