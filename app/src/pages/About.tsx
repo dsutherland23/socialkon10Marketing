@@ -2,8 +2,9 @@ import { Link } from "react-router-dom";
 import { CONTACT, CREATIVE_SYSTEM, DEPARTMENTS, WHY_POINTS } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
-import { ClipLines, Reveal } from "../lib/motion";
+import { Reveal } from "../lib/motion";
 import { FinalCta, SectionHead } from "../components/blocks";
+import { CaribbeanHeroWords } from "../components/ui/caribbean-hero-words";
 
 export default function About() {
   useDepartment(null);
@@ -22,9 +23,10 @@ export default function About() {
             <span>{CONTACT.location}</span>
           </div>
         </Reveal>
-        <h1 className="display-hero mt-6 max-w-[15ch]">
-          <ClipLines lines={["Caribbean-rooted.", "Globally", "competitive."]} />
-        </h1>
+
+        <div className="mt-6">
+          <CaribbeanHeroWords />
+        </div>
         <div className="mt-12 grid lg:grid-cols-12 gap-10">
           <Reveal delay={120} className="lg:col-span-7">
             <p className="text-lg md:text-xl leading-relaxed max-w-2xl">

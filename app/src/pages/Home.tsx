@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   CONTACT, CREATIVE_SYSTEM, DEPARTMENTS, PROCESS_STEPS,   WHY_POINTS, formatMoney, type DeptId,
@@ -9,7 +9,9 @@ import { useShop } from "../lib/shop";
 import { useSEO, track, ORGANIZATION_LD, LOCAL_BUSINESS_LD, faqLd } from "../lib/seo";
 import { ClipLines, Magnetic, Reveal, ShuffleText } from "../lib/motion";
 import { ArrowLink, Faq, FinalCta, Marquee, SectionHead } from "../components/blocks";
-import { ProjectCover } from "../components/cover";
+import { VerticalImageStack, type StackImageItem } from "../components/ui/vertical-image-stack";
+import { MouseFlyIn } from "../components/ui/mouse-fly-in";
+import { CardFanCarousel, type CardItem } from "../components/ui/card-fan-carousel";
 
 /* ================= HERO ================= */
 
@@ -24,10 +26,24 @@ function chunkWords(text: string): string[] {
 function Hero() {
   const [dept, setDept] = useState<DeptId | null>(null);
   const [hoverDept, setHoverDept] = useState<DeptId | null>(null);
-  const { services, home } = useContent();
+  const { services, projects, home } = useContent();
   useDepartment(dept);
   const active = dept ? DEPARTMENTS.find((d) => d.id === dept)! : null;
   const deptServices = dept ? services.filter((s) => s.dept === dept && s.featured).slice(0, 3) : [];
+
+  const portfolioStackItems: StackImageItem[] = useMemo(() => {
+    const filtered = dept ? projects.filter((p) => p.dept === dept) : projects;
+    const source = filtered.length >= 3 ? filtered : projects;
+    return source.map((p) => ({
+      id: p.id || p.slug,
+      src: p.image || `/covers/${p.slug}.webp`,
+      alt: `${p.title} — ${p.client}`,
+      title: p.title,
+      client: p.client,
+      category: p.categories?.join(" · ") || (p.dept ? p.dept.toUpperCase() : "PORTFOLIO"),
+      slug: p.slug,
+    }));
+  }, [projects, dept]);
 
   return (
     <section
@@ -36,7 +52,7 @@ function Hero() {
       aria-label="Introduction"
     >
       <div className="blueprint-grid" aria-hidden="true" />
-      <div className="wrap relative pt-12 md:pt-16 pb-14 md:pb-20 min-h-[88vh] flex flex-col">
+      <div className="wrap relative pt-12 md:pt-16 pb-14 md:pb-20 min-h-[88vh] flex flex-col justify-between">
         {/* meta strip */}
         <Reveal>
           <div className="flex flex-wrap justify-between gap-3 font-meta text-[10px] text-[var(--muted)] pb-6 md:pb-8">
@@ -46,43 +62,53 @@ function Hero() {
           </div>
         </Reveal>
 
-        {/* headline block — 60%+ viewport, extreme scale contrast */}
-        <div className="flex-1 flex flex-col justify-center py-8">
-          <h1 className="display-hero max-w-[14ch]">
-            {active ? (
-              <ClipLines key={active.id} lines={chunkWords(active.headline)} />
-            ) : home.headline ? (
-              <ClipLines lines={chunkWords(home.headline)} />
-            ) : (
-              <ClipLines lines={["We build brands", <>that get <span className="dept-accent">noticed.</span></>]} />
-            )}
-          </h1>
-          <Reveal delay={260}>
-            <p className="mt-8 max-w-xl text-base md:text-lg text-[var(--muted)] leading-relaxed">
-              {active ? active.sub : home.sub}
-            </p>
-          </Reveal>
-          <Reveal delay={340}>
-            <div className="mt-10 flex flex-wrap gap-4">
+        {/* headline & 3D graphic portfolio reel block — side-by-side on desktop */}
+        <div className="flex-1 grid lg:grid-cols-12 gap-8 lg:gap-8 items-center py-6 md:py-10">
+          {/* Left: Headline & CTA */}
+          <div className="lg:col-span-7 flex flex-col justify-center">
+            <h1 className="display-hero max-w-[14ch]">
               {active ? (
-                <>
-                  <Magnetic><Link to={active.path} className="btn btn-dept" onClick={() => track("service_view", { dept: active.id })}>{active.cta} <span className="btn-arrow" aria-hidden>→</span></Link></Magnetic>
-                  <Magnetic><Link to={`/work?dept=${active.id}`} className="btn btn-ghost">{active.ctaSecondary}</Link></Magnetic>
-                  <button className="btn btn-ghost" onClick={() => setDept(null)}>← All departments</button>
-                </>
+                <ClipLines key={active.id} lines={chunkWords(active.headline)} />
+              ) : home.headline ? (
+                <ClipLines lines={chunkWords(home.headline)} />
               ) : (
-                <>
-                  <Magnetic><Link to="/start" className="btn btn-fill">Start a project <span className="btn-arrow" aria-hidden>→</span></Link></Magnetic>
-                  <Magnetic><Link to="/work" className="btn btn-ghost">Explore our work</Link></Magnetic>
-                </>
+                <ClipLines lines={["We build brands", <>that get <span className="dept-accent">noticed.</span></>]} />
               )}
-            </div>
-          </Reveal>
+            </h1>
+            <Reveal delay={260}>
+              <p className="mt-6 md:mt-8 max-w-xl text-base md:text-lg text-[var(--muted)] leading-relaxed">
+                {active ? active.sub : home.sub}
+              </p>
+            </Reveal>
+            <Reveal delay={340}>
+              <div className="mt-8 md:mt-10 flex flex-wrap gap-4">
+                {active ? (
+                  <>
+                    <Magnetic><Link to={active.path} className="btn btn-dept" onClick={() => track("service_view", { dept: active.id })}>{active.cta} <span className="btn-arrow" aria-hidden>→</span></Link></Magnetic>
+                    <Magnetic><Link to={`/work?dept=${active.id}`} className="btn btn-ghost">{active.ctaSecondary}</Link></Magnetic>
+                    <button className="btn btn-ghost" onClick={() => setDept(null)}>← All departments</button>
+                  </>
+                ) : (
+                  <>
+                    <Magnetic><Link to="/start" className="btn btn-fill">Start a project <span className="btn-arrow" aria-hidden>→</span></Link></Magnetic>
+                    <Magnetic><Link to="/work" className="btn btn-ghost">Explore our work</Link></Magnetic>
+                  </>
+                )}
+              </div>
+            </Reveal>
+          </div>
+
+          {/* Right: 3D Scroll Picture Reel Stack feeding from Graphic Portfolio */}
+          <div className="lg:col-span-5 flex items-center justify-center relative w-full pt-4 lg:pt-0">
+            <Reveal delay={300}>
+              <VerticalImageStack items={portfolioStackItems} />
+            </Reveal>
+          </div>
         </div>
 
         {/* interactive service selector */}
         <Reveal delay={420}>
-          <div className="mt-14 pt-8 rule-t">
+          <div className="mt-10 md:mt-14 pt-8 rule-t">
             <p className="font-meta text-[10px] text-[var(--muted)] mb-4">What do you need?</p>
             <div className="grid sm:grid-cols-3 gap-px" style={{ background: "var(--line)" }} role="group" aria-label="Choose a department">
               {DEPARTMENTS.map((d) => {
@@ -207,33 +233,48 @@ function CreativeSystem() {
 
 function FeaturedWork() {
   const { projects } = useContent();
-  const featured = projects.filter((p) => p.featured).slice(0, 4);
+
+  const graphicCards: CardItem[] = useMemo(() => {
+    // Automatically grab 7 balanced projects from Graphic Design & Brand Identity portfolio
+    const graphicProjects = projects.filter(
+      (p) =>
+        p.dept === "brand" ||
+        p.categories?.some((c) => /graphic|brand|identity|package|print|design/i.test(c))
+    );
+    const otherProjects = projects.filter((p) => !graphicProjects.some((gp) => gp.slug === p.slug));
+    const combined = [...graphicProjects, ...otherProjects];
+    const source = combined.slice(0, 7);
+
+    return source.map((p) => ({
+      id: p.id || p.slug,
+      imgUrl: p.image || `/covers/${p.slug}.webp`,
+      alt: `${p.title} — ${p.client}`,
+      title: p.title,
+      client: p.client,
+      category: p.categories?.[0] || (p.dept ? p.dept.toUpperCase() : "GRAPHIC DESIGN"),
+      linkUrl: `/work/${p.slug}`,
+      year: p.year,
+    }));
+  }, [projects]);
+
   return (
-    <section className="rule-t" aria-label="Featured work">
+    <section className="rule-t overflow-x-clip select-none" aria-label="Featured work">
       <div className="wrap py-20 md:py-28">
-        <SectionHead index="/selected-work" title={["Work that", "carries weight."]} meta="A sample of the creative archive. Every project ships as a system — identity, content and digital working together." />
-        <div className="grid sm:grid-cols-2 gap-x-8 gap-y-14">
-          {featured.map((p, i) => (
-            <Reveal key={p.slug} delay={(i % 2) * 80}>
-              <Link to={`/work/${p.slug}`} className="group block media-hover">
-                <div className="media-frame aspect-[4/5]">
-                  <ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} />
-                </div>
-                <div className="flex items-start justify-between gap-4 mt-4">
-                  <div>
-                    <span className="font-meta text-[9px] text-[var(--muted)]">/PROJECT_{p.id} — {p.year}</span>
-                    <h3 className="font-display text-xl md:text-2xl font-bold uppercase mt-1.5 group-hover:text-[var(--dept)] transition-colors">{p.title}</h3>
-                    <p className="font-meta text-[9px] text-[var(--muted)] mt-1.5">{p.services.join(" · ")}</p>
-                  </div>
-                  <span className="font-meta text-[10px] dept-accent mt-1 transition-transform duration-200 group-hover:translate-x-1" aria-hidden>→</span>
-                </div>
-              </Link>
-            </Reveal>
-          ))}
-        </div>
-        <Reveal delay={120}>
-          <div className="mt-14 flex justify-center">
-            <Link to="/work" className="btn btn-ghost">Open the creative archive <span className="btn-arrow" aria-hidden>→</span></Link>
+        <SectionHead
+          index="/selected-work"
+          title={["Work that", "carries weight."]}
+          meta="A curated fanned gallery from our graphic design & brand identity archive. Every project is built as a complete creative system."
+        />
+
+        <Reveal delay={100}>
+          <CardFanCarousel cards={graphicCards} />
+        </Reveal>
+
+        <Reveal delay={160}>
+          <div className="mt-12 md:mt-16 flex justify-center">
+            <Link to="/work" className="btn btn-ghost">
+              Open the complete creative archive <span className="btn-arrow" aria-hidden>→</span>
+            </Link>
           </div>
         </Reveal>
       </div>
@@ -396,21 +437,22 @@ export default function Home() {
       {show("testimonials") && <Testimonials />}
       {show("faq") && (
         <section className="rule-t" aria-label="Frequently asked questions">
-          <div className="wrap py-20 md:py-28 grid lg:grid-cols-12 gap-12">
-            <div className="lg:col-span-4">
+          <div className="wrap py-20 md:py-28 grid lg:grid-cols-12 gap-8 lg:gap-12">
+            <div className="lg:col-span-5 overflow-visible">
               <Reveal><span className="idx">/faq</span></Reveal>
-              <h2 className="display-section mt-3"><ClipLines lines={["Straight", "answers."]} /></h2>
+              <h2 className="display-section mt-3 overflow-visible pr-2"><ClipLines lines={["Straight", "answers."]} /></h2>
               <Reveal delay={120}>
-                <p className="mt-6 text-sm text-[var(--muted)] max-w-xs">Payment, revisions, timelines and ownership — the questions every client asks before they sign.</p>
+                <p className="mt-6 text-sm text-[var(--muted)] max-w-sm">Payment, revisions, timelines and ownership — the questions every client asks before they sign.</p>
                 <div className="mt-6"><ArrowLink to={`mailto:${CONTACT.email}`}>Ask something else</ArrowLink></div>
               </Reveal>
             </div>
-            <div className="lg:col-span-8">
+            <div className="lg:col-span-7">
               <Faq items={faqs.filter((f) => f.dept === "checkout")} />
             </div>
           </div>
         </section>
       )}
+      <MouseFlyIn />
       <FinalCta />
     </>
   );

@@ -478,6 +478,25 @@ export async function deleteOrder(id: string): Promise<void> {
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
+/** Batch delete multiple orders. */
+export async function deleteOrders(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const idSet = new Set(ids);
+  if (!firebaseReady || !db) {
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet("sk-demo-orders", orders.filter((o) => !idSet.has(o.id)));
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
+    return;
+  }
+  await Promise.allSettled(ids.map((id) => deleteDoc(doc(db!, "orders", id))));
+  // Also clean up local cache if present
+  const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+  if (orders.length > 0) {
+    await idbSet("sk-demo-orders", orders.filter((o) => !idSet.has(o.id)));
+  }
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
+}
+
 export async function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
   // Auto-archive: entering COMPLETED stamps the completion date (history record);
   // reopening (any other status) clears it so the order returns to active lists.
@@ -489,6 +508,26 @@ export async function setOrderStatus(id: string, status: OrderStatus): Promise<v
     return;
   }
   await updateDoc(doc(db, "orders", id), { status, completedAt });
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
+}
+
+/** Batch update statuses for multiple orders. */
+export async function setOrdersStatus(ids: string[], status: OrderStatus): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const idSet = new Set(ids);
+  const completedAt = status === "COMPLETED" ? new Date().toISOString() : null;
+  if (!firebaseReady || !db) {
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet(
+      "sk-demo-orders",
+      orders.map((o) => (idSet.has(o.id) ? { ...o, status, completedAt: completedAt ?? undefined } : o))
+    );
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
+    return;
+  }
+  await Promise.allSettled(
+    ids.map((id) => updateDoc(doc(db!, "orders", id), { status, completedAt }))
+  );
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
@@ -676,6 +715,56 @@ export async function setLeadStatus(id: string, status: LeadRecord["status"]): P
     return;
   }
   await updateDoc(doc(db, "leads", id), { status });
+  window.dispatchEvent(new CustomEvent("sk-lead-updated"));
+}
+
+/** Batch update statuses for multiple leads. */
+export async function setLeadsStatus(ids: string[], status: LeadRecord["status"]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const idSet = new Set(ids);
+  if (!firebaseReady || !db) {
+    const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+    await idbSet("sk-demo-leads", leads.map((l) => (idSet.has(l.id) ? { ...l, status } : l)));
+    window.dispatchEvent(new CustomEvent("sk-lead-updated"));
+    return;
+  }
+  await Promise.allSettled(ids.map((id) => updateDoc(doc(db!, "leads", id), { status })));
+  window.dispatchEvent(new CustomEvent("sk-lead-updated"));
+}
+
+/** Delete a single lead. */
+export async function deleteLead(id: string): Promise<void> {
+  if (!firebaseReady || !db) {
+    const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+    await idbSet("sk-demo-leads", leads.filter((l) => l.id !== id));
+    window.dispatchEvent(new CustomEvent("sk-lead-updated"));
+    return;
+  }
+  await deleteDoc(doc(db!, "leads", id));
+  // Also clean up local cache if present
+  const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+  if (leads.length > 0) {
+    await idbSet("sk-demo-leads", leads.filter((l) => l.id !== id));
+  }
+  window.dispatchEvent(new CustomEvent("sk-lead-updated"));
+}
+
+/** Batch delete multiple leads. */
+export async function deleteLeads(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const idSet = new Set(ids);
+  if (!firebaseReady || !db) {
+    const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+    await idbSet("sk-demo-leads", leads.filter((l) => !idSet.has(l.id)));
+    window.dispatchEvent(new CustomEvent("sk-lead-updated"));
+    return;
+  }
+  await Promise.allSettled(ids.map((id) => deleteDoc(doc(db!, "leads", id))));
+  // Also clean up local cache if present
+  const leads = (await idbGet<LeadRecord[]>("sk-demo-leads")) || [];
+  if (leads.length > 0) {
+    await idbSet("sk-demo-leads", leads.filter((l) => !idSet.has(l.id)));
+  }
   window.dispatchEvent(new CustomEvent("sk-lead-updated"));
 }
 

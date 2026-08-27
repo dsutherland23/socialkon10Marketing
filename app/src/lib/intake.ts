@@ -1,6 +1,6 @@
 import {
   addDoc, collection, doc, getDoc, getDocs, orderBy, query,
-  serverTimestamp, setDoc, updateDoc, where, onSnapshot,
+  serverTimestamp, setDoc, updateDoc, deleteDoc, where, onSnapshot,
 } from "firebase/firestore";
 import { ref, uploadBytes } from "firebase/storage";
 import type { User } from "firebase/auth";
@@ -820,6 +820,63 @@ export async function setIntakeStatus(id: string, status: IntakeStatus): Promise
       console.warn("setIntakeStatus error:", err);
     }
   }
+}
+
+/** Batch update statuses for multiple intakes. */
+export async function setIntakesStatus(ids: string[], status: IntakeStatus): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const idSet = new Set(ids);
+  const now = new Date().toISOString();
+
+  // Local mirror
+  const xs = (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
+  if (xs.length > 0) {
+    await idbSet("sk-demo-intakes", xs.map((x) => (idSet.has(x.id) ? { ...x, status, updatedAt: now } : x)));
+  }
+
+  if (firebaseReady && db) {
+    const firestoreIds = ids.filter((id) => !id.startsWith("INTAKE-"));
+    if (firestoreIds.length > 0) {
+      await Promise.allSettled(
+        firestoreIds.map((id) => updateDoc(doc(db!, "intakes", id), { status, updatedAt: serverTimestamp() }))
+      );
+    }
+  }
+  window.dispatchEvent(new CustomEvent("sk-intake-updated"));
+}
+
+/** Delete a single intake record. */
+export async function deleteIntake(id: string): Promise<void> {
+  // Local mirror
+  const xs = (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
+  await idbSet("sk-demo-intakes", xs.filter((x) => x.id !== id));
+
+  if (firebaseReady && db && !id.startsWith("INTAKE-")) {
+    try {
+      await deleteDoc(doc(db!, "intakes", id));
+    } catch (err) {
+      console.warn("deleteIntake error:", err);
+    }
+  }
+  window.dispatchEvent(new CustomEvent("sk-intake-updated"));
+}
+
+/** Batch delete multiple intake records. */
+export async function deleteIntakes(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const idSet = new Set(ids);
+
+  // Local mirror
+  const xs = (await idbGet<IntakeRecord[]>("sk-demo-intakes")) || [];
+  await idbSet("sk-demo-intakes", xs.filter((x) => !idSet.has(x.id)));
+
+  if (firebaseReady && db) {
+    const firestoreIds = ids.filter((id) => !id.startsWith("INTAKE-"));
+    if (firestoreIds.length > 0) {
+      await Promise.allSettled(firestoreIds.map((id) => deleteDoc(doc(db!, "intakes", id))));
+    }
+  }
+  window.dispatchEvent(new CustomEvent("sk-intake-updated"));
 }
 
 /** Claim guest intakes (placed before sign-up) by email — mirrors claimOrders. */

@@ -163,6 +163,12 @@ export async function deleteDesign(id: string): Promise<void> {
   await removeManaged("customerDesigns", id);
 }
 
+/** Batch delete multiple designs. */
+export async function deleteDesigns(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  await Promise.allSettled(ids.map((id) => removeManaged("customerDesigns", id)));
+}
+
 /* ---------------- crash recovery + offline drafts (§51/§52) ---------------- */
 
 const draftKey = (designId: string) => `sk-editor-draft-${designId}`;

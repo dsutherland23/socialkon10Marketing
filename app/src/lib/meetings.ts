@@ -458,6 +458,18 @@ export async function deleteMeeting(id: string): Promise<void> {
   await removeIdbItem(STORE_MEETINGS, id);
 }
 
+/** Batch delete multiple meetings. */
+export async function deleteMeetings(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  await Promise.allSettled(ids.map((id) => deleteMeeting(id)));
+}
+
+/** Batch update statuses for multiple meetings. */
+export async function setMeetingsStatus(ids: string[], status: MeetingRecord["status"]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  await Promise.allSettled(ids.map((id) => updateMeeting(id, { status })));
+}
+
 /** Robust, unicode-tolerant, case-insensitive meeting lookup */
 export async function getMeetingById(idOrRoomId: string): Promise<MeetingRecord | null> {
   if (!idOrRoomId) return null;
@@ -1341,6 +1353,24 @@ export async function listCallHistory(): Promise<CallHistoryRecord[]> {
 
   const items = await getIdbData<CallHistoryRecord>(STORE_CALLS);
   return items.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+}
+
+/** Delete a single call history record. */
+export async function deleteCallHistory(id: string): Promise<void> {
+  if (firebaseReady && db) {
+    try {
+      await deleteDoc(doc(db, "call_history", id));
+    } catch (err) {
+      console.warn("Firestore deleteCallHistory error:", err);
+    }
+  }
+  await removeIdbItem(STORE_CALLS, id);
+}
+
+/** Batch delete multiple call history records. */
+export async function deleteCalls(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  await Promise.allSettled(ids.map((id) => deleteCallHistory(id)));
 }
 
 /* ---------------- User Presence ---------------- */

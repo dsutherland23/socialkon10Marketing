@@ -8,7 +8,7 @@ import { useAuth } from "../lib/auth";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
 import {
-  ORDER_STATUSES, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setOrderStatus, deleteOrder, deleteOrderFile, isOrderHistory,
+  ORDER_STATUSES, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setLeadsStatus, deleteLead, deleteLeads, setOrderStatus, setOrdersStatus, deleteOrder, deleteOrders, deleteOrderFile, isOrderHistory,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
   getSettings, saveSettings, convertLeadToOrder, recordPayment, createOrder,
@@ -20,23 +20,25 @@ import { HOME_SECTIONS } from "../lib/content";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
 import {
-  createMeeting, deleteMeeting, listAllMeetings,
-  recordCallHistory, listCallHistory, downloadCalendarIcs,
+  createMeeting, deleteMeeting, deleteMeetings, setMeetingsStatus, listAllMeetings,
+  recordCallHistory, listCallHistory, deleteCallHistory, deleteCalls, downloadCalendarIcs,
   generatePasscode, getMeetingShareDetails,
   type MeetingRecord, type CallHistoryRecord, type SessionType,
 } from "../lib/meetings";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
-import { listAllCustomerDesigns, deleteDesign, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
+import { listAllCustomerDesigns, deleteDesign, deleteDesigns, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
 import { useTemplates } from "../lib/templates";
 import {
-  listAllIntakes, subscribeAllIntakes, setIntakeStatus, INTAKE_STATUSES,
+  listAllIntakes, subscribeAllIntakes, setIntakeStatus, setIntakesStatus, deleteIntake, deleteIntakes, INTAKE_STATUSES,
   intakePackageFor, intakeSteps, fieldVisible,
   INTAKE_ADDONS, RECURRING_SERVICES,
   type IntakeRecord,
 } from "../lib/intake";
 import { sendEmail, proposalEmail } from "../lib/email";
+import { BatchActionBar } from "../components/BatchActionBar";
+import { exportToCsv, exportToJson } from "../lib/export-utils";
 
 /* ------------------------------------------------------------------
    ADMIN DASHBOARD (PRD §33, §67, §68, §85)
@@ -427,6 +429,7 @@ function Orders() {
   const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [mobileCockpitOpen, setMobileCockpitOpen] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ACTIVE");
   const [search, setSearch] = useState("");
@@ -481,6 +484,73 @@ function Orders() {
   useEffect(() => {
     if (cockpitTab === "chat" && currentId) void markThreadReadForStudio(currentId);
   }, [cockpitTab, currentId]);
+
+  const toggleOrderSelection = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedOrderIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedOrderIds(filteredOrders.map((o) => o.id));
+  };
+
+  const clearSelection = () => {
+    setSelectedOrderIds([]);
+  };
+
+  const handleBatchStatus = async (status: string) => {
+    const nextStatus = status as OrderRecord["status"];
+    const ok = await mutate(
+      () => setOrdersStatus(selectedOrderIds, nextStatus),
+      `Updated ${selectedOrderIds.length} orders to ${nextStatus}`
+    );
+    if (ok) {
+      clearSelection();
+      reload();
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    const count = selectedOrderIds.length;
+    const ok = await mutate(
+      () => deleteOrders(selectedOrderIds),
+      `Deleted ${count} orders`
+    );
+    if (ok) {
+      clearSelection();
+      reload();
+    }
+  };
+
+  const handleExportCsv = () => {
+    const exportData = orders.filter((o) => selectedOrderIds.includes(o.id));
+    exportToCsv<OrderRecord>(
+      "Orders_Export",
+      [
+        { key: "id", header: "Order ID" },
+        { key: "name", header: "Client Name" },
+        { key: "email", header: "Email" },
+        { key: "company", header: "Company", format: (o) => o.company || "" },
+        { key: "status", header: "Status" },
+        { key: "total", header: "Total Price (USD)", format: (o) => o.total || 0 },
+        { key: "amountPaid", header: "Amount Paid (USD)", format: (o) => o.amountPaid || 0 },
+        { key: "balanceDue", header: "Balance Due (USD)", format: (o) => o.balanceDue || 0 },
+        { key: "items", header: "Items", format: (o) => o.items.map((i) => i.name).join("; ") },
+        { key: "createdAt", header: "Created Date", format: (o) => o.createdAt || "" },
+        { key: "completedAt", header: "Archived/Completed Date", format: (o) => o.completedAt || "" },
+      ],
+      exportData
+    );
+    toast.success(`Exported ${exportData.length} orders to CSV`);
+  };
+
+  const handleExportJson = () => {
+    const exportData = orders.filter((o) => selectedOrderIds.includes(o.id));
+    exportToJson("Orders_Export", exportData);
+    toast.success(`Exported ${exportData.length} orders to JSON`);
+  };
 
   const getStatusColor = (status: OrderRecord["status"]) => {
     if (["DELIVERED", "COMPLETED"].includes(status)) return "bg-emerald-500/10 text-emerald-500 border-emerald-500/30";
@@ -560,8 +630,32 @@ function Orders() {
     }
   };
 
+  const isAllFilteredSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedOrderIds.includes(o.id));
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 relative">
+      {/* Batch Action Bar */}
+      <BatchActionBar
+        selectedCount={selectedOrderIds.length}
+        totalCount={filteredOrders.length}
+        onClearSelection={clearSelection}
+        onSelectAll={selectAllFiltered}
+        statusOptions={ORDER_STATUSES.map((s) => ({ label: s, value: s }))}
+        onStatusChange={handleBatchStatus}
+        onDelete={handleBatchDelete}
+        deleteLabel="Delete Orders"
+        onExportCsv={handleExportCsv}
+        onExportJson={handleExportJson}
+        customActions={[
+          {
+            label: "Mark Completed",
+            icon: "✓",
+            tone: "emerald",
+            onClick: () => handleBatchStatus("COMPLETED"),
+          },
+        ]}
+      />
+
       {/* volume + revenue summary — 2026 modern glass metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {[
@@ -583,7 +677,7 @@ function Orders() {
 
       {/* Search & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
-        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter orders">
+        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter orders">
           <button
             onClick={() => setFilter("ACTIVE")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
@@ -616,6 +710,21 @@ function Orders() {
           >
             Archive ({historyOrders.length})
           </button>
+
+          {filteredOrders.length > 0 && (
+            <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl">
+              <input
+                type="checkbox"
+                checked={isAllFilteredSelected}
+                onChange={(e) => {
+                  if (e.target.checked) selectAllFiltered();
+                  else clearSelection();
+                }}
+                className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+              />
+              <span>Select all ({filteredOrders.length})</span>
+            </label>
+          )}
         </div>
 
         <input
@@ -648,6 +757,7 @@ function Orders() {
           <div className={`${mobileCockpitOpen ? "hidden lg:flex" : "flex"} lg:col-span-4 flex-col gap-2.5 max-h-[750px] overflow-y-auto pr-0.5`}>
             {filteredOrders.map((o) => {
               const isSelected = current && o.id === current.id;
+              const isChecked = selectedOrderIds.includes(o.id);
               const sIdx = ORDER_STATUSES.indexOf(o.status);
               const pct = Math.round(((sIdx + 1) / ORDER_STATUSES.length) * 100);
               return (
@@ -657,16 +767,28 @@ function Orders() {
                     setSelectedId(o.id);
                     setMobileCockpitOpen(true);
                   }}
-                  className={`p-3.5 sm:p-4 border text-left cursor-pointer transition-all duration-150 rounded-2xl active:scale-[0.99] ${
-                    isSelected
+                  className={`p-3.5 sm:p-4 border text-left cursor-pointer transition-all duration-150 rounded-2xl active:scale-[0.99] relative ${
+                    isChecked
+                      ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)] shadow-xs"
+                      : isSelected
                       ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-sm"
                       : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="font-meta text-[9px] text-[var(--muted)]">
-                      #ORD-{o.id.slice(0, 7).toUpperCase()}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => toggleOrderSelection(o.id)}
+                        className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer shrink-0"
+                        aria-label={`Select order ${o.id}`}
+                      />
+                      <span className="font-meta text-[9px] text-[var(--muted)]">
+                        #ORD-{o.id.slice(0, 7).toUpperCase()}
+                      </span>
+                    </div>
                     <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded-full border ${getStatusColor(o.status)}`}>
                       {o.status}
                     </span>
@@ -1097,39 +1219,221 @@ function ConvertLead({ lead, onDone }: { lead: LeadRecord; onDone: () => void })
 
 function Leads() {
   const [leads, setLeads] = useState<LeadRecord[]>([]);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [filter, setFilter] = useState<"ALL" | "new" | "contacted" | "converted" | "closed">("ALL");
+  const [search, setSearch] = useState("");
+
   const reload = () => listLeads().then(setLeads);
   useEffect(() => {
     const unsub = subscribeLeads(setLeads);
     return unsub;
   }, []);
 
+  const filteredLeads = leads.filter((l) => {
+    if (filter !== "ALL" && l.status !== filter) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const matchName = l.name.toLowerCase().includes(q);
+      const matchEmail = l.email.toLowerCase().includes(q);
+      const matchIntent = (l.intent || "").toLowerCase().includes(q);
+      const matchMsg = (l.message || "").toLowerCase().includes(q);
+      const matchService = (l.service || "").toLowerCase().includes(q);
+      return matchName || matchEmail || matchIntent || matchMsg || matchService;
+    }
+    return true;
+  });
+
+  const toggleLeadSelection = (id: string) => {
+    setSelectedLeadIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedLeadIds(filteredLeads.map((l) => l.id));
+  };
+
+  const clearSelection = () => {
+    setSelectedLeadIds([]);
+  };
+
+  const handleBatchStatus = async (status: string) => {
+    const nextStatus = status as LeadRecord["status"];
+    const ok = await mutate(
+      () => setLeadsStatus(selectedLeadIds, nextStatus),
+      `Updated ${selectedLeadIds.length} leads to ${nextStatus}`
+    );
+    if (ok) {
+      clearSelection();
+      reload();
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    const count = selectedLeadIds.length;
+    const ok = await mutate(
+      () => deleteLeads(selectedLeadIds),
+      `Deleted ${count} leads`
+    );
+    if (ok) {
+      clearSelection();
+      reload();
+    }
+  };
+
+  const handleExportCsv = () => {
+    const exportData = leads.filter((l) => selectedLeadIds.includes(l.id));
+    exportToCsv<LeadRecord>(
+      "Leads_Export",
+      [
+        { key: "id", header: "Lead ID" },
+        { key: "name", header: "Name" },
+        { key: "email", header: "Email" },
+        { key: "intent", header: "Intent" },
+        { key: "status", header: "Status" },
+        { key: "dept", header: "Department", format: (l) => l.dept || "" },
+        { key: "service", header: "Service", format: (l) => l.service || "" },
+        { key: "budget", header: "Budget", format: (l) => l.budget || "" },
+        { key: "timeline", header: "Timeline", format: (l) => l.timeline || "" },
+        { key: "message", header: "Message", format: (l) => l.message || "" },
+        { key: "createdAt", header: "Received Date", format: (l) => l.createdAt || "" },
+      ],
+      exportData
+    );
+    toast.success(`Exported ${exportData.length} leads to CSV`);
+  };
+
+  const handleExportJson = () => {
+    const exportData = leads.filter((l) => selectedLeadIds.includes(l.id));
+    exportToJson("Leads_Export", exportData);
+    toast.success(`Exported ${exportData.length} leads to JSON`);
+  };
+
+  const isAllFilteredSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selectedLeadIds.includes(l.id));
+
   return (
-    <div>
-      {leads.length === 0 && <p className="font-meta text-[11px] text-[var(--muted)]">No leads yet — quote requests, consultations and questions land here.</p>}
-      <div className="flex flex-col gap-3">
-        {leads.map((l) => (
-          <div key={l.id} className="border border-[var(--line)] px-5 py-4 grid md:grid-cols-[140px_1fr_200px_190px] gap-4 items-start" style={{ background: "var(--panel)" }}>
-            <span className="font-meta text-[10px] dept-accent uppercase">{l.intent}</span>
-            <div className="text-sm">
-              <p className="font-medium">{l.name} <span className="text-[var(--muted)] font-normal">· {l.email}</span></p>
-              <p className="text-[13px] text-[var(--muted)] mt-1">{l.message}</p>
-              <p className="font-meta text-[9px] text-[var(--muted)] mt-2">
-                {[l.dept, l.service, l.budget, l.timeline, l.date && `${l.date} ${l.time ?? ""}`].filter(Boolean).join(" · ") || "—"}
-              </p>
-              <div className="mt-3"><ConvertLead lead={l} onDone={reload} /></div>
-            </div>
-            <span className="font-meta text-[9px] text-[var(--muted)]">{l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ""}</span>
-            <select value={l.status}
-              onChange={async (e) => {
-                const okDone = await mutate(() => setLeadStatus(l.id, e.target.value as LeadRecord["status"]), "Lead updated");
-                if (okDone) reload();
-              }}
-              className={`${inputCls} !py-1.5 font-meta text-[10px]`}>
-              {["new", "contacted", "converted", "closed"].map((s) => <option key={s} value={s}>{s.toUpperCase()}</option>)}
-            </select>
-          </div>
-        ))}
+    <div className="flex flex-col gap-5 relative">
+      {/* Batch Action Bar */}
+      <BatchActionBar
+        selectedCount={selectedLeadIds.length}
+        totalCount={filteredLeads.length}
+        onClearSelection={clearSelection}
+        onSelectAll={selectAllFiltered}
+        statusOptions={[
+          { label: "NEW", value: "new" },
+          { label: "CONTACTED", value: "contacted" },
+          { label: "CONVERTED", value: "converted" },
+          { label: "CLOSED", value: "closed" },
+        ]}
+        onStatusChange={handleBatchStatus}
+        onDelete={handleBatchDelete}
+        deleteLabel="Delete Leads"
+        onExportCsv={handleExportCsv}
+        onExportJson={handleExportJson}
+      />
+
+      {/* Toolbar: Filters, Search, Select All */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
+        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter leads">
+          {(["ALL", "new", "contacted", "converted", "closed"] as const).map((st) => (
+            <button
+              key={st}
+              onClick={() => setFilter(st)}
+              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 uppercase ${
+                filter === st ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              }`}
+            >
+              {st} ({st === "ALL" ? leads.length : leads.filter((l) => l.status === st).length})
+            </button>
+          ))}
+
+          {filteredLeads.length > 0 && (
+            <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl">
+              <input
+                type="checkbox"
+                checked={isAllFilteredSelected}
+                onChange={(e) => {
+                  if (e.target.checked) selectAllFiltered();
+                  else clearSelection();
+                }}
+                className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+              />
+              <span>Select all ({filteredLeads.length})</span>
+            </label>
+          )}
+        </div>
+
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search leads by name, email, query…"
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
       </div>
+
+      {leads.length === 0 ? (
+        <div className="border border-[var(--line)] p-8 sm:p-12 text-center rounded-2xl" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-lg sm:text-xl font-bold uppercase">No leads yet</p>
+          <p className="text-sm text-[var(--muted)] mt-2">Quote requests, consultations and client questions land here.</p>
+        </div>
+      ) : filteredLeads.length === 0 ? (
+        <div className="border border-[var(--line)] p-8 sm:p-12 text-center rounded-2xl" style={{ background: "var(--panel)" }}>
+          <p className="font-display text-lg sm:text-xl font-bold uppercase">No matching leads</p>
+          <p className="text-sm text-[var(--muted)] mt-2">Try clearing your search or filter.</p>
+          <button onClick={() => { setFilter("ALL"); setSearch(""); }} className="btn btn-ghost mt-4">Reset Filters</button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filteredLeads.map((l) => {
+            const isChecked = selectedLeadIds.includes(l.id);
+            return (
+              <div
+                key={l.id}
+                className={`border px-5 py-4 grid md:grid-cols-[40px_120px_1fr_180px_200px] gap-4 items-start rounded-2xl transition-all ${
+                  isChecked ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)] shadow-xs" : "border-[var(--line)] bg-[var(--panel)]"
+                }`}
+              >
+                <div className="pt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => toggleLeadSelection(l.id)}
+                    className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+                    aria-label={`Select lead ${l.name}`}
+                  />
+                </div>
+                <span className="font-meta text-[10px] dept-accent uppercase font-bold">{l.intent}</span>
+                <div className="text-sm">
+                  <p className="font-medium">{l.name} <span className="text-[var(--muted)] font-normal">· {l.email}</span></p>
+                  <p className="text-[13px] text-[var(--muted)] mt-1">{l.message}</p>
+                  <p className="font-meta text-[9px] text-[var(--muted)] mt-2">
+                    {[l.dept, l.service, l.budget, l.timeline, l.date && `${l.date} ${l.time ?? ""}`].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                  <div className="mt-3"><ConvertLead lead={l} onDone={reload} /></div>
+                </div>
+                <span className="font-meta text-[9px] text-[var(--muted)]">{l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ""}</span>
+                <div className="flex flex-col gap-2">
+                  <select
+                    value={l.status}
+                    onChange={async (e) => {
+                      const okDone = await mutate(() => setLeadStatus(l.id, e.target.value as LeadRecord["status"]), "Lead updated");
+                      if (okDone) reload();
+                    }}
+                    className={`${inputCls} !py-1.5 font-meta text-[10px] rounded-xl`}
+                    aria-label="Lead status"
+                  >
+                    {["new", "contacted", "converted", "closed"].map((s) => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+                  </select>
+                  <div className="self-end">
+                    <RemoveButton onRemove={() => deleteLead(l.id)} onDone={reload} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1486,6 +1790,7 @@ function IntakeDetail({ intake, onDone }: { intake: IntakeRecord; onDone: () => 
 function IntakesManager() {
   const money = useMoney();
   const [intakes, setIntakes] = useState<IntakeRecord[]>([]);
+  const [selectedIntakeIds, setSelectedIntakeIds] = useState<string[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "SUBMITTED" | "IN_REVIEW" | "QUOTED" | "APPROVED" | "DRAFT">("ALL");
@@ -1527,8 +1832,94 @@ function IntakesManager() {
     return true;
   });
 
+  const toggleIntakeSelection = (id: string) => {
+    setSelectedIntakeIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedIntakeIds(filteredIntakes.map((x) => x.id));
+  };
+
+  const clearSelection = () => {
+    setSelectedIntakeIds([]);
+  };
+
+  const handleBatchStatus = async (status: string) => {
+    const nextStatus = status as IntakeRecord["status"];
+    const ok = await mutate(
+      () => setIntakesStatus(selectedIntakeIds, nextStatus),
+      `Updated ${selectedIntakeIds.length} briefs to ${nextStatus}`
+    );
+    if (ok) {
+      clearSelection();
+      reload();
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    const count = selectedIntakeIds.length;
+    const ok = await mutate(
+      () => deleteIntakes(selectedIntakeIds),
+      `Deleted ${count} briefs`
+    );
+    if (ok) {
+      clearSelection();
+      reload();
+    }
+  };
+
+  const handleExportCsv = () => {
+    const exportData = intakes.filter((x) => selectedIntakeIds.includes(x.id));
+    exportToCsv<IntakeRecord>(
+      "Briefs_Export",
+      [
+        { key: "id", header: "Intake ID" },
+        { key: "business_name", header: "Business Name", format: (x) => String(x.answers?.business_name ?? "") },
+        { key: "contact_name", header: "Contact Name", format: (x) => String(x.answers?.contact_name ?? "") },
+        { key: "email", header: "Email", format: (x) => x.email || "" },
+        { key: "packageName", header: "Package Name", format: (x) => x.packageName || "" },
+        { key: "status", header: "Status" },
+        { key: "oneTime", header: "Est. One-Time (USD)", format: (x) => x.estimate?.oneTime ?? 0 },
+        { key: "monthly", header: "Est. Monthly (USD)", format: (x) => x.estimate?.monthly ?? 0 },
+        { key: "leadScore", header: "Lead Score", format: (x) => x.leadScore ?? 0 },
+        { key: "leadCategory", header: "Lead Category", format: (x) => x.leadCategory || "" },
+        { key: "website_type", header: "Website Type", format: (x) => String(x.answers?.website_type ?? "") },
+        { key: "updatedAt", header: "Last Updated", format: (x) => x.updatedAt || "" },
+      ],
+      exportData
+    );
+    toast.success(`Exported ${exportData.length} briefs to CSV`);
+  };
+
+  const handleExportJson = () => {
+    const exportData = intakes.filter((x) => selectedIntakeIds.includes(x.id));
+    exportToJson("Briefs_Export", exportData);
+    toast.success(`Exported ${exportData.length} briefs to JSON`);
+  };
+
+  const isAllFilteredSelected = filteredIntakes.length > 0 && filteredIntakes.every((x) => selectedIntakeIds.includes(x.id));
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Batch Action Bar */}
+      <BatchActionBar
+        selectedCount={selectedIntakeIds.length}
+        totalCount={filteredIntakes.length}
+        onClearSelection={clearSelection}
+        onSelectAll={selectAllFiltered}
+        statusOptions={INTAKE_STATUSES.map((s) => ({
+          label: s.replace("_", " ").toUpperCase(),
+          value: s,
+        }))}
+        onStatusChange={handleBatchStatus}
+        onDelete={handleBatchDelete}
+        deleteLabel="Delete Briefs"
+        onExportCsv={handleExportCsv}
+        onExportJson={handleExportJson}
+      />
+
       {/* Metrics Header */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {[
@@ -1550,7 +1941,7 @@ function IntakesManager() {
 
       {/* Filter & Search Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
-        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter briefs">
+        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter briefs">
           <button
             onClick={() => setFilter("ALL")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
@@ -1599,6 +1990,21 @@ function IntakesManager() {
           >
             Drafts ({drafts.length})
           </button>
+
+          {filteredIntakes.length > 0 && (
+            <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl">
+              <input
+                type="checkbox"
+                checked={isAllFilteredSelected}
+                onChange={(e) => {
+                  if (e.target.checked) selectAllFiltered();
+                  else clearSelection();
+                }}
+                className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+              />
+              <span>Select all ({filteredIntakes.length})</span>
+            </label>
+          )}
         </div>
 
         <input
@@ -1625,9 +2031,24 @@ function IntakesManager() {
         <div className="flex flex-col gap-3">
           {filteredIntakes.map((x) => {
             const open = openId === x.id;
+            const isChecked = selectedIntakeIds.includes(x.id);
             return (
-              <div key={x.id} className="border border-[var(--line)] px-4 sm:px-5 py-4 rounded-2xl transition-all" style={{ background: "var(--panel)" }}>
-                <div className="grid md:grid-cols-[1fr_170px_150px_130px_90px] gap-3 sm:gap-4 items-center">
+              <div
+                key={x.id}
+                className={`border px-4 sm:px-5 py-4 rounded-2xl transition-all ${
+                  isChecked ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)] shadow-xs" : "border-[var(--line)] bg-[var(--panel)]"
+                }`}
+              >
+                <div className="grid md:grid-cols-[36px_1fr_160px_140px_130px_140px] gap-3 sm:gap-4 items-center">
+                  <div>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleIntakeSelection(x.id)}
+                      className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+                      aria-label={`Select brief for ${x.packageName}`}
+                    />
+                  </div>
                   <div>
                     <p className="font-display text-sm font-bold uppercase">{String(x.answers?.business_name ?? "") || x.packageName}</p>
                     <p className="font-meta text-[9px] sm:text-[9.5px] text-[var(--muted)] mt-0.5">
@@ -1662,9 +2083,12 @@ function IntakesManager() {
                   >
                     {INTAKE_STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ").toUpperCase()}</option>)}
                   </select>
-                  <button className="font-meta text-[10px] dept-accent u-line justify-self-end font-bold" onClick={() => setOpenId(open ? null : x.id)}>
-                    {open ? "Close" : "View brief"}
-                  </button>
+                  <div className="flex items-center justify-end gap-2.5">
+                    <button className="font-meta text-[10px] dept-accent u-line font-bold" onClick={() => setOpenId(open ? null : x.id)}>
+                      {open ? "Close" : "View brief"}
+                    </button>
+                    <RemoveButton onRemove={() => deleteIntake(x.id)} onDone={reload} />
+                  </div>
                 </div>
                 {open && <IntakeDetail intake={x} onDone={reload} />}
               </div>
@@ -2814,9 +3238,6 @@ function AdminCommunications() {
     reloadData();
   }, []);
 
-  const activeMeetings = meetings.filter((m) => m.status === "live" || m.status === "scheduled");
-  const liveMeetings = meetings.filter((m) => m.status === "live");
-
   const filteredMeetings = meetings.filter((m) => {
     if (filterStatus !== "ALL" && m.status !== filterStatus) return false;
     if (search.trim()) {
@@ -2999,44 +3420,195 @@ function AdminCommunications() {
     }
   };
 
+  const [selectedMeetingIds, setSelectedMeetingIds] = useState<string[]>([]);
+  const [selectedCallIds, setSelectedCallIds] = useState<string[]>([]);
+
+  const toggleMeetingSelection = (id: string) => {
+    setSelectedMeetingIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFilteredMeetings = () => {
+    setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
+  };
+
+  const clearMeetingSelection = () => {
+    setSelectedMeetingIds([]);
+  };
+
+  const handleBatchMeetingStatus = async (status: string) => {
+    const nextStatus = status as MeetingRecord["status"];
+    const ok = await mutate(
+      () => setMeetingsStatus(selectedMeetingIds, nextStatus),
+      `Updated ${selectedMeetingIds.length} meetings to ${nextStatus}`
+    );
+    if (ok) {
+      clearMeetingSelection();
+      reloadData();
+    }
+  };
+
+  const handleBatchMeetingDelete = async () => {
+    const count = selectedMeetingIds.length;
+    const ok = await mutate(
+      () => deleteMeetings(selectedMeetingIds),
+      `Deleted ${count} meetings`
+    );
+    if (ok) {
+      clearMeetingSelection();
+      reloadData();
+    }
+  };
+
+  const handleMeetingExportCsv = () => {
+    const exportData = meetings.filter((m) => selectedMeetingIds.includes(m.id));
+    exportToCsv<MeetingRecord>(
+      "Meetings_Export",
+      [
+        { key: "id", header: "Meeting ID" },
+        { key: "roomId", header: "Room Code" },
+        { key: "title", header: "Title" },
+        { key: "hostName", header: "Host" },
+        { key: "status", header: "Status" },
+        { key: "scheduledStart", header: "Scheduled Start", format: (m) => m.scheduledStart || "" },
+        { key: "durationMinutes", header: "Duration (Mins)", format: (m) => m.durationMinutes || 30 },
+        { key: "timezone", header: "Timezone", format: (m) => m.timezone || "" },
+        { key: "participants", header: "Participants", format: (m) => m.participants.map((p) => `${p.displayName} (${p.email})`).join("; ") },
+        { key: "createdAt", header: "Created Date", format: (m) => m.createdAt || "" },
+      ],
+      exportData
+    );
+    toast.success(`Exported ${exportData.length} meetings to CSV`);
+  };
+
+  const handleMeetingExportJson = () => {
+    const exportData = meetings.filter((m) => selectedMeetingIds.includes(m.id));
+    exportToJson("Meetings_Export", exportData);
+    toast.success(`Exported ${exportData.length} meetings to JSON`);
+  };
+
+  const toggleCallSelection = (id: string) => {
+    setSelectedCallIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllCalls = () => {
+    setSelectedCallIds(calls.map((c) => c.id));
+  };
+
+  const clearCallSelection = () => {
+    setSelectedCallIds([]);
+  };
+
+  const handleBatchCallDelete = async () => {
+    const count = selectedCallIds.length;
+    const ok = await mutate(
+      () => deleteCalls(selectedCallIds),
+      `Deleted ${count} call logs`
+    );
+    if (ok) {
+      clearCallSelection();
+      reloadData();
+    }
+  };
+
+  const handleCallExportCsv = () => {
+    const exportData = calls.filter((c) => selectedCallIds.includes(c.id));
+    exportToCsv<CallHistoryRecord>(
+      "Call_Logs_Export",
+      [
+        { key: "id", header: "Call ID" },
+        { key: "type", header: "Call Type" },
+        { key: "callerName", header: "Caller Name" },
+        { key: "callerEmail", header: "Caller Email" },
+        { key: "recipientName", header: "Recipient Name", format: (c) => c.recipientName || "" },
+        { key: "recipientEmail", header: "Recipient Email", format: (c) => c.recipientEmail || "" },
+        { key: "status", header: "Status" },
+        { key: "durationSeconds", header: "Duration (Sec)", format: (c) => c.durationSeconds || 0 },
+        { key: "startedAt", header: "Started At", format: (c) => c.startedAt || "" },
+      ],
+      exportData
+    );
+    toast.success(`Exported ${exportData.length} call logs to CSV`);
+  };
+
+  const handleCallExportJson = () => {
+    const exportData = calls.filter((c) => selectedCallIds.includes(c.id));
+    exportToJson("Call_Logs_Export", exportData);
+    toast.success(`Exported ${exportData.length} call logs to JSON`);
+  };
+
+  const isAllFilteredMeetingsSelected = filteredMeetings.length > 0 && filteredMeetings.every((m) => selectedMeetingIds.includes(m.id));
+  const isAllCallsSelected = calls.length > 0 && calls.every((c) => selectedCallIds.includes(c.id));
+
   return (
-    <div className="flex flex-col gap-6">
-      {/* Top Header & Overview Metric Widgets */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)]">
-          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Upcoming Meetings</span>
-          <p className="font-display text-2xl font-bold mt-1 text-[var(--ink)]">{activeMeetings.length}</p>
-          <span className="font-meta text-[9px] text-emerald-600 mt-1 block">● Real-time synced</span>
-        </div>
+    <div className="space-y-6 relative">
+      {/* Batch Action Bar for Meetings */}
+      {activeSubTab === "meetings" && (
+        <BatchActionBar
+          selectedCount={selectedMeetingIds.length}
+          totalCount={filteredMeetings.length}
+          onClearSelection={clearMeetingSelection}
+          onSelectAll={selectAllFilteredMeetings}
+          statusOptions={[
+            { label: "SCHEDULED", value: "scheduled" },
+            { label: "LIVE", value: "live" },
+            { label: "COMPLETED", value: "completed" },
+            { label: "CANCELLED", value: "cancelled" },
+          ]}
+          onStatusChange={handleBatchMeetingStatus}
+          onDelete={handleBatchMeetingDelete}
+          deleteLabel="Delete Meetings"
+          onExportCsv={handleMeetingExportCsv}
+          onExportJson={handleMeetingExportJson}
+          customActions={[
+            {
+              label: "Cancel Selected",
+              icon: "✕",
+              tone: "amber",
+              onClick: () => handleBatchMeetingStatus("cancelled"),
+            },
+          ]}
+        />
+      )}
 
-        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)]">
-          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Live Sessions</span>
-          <p className="font-display text-2xl font-bold mt-1 dept-accent">{liveMeetings.length}</p>
-          <span className="font-meta text-[9px] text-[var(--muted)] mt-1 block">Active video rooms</span>
-        </div>
+      {/* Batch Action Bar for Calls */}
+      {activeSubTab === "calls" && (
+        <BatchActionBar
+          selectedCount={selectedCallIds.length}
+          totalCount={calls.length}
+          onClearSelection={clearCallSelection}
+          onSelectAll={selectAllCalls}
+          onDelete={handleBatchCallDelete}
+          deleteLabel="Delete Call Logs"
+          onExportCsv={handleCallExportCsv}
+          onExportJson={handleCallExportJson}
+        />
+      )}
 
-        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)]">
-          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Call Logs Recorded</span>
-          <p className="font-display text-2xl font-bold mt-1 text-[var(--ink)]">{calls.length}</p>
-          <span className="font-meta text-[9px] text-[var(--muted)] mt-1 block">Instant voice &amp; video</span>
-        </div>
-
-        <div className="p-4 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col justify-between">
-          <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block">Instant Launch</span>
-          <div className="flex gap-2 mt-2">
-            <button
-              onClick={() => { setInstantType("video"); setInstantCallModalOpen(true); }}
-              className="flex-1 btn btn-dept !py-1.5 font-meta text-[9px] font-bold"
-            >
-              🎥 Call
-            </button>
-            <button
-              onClick={() => setScheduleModalOpen(true)}
-              className="flex-1 font-meta text-[9px] font-bold px-2 py-1.5 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
-            >
-              + Schedule
-            </button>
+      {/* Hero Header & Instant Call Launcher */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-[var(--panel)] border border-[var(--line)] rounded-2xl">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🎙️</span>
+            <h2 className="font-display text-base font-bold uppercase tracking-wider">
+              Studio Communications &amp; Video Ops
+            </h2>
           </div>
+          <p className="font-meta text-[11px] text-[var(--muted)] mt-1">
+            Zero-friction WebRTC video meetings, screen sharing, call history, and AI meeting intelligence.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => setInstantCallModalOpen(true)}
+            className="btn btn-dept !py-2 !px-4 font-meta text-[10px] uppercase font-bold flex items-center gap-1.5 shadow-sm"
+          >
+            <span>⚡</span> Direct Instant Call
+          </button>
         </div>
       </div>
 
@@ -3045,31 +3617,31 @@ function AdminCommunications() {
         <div className="flex flex-wrap gap-1.5" role="tablist">
           <button
             onClick={() => setActiveSubTab("meetings")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
               activeSubTab === "meetings" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
-            📅 Meetings ({meetings.length})
+            Scheduled Meetings ({meetings.length})
           </button>
           <button
             onClick={() => setActiveSubTab("calendar")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
               activeSubTab === "calendar" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
-            📆 Visual Calendar
+            Studio Calendar
           </button>
           <button
             onClick={() => setActiveSubTab("calls")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
               activeSubTab === "calls" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
-            📞 Call History ({calls.length})
+            Call History ({calls.length})
           </button>
           <button
             onClick={() => setActiveSubTab("intelligence")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-full border font-bold transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
               activeSubTab === "intelligence" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
@@ -3092,18 +3664,33 @@ function AdminCommunications() {
         <div className="flex flex-col gap-4">
           {/* Status filter & search */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {["ALL", "scheduled", "live", "completed", "cancelled"].map((s) => (
                 <button
                   key={s}
                   onClick={() => setFilterStatus(s)}
-                  className={`font-meta text-[9px] uppercase px-2.5 py-1 rounded border transition-colors ${
+                  className={`font-meta text-[9px] uppercase px-2.5 py-1 rounded-xl border transition-colors ${
                     filterStatus === s ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)] font-bold" : "border-[var(--line)] text-[var(--muted)]"
                   }`}
                 >
                   {s}
                 </button>
               ))}
+
+              {filteredMeetings.length > 0 && (
+                <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl">
+                  <input
+                    type="checkbox"
+                    checked={isAllFilteredMeetingsSelected}
+                    onChange={(e) => {
+                      if (e.target.checked) selectAllFilteredMeetings();
+                      else clearMeetingSelection();
+                    }}
+                    className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+                  />
+                  <span>Select all ({filteredMeetings.length})</span>
+                </label>
+              )}
             </div>
 
             <input
@@ -3111,12 +3698,12 @@ function AdminCommunications() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search meetings by title or participant…"
-              className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded w-full sm:w-64"
+              className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
             />
           </div>
 
           {filteredMeetings.length === 0 ? (
-            <div className="p-12 border border-[var(--line)] rounded-xl text-center bg-[var(--panel)]">
+            <div className="p-12 border border-[var(--line)] rounded-2xl text-center bg-[var(--panel)]">
               <span className="text-3xl block mb-2">📅</span>
               <p className="font-display text-sm font-bold uppercase">No meetings found</p>
               <p className="font-meta text-[10px] text-[var(--muted)] mt-1">Schedule a consultation or review meeting to get started.</p>
@@ -3125,6 +3712,7 @@ function AdminCommunications() {
             <div className="grid md:grid-cols-2 gap-4">
               {filteredMeetings.map((m) => {
                 const isLive = m.status === "live";
+                const isChecked = selectedMeetingIds.includes(m.id);
                 const dateStr = new Date(m.scheduledStart).toLocaleDateString(undefined, {
                   weekday: "short",
                   month: "short",
@@ -3137,18 +3725,31 @@ function AdminCommunications() {
                 return (
                   <div
                     key={m.id}
-                    className="p-5 border border-[var(--line)] rounded-xl bg-[var(--panel)] flex flex-col justify-between gap-4 shadow-sm hover:border-[var(--dept)] transition-colors"
+                    className={`p-5 border rounded-2xl flex flex-col justify-between gap-4 shadow-sm transition-all ${
+                      isChecked
+                        ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)]"
+                        : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--dept)]"
+                    }`}
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className={`font-meta text-[8.5px] uppercase font-bold px-2 py-0.5 rounded-full border ${
-                          isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse" :
-                          m.status === "scheduled" ? "bg-cyan-500/10 text-cyan-500 border-cyan-500/30" :
-                          m.status === "completed" ? "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" :
-                          "bg-red-500/10 text-red-500 border-red-500/30"
-                        }`}>
-                          {m.status}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleMeetingSelection(m.id)}
+                            className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+                            aria-label={`Select meeting ${m.title}`}
+                          />
+                          <span className={`font-meta text-[8.5px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                            isLive ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 animate-pulse" :
+                            m.status === "scheduled" ? "bg-cyan-500/10 text-cyan-500 border-cyan-500/30" :
+                            m.status === "completed" ? "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" :
+                            "bg-red-500/10 text-red-500 border-red-500/30"
+                          }`}>
+                            {m.status}
+                          </span>
+                        </div>
                         <span className="font-meta text-[9px] text-[var(--muted)]">
                           {m.durationMinutes} mins · {m.timezone}
                         </span>
@@ -3157,7 +3758,7 @@ function AdminCommunications() {
                       <h3 className="font-display text-base font-bold uppercase line-clamp-1">{m.title}</h3>
                       {m.description && <p className="text-xs text-[var(--muted)] line-clamp-2 mt-1">{m.description}</p>}
 
-                      <div className="mt-3 p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-lg text-[11px] space-y-1.5">
+                      <div className="mt-3 p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-xl text-[11px] space-y-1.5">
                         <div className="flex items-center justify-between">
                           <p className="font-medium text-[var(--ink)]">
                             📅 {dateStr} at {timeStr}
@@ -3169,7 +3770,7 @@ function AdminCommunications() {
                               await share.copyRoomId();
                               toast.success(`Meeting code "${m.roomId}" copied!`);
                             }}
-                            className="font-mono text-[9px] font-bold px-2 py-0.5 rounded bg-[var(--dept-soft)] border border-[var(--dept)] text-[var(--dept)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
+                            className="font-mono text-[9px] font-bold px-2 py-0.5 rounded-lg bg-[var(--dept-soft)] border border-[var(--dept)] text-[var(--dept)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
                             title="Click to copy meeting code"
                           >
                             📋 {m.roomId}
@@ -3207,10 +3808,10 @@ function AdminCommunications() {
                             await share.copyInviteLink();
                             toast.success("Meeting link copied!");
                           }}
-                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] bg-[var(--bg)] transition-colors font-bold"
+                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--dept)] dept-accent rounded-lg hover:bg-[var(--dept)] hover:text-[var(--on-dept)] bg-[var(--bg)] transition-colors font-bold"
                           title="Copy direct meeting join link"
                         >
-                          🔗 Copy Link
+                          🔗 Link
                         </button>
                         <button
                           onClick={async () => {
@@ -3218,36 +3819,29 @@ function AdminCommunications() {
                             await share.copyFullInvitation();
                             toast.success("Full invitation details copied!");
                           }}
-                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded-lg hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
                           title="Copy full invitation for email or message"
                         >
-                          ✉️ Invite Text
+                          ✉️ Text
                         </button>
                         <button
                           onClick={() => downloadCalendarIcs(m)}
-                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
+                          className="font-meta text-[9px] px-2.5 py-1 border border-[var(--line)] rounded-lg hover:border-[var(--dept)] bg-[var(--bg)] transition-colors"
                           title="Download Calendar .ICS file"
                         >
                           📥 .ICS
                         </button>
-                        <button
-                          onClick={async () => {
-                            if (window.confirm(`Are you sure you want to permanently delete the meeting "${m.title}" (Code: ${m.roomId})? This will cancel the meeting for all participants.`)) {
-                              await deleteMeeting(m.id);
-                              toast.success(`Meeting "${m.title}" deleted.`);
-                              reloadData();
-                            }
+                        <RemoveButton
+                          onRemove={async () => {
+                            await deleteMeeting(m.id);
                           }}
-                          className="font-meta text-[9px] text-red-500 hover:bg-red-500/10 px-2 py-1 rounded border border-red-500/20 transition-colors"
-                          title="Permanently Delete Meeting"
-                        >
-                          🗑️ Delete
-                        </button>
+                          onDone={reloadData}
+                        />
                       </div>
 
                       <button
                         onClick={() => window.open(`/meet/${m.roomId}`, "_blank")}
-                        className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase tracking-wider shadow-sm"
+                        className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase tracking-wider shadow-sm rounded-xl"
                       >
                         🚀 Join Room →
                       </button>
@@ -3262,7 +3856,7 @@ function AdminCommunications() {
 
       {/* SUB-TAB 2: VISUAL CALENDAR */}
       {activeSubTab === "calendar" && (
-        <div className="p-6 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-6">
+        <div className="p-6 border border-[var(--line)] rounded-2xl bg-[var(--panel)] space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="font-display text-sm font-bold uppercase">Scheduled Studio Calendar</h3>
             <span className="font-meta text-[9px] text-[var(--muted)]">
@@ -3270,7 +3864,7 @@ function AdminCommunications() {
             </span>
           </div>
 
-          <div className="divide-y divide-[var(--line)] border border-[var(--line)] rounded-lg bg-[var(--bg)]">
+          <div className="divide-y divide-[var(--line)] border border-[var(--line)] rounded-xl bg-[var(--bg)]">
             {meetings.length === 0 ? (
               <p className="p-8 text-center text-xs text-[var(--muted)]">No meetings currently on the calendar.</p>
             ) : (
@@ -3289,13 +3883,13 @@ function AdminCommunications() {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => downloadCalendarIcs(m)}
-                      className="font-meta text-[9px] px-2.5 py-1 rounded border border-[var(--line)] hover:border-[var(--dept)]"
+                      className="font-meta text-[9px] px-2.5 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)]"
                     >
                       Export .ICS
                     </button>
                     <button
                       onClick={() => window.open(`/meet/${m.roomId}`, "_blank")}
-                      className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px]"
+                      className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px] rounded-lg"
                     >
                       Open Room
                     </button>
@@ -3309,46 +3903,88 @@ function AdminCommunications() {
 
       {/* SUB-TAB 3: CALL HISTORY */}
       {activeSubTab === "calls" && (
-        <div className="p-6 border border-[var(--line)] rounded-xl bg-[var(--panel)] space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-display text-sm font-bold uppercase">Instant Voice &amp; Video Call Logs</h3>
-            <span className="font-meta text-[9px] text-[var(--muted)]">{calls.length} entries</span>
+        <div className="p-6 border border-[var(--line)] rounded-2xl bg-[var(--panel)] space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="font-display text-sm font-bold uppercase">Instant Voice &amp; Video Call Logs</h3>
+              <span className="font-meta text-[9px] text-[var(--muted)]">{calls.length} entries</span>
+            </div>
+
+            {calls.length > 0 && (
+              <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none bg-[var(--bg)] border border-[var(--line)] rounded-xl">
+                <input
+                  type="checkbox"
+                  checked={isAllCallsSelected}
+                  onChange={(e) => {
+                    if (e.target.checked) selectAllCalls();
+                    else clearCallSelection();
+                  }}
+                  className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+                />
+                <span>Select all ({calls.length})</span>
+              </label>
+            )}
           </div>
 
-          <div className="border border-[var(--line)] rounded-lg divide-y divide-[var(--line)] bg-[var(--bg)] text-xs">
+          <div className="border border-[var(--line)] rounded-xl divide-y divide-[var(--line)] bg-[var(--bg)] text-xs">
             {calls.length === 0 ? (
               <p className="p-8 text-center text-[var(--muted)]">No instant calls placed yet.</p>
             ) : (
-              calls.map((c) => (
-                <div key={c.id} className="p-3.5 flex flex-wrap items-center justify-between gap-3">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">{c.type === "video" ? "🎥" : "📞"}</span>
-                      <span className="font-bold">{c.recipientName || c.recipientEmail}</span>
-                      <span className={`font-meta text-[8.5px] px-2 py-0.2 rounded border ${
-                        c.status === "completed" || c.status === "accepted" ? "text-emerald-500 border-emerald-500/30" : "text-amber-500 border-amber-500/30"
-                      }`}>
-                        {c.status}
-                      </span>
-                    </div>
-                    <p className="font-meta text-[9px] text-[var(--muted)]">
-                      {new Date(c.startedAt).toLocaleString()} · Caller: {c.callerName}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setInstantName(c.recipientName);
-                      setInstantEmail(c.recipientEmail);
-                      setInstantType(c.type);
-                      setInstantCallModalOpen(true);
-                    }}
-                    className="font-meta text-[9px] px-3 py-1 border border-[var(--dept)] dept-accent rounded hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
+              calls.map((c) => {
+                const isChecked = selectedCallIds.includes(c.id);
+                return (
+                  <div
+                    key={c.id}
+                    className={`p-3.5 flex flex-wrap items-center justify-between gap-3 transition-colors ${
+                      isChecked ? "bg-[var(--dept-soft)]/60" : ""
+                    }`}
                   >
-                    Call Back ↻
-                  </button>
-                </div>
-              ))
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleCallSelection(c.id)}
+                        className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+                        aria-label={`Select call with ${c.recipientName || c.recipientEmail}`}
+                      />
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{c.type === "video" ? "🎥" : "📞"}</span>
+                          <span className="font-bold">{c.recipientName || c.recipientEmail}</span>
+                          <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded border ${
+                            c.status === "completed" || c.status === "accepted" ? "text-emerald-500 border-emerald-500/30" : "text-amber-500 border-amber-500/30"
+                          }`}>
+                            {c.status}
+                          </span>
+                        </div>
+                        <p className="font-meta text-[9px] text-[var(--muted)]">
+                          {new Date(c.startedAt).toLocaleString()} · Caller: {c.callerName}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setInstantName(c.recipientName);
+                          setInstantEmail(c.recipientEmail);
+                          setInstantType(c.type);
+                          setInstantCallModalOpen(true);
+                        }}
+                        className="font-meta text-[9px] px-3 py-1 border border-[var(--dept)] dept-accent rounded-lg hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors"
+                      >
+                        Call Back ↻
+                      </button>
+                      <RemoveButton
+                        onRemove={async () => {
+                          await deleteCallHistory(c.id);
+                        }}
+                        onDone={reloadData}
+                      />
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -3770,6 +4406,7 @@ function AdminCommunications() {
 
 function ClientDesignsManager() {
   const [designs, setDesigns] = useState<CustomerDesign[]>([]);
+  const [selectedDesignIds, setSelectedDesignIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedClient, setSelectedClient] = useState<string>("all");
@@ -3806,8 +4443,72 @@ function ClientDesignsManager() {
     });
   }, [designs, search, selectedClient]);
 
+  const toggleDesignSelection = (id: string) => {
+    setSelectedDesignIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedDesignIds(filtered.map((d) => d.id));
+  };
+
+  const clearSelection = () => {
+    setSelectedDesignIds([]);
+  };
+
+  const handleBatchDelete = async () => {
+    const count = selectedDesignIds.length;
+    const ok = await mutate(
+      () => deleteDesigns(selectedDesignIds),
+      `Deleted ${count} client designs`
+    );
+    if (ok) {
+      clearSelection();
+      loadData();
+    }
+  };
+
+  const handleExportCsv = () => {
+    const exportData = designs.filter((d) => selectedDesignIds.includes(d.id));
+    exportToCsv<CustomerDesign>(
+      "Client_Designs_Export",
+      [
+        { key: "id", header: "Design ID" },
+        { key: "title", header: "Title", format: (d) => d.title || "Untitled" },
+        { key: "templateSlug", header: "Template Slug", format: (d) => d.templateSlug || "custom" },
+        { key: "email", header: "Client Email", format: (d) => d.email || "" },
+        { key: "orderId", header: "Linked Order ID", format: (d) => d.orderId || "" },
+        { key: "version", header: "Version", format: (d) => d.version || 1 },
+        { key: "updatedAt", header: "Last Updated", format: (d) => d.updatedAt || "" },
+      ],
+      exportData
+    );
+    toast.success(`Exported ${exportData.length} designs to CSV`);
+  };
+
+  const handleExportJson = () => {
+    const exportData = designs.filter((d) => selectedDesignIds.includes(d.id));
+    exportToJson("Client_Designs_Export", exportData);
+    toast.success(`Exported ${exportData.length} designs to JSON`);
+  };
+
+  const isAllFilteredSelected = filtered.length > 0 && filtered.every((d) => selectedDesignIds.includes(d.id));
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Batch Action Bar */}
+      <BatchActionBar
+        selectedCount={selectedDesignIds.length}
+        totalCount={filtered.length}
+        onClearSelection={clearSelection}
+        onSelectAll={selectAllFiltered}
+        onDelete={handleBatchDelete}
+        deleteLabel="Delete Designs"
+        onExportCsv={handleExportCsv}
+        onExportJson={handleExportJson}
+      />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-[var(--panel)] border border-[var(--line-strong)] rounded-2xl">
         <div>
           <h2 className="font-display text-base font-bold uppercase tracking-wider">
@@ -3826,7 +4527,7 @@ function ClientDesignsManager() {
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col sm:flex-row items-center gap-3">
         <input
           type="text"
           value={search}
@@ -3838,7 +4539,7 @@ function ClientDesignsManager() {
         <select
           value={selectedClient}
           onChange={(e) => setSelectedClient(e.target.value)}
-          className="bg-[var(--panel)] border border-[var(--line)] px-3 py-2 text-xs rounded-xl outline-none focus:border-[var(--dept)] font-meta"
+          className="bg-[var(--panel)] border border-[var(--line)] px-3 py-2 text-xs rounded-xl outline-none focus:border-[var(--dept)] font-meta w-full sm:w-auto"
         >
           <option value="all">All Clients ({uniqueClients.length})</option>
           {uniqueClients.map((c) => (
@@ -3847,6 +4548,21 @@ function ClientDesignsManager() {
             </option>
           ))}
         </select>
+
+        {filtered.length > 0 && (
+          <label className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none bg-[var(--panel)] border border-[var(--line)] rounded-xl shrink-0">
+            <input
+              type="checkbox"
+              checked={isAllFilteredSelected}
+              onChange={(e) => {
+                if (e.target.checked) selectAllFiltered();
+                else clearSelection();
+              }}
+              className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
+            />
+            <span>Select all ({filtered.length})</span>
+          </label>
+        )}
       </div>
 
       {loading ? (
@@ -3863,99 +4579,106 @@ function ClientDesignsManager() {
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filtered.map((d) => (
-            <article
-              key={d.id}
-              className="border border-[var(--line-strong)] rounded-2xl overflow-hidden flex flex-col bg-[var(--panel)] shadow-sm hover:border-[var(--dept)] transition-all group"
-            >
-              {/* Live Canvas Thumbnail */}
-              <div className="aspect-[4/3] relative overflow-hidden bg-neutral-900 flex items-center justify-center border-b border-[var(--line)]">
-                {d.thumbnail && d.thumbnail.length > 50 ? (
-                  <img
-                    src={d.thumbnail}
-                    alt={d.title}
-                    className="w-full h-full object-contain group-hover:scale-105 transition-transform"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center gap-1.5 text-neutral-500 p-4 text-center">
-                    <span className="text-3xl">📐</span>
-                    <span className="font-meta text-[9px] uppercase font-bold">Vector Canvas</span>
+          {filtered.map((d) => {
+            const isChecked = selectedDesignIds.includes(d.id);
+            return (
+              <article
+                key={d.id}
+                className={`border rounded-2xl overflow-hidden flex flex-col shadow-sm transition-all group relative ${
+                  isChecked ? "border-[var(--dept)] bg-[var(--dept-soft)]/50 ring-1 ring-[var(--dept)]" : "border-[var(--line-strong)] bg-[var(--panel)] hover:border-[var(--dept)]"
+                }`}
+              >
+                {/* Live Canvas Thumbnail */}
+                <div className="aspect-[4/3] relative overflow-hidden bg-neutral-900 flex items-center justify-center border-b border-[var(--line)]">
+                  {d.thumbnail && d.thumbnail.length > 50 ? (
+                    <img
+                      src={d.thumbnail}
+                      alt={d.title}
+                      className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-1.5 text-neutral-500 p-4 text-center">
+                      <span className="text-3xl">📐</span>
+                      <span className="font-meta text-[9px] uppercase font-bold">Vector Canvas</span>
+                    </div>
+                  )}
+
+                  <div className="absolute top-2 left-2 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleDesignSelection(d.id)}
+                      className="w-4 h-4 accent-[var(--dept)] rounded cursor-pointer shadow-md"
+                      aria-label={`Select design ${d.title}`}
+                    />
+                    <span className="bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-full border border-neutral-700 font-meta text-[8px] font-bold text-white">
+                      v{d.version || 1}
+                    </span>
                   </div>
-                )}
 
-                <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-full border border-neutral-700 font-meta text-[8px] font-bold text-white">
-                  <span>v{d.version || 1}</span>
+                  <div className="absolute top-2 right-2 flex items-center gap-1 bg-[var(--dept)] text-black px-2 py-0.5 rounded-full font-meta text-[8px] font-bold uppercase">
+                    {d.templateSlug || "Custom"}
+                  </div>
                 </div>
 
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-[var(--dept)] text-black px-2 py-0.5 rounded-full font-meta text-[8px] font-bold uppercase">
-                  {d.templateSlug || "Custom"}
-                </div>
-              </div>
-
-              {/* Design Details & Client Info */}
-              <div className="p-4 flex flex-col gap-2 flex-1 justify-between">
-                <div>
-                  <h3 className="font-display text-sm font-bold uppercase leading-tight truncate text-[var(--ink)]">
-                    {d.title || "Untitled Design"}
-                  </h3>
-                  <div className="mt-1 space-y-0.5">
-                    <p className="font-meta text-[9.5px] text-[var(--dept)] truncate font-bold">
-                      👤 {d.email || "Guest Client"}
-                    </p>
-                    {d.orderId && (
-                      <p className="font-meta text-[8.5px] text-emerald-500 font-bold truncate">
-                        📦 Linked to Order #{d.orderId.slice(0, 8).toUpperCase()}
+                {/* Design Details & Client Info */}
+                <div className="p-4 flex flex-col gap-2 flex-1 justify-between">
+                  <div>
+                    <h3 className="font-display text-sm font-bold uppercase leading-tight truncate text-[var(--ink)]">
+                      {d.title || "Untitled Design"}
+                    </h3>
+                    <div className="mt-1 space-y-0.5">
+                      <p className="font-meta text-[9.5px] text-[var(--dept)] truncate font-bold">
+                        👤 {d.email || "Guest Client"}
                       </p>
-                    )}
-                    <p className="font-meta text-[8.5px] text-[var(--muted)]">
-                      Updated: {d.updatedAt ? new Date(d.updatedAt).toLocaleString() : "—"}
-                    </p>
+                      {d.orderId && (
+                        <p className="font-meta text-[8.5px] text-emerald-500 font-bold truncate">
+                          📦 Linked to Order #{d.orderId.slice(0, 8).toUpperCase()}
+                        </p>
+                      )}
+                      <p className="font-meta text-[8.5px] text-[var(--muted)]">
+                        Updated: {d.updatedAt ? new Date(d.updatedAt).toLocaleString() : "—"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Admin Actions */}
+                  <div className="pt-3 border-t border-[var(--line)] flex flex-wrap items-center gap-1.5">
+                    <a
+                      href={`/editor/${d.templateSlug || d.id}?designId=${d.id}&client=${encodeURIComponent(d.email || "")}${d.orderId ? `&orderId=${d.orderId}` : ""}&admin=true`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm rounded-xl"
+                      title="Open this exact customer design in KON10 Studio"
+                    >
+                      <span>✏️</span> Open in Studio
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        toast.info(`Design ID: ${d.id}`);
+                        navigator.clipboard.writeText(d.id);
+                        toast.success("Design ID copied!");
+                      }}
+                      className="btn btn-ghost !py-1.5 !px-2.5 font-meta text-[9px] rounded-xl"
+                      title="Copy Design ID"
+                    >
+                      📋 ID
+                    </button>
+
+                    <RemoveButton
+                      onRemove={async () => {
+                        await deleteDesign(d.id);
+                      }}
+                      onDone={loadData}
+                    />
                   </div>
                 </div>
-
-                {/* Admin Actions */}
-                <div className="pt-3 border-t border-[var(--line)] flex flex-wrap items-center gap-1.5">
-                  <a
-                    href={`/editor/${d.templateSlug || d.id}?designId=${d.id}&client=${encodeURIComponent(d.email || "")}${d.orderId ? `&orderId=${d.orderId}` : ""}&admin=true`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn btn-dept !py-1.5 !px-3 font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm"
-                    title="Open this exact customer design in KON10 Studio"
-                  >
-                    <span>✏️</span> Open in Studio (Designer Mode)
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      toast.info(`Design ID: ${d.id}`);
-                      navigator.clipboard.writeText(d.id);
-                      toast.success("Design ID copied!");
-                    }}
-                    className="btn btn-ghost !py-1.5 !px-2.5 font-meta text-[9px]"
-                    title="Copy Design ID"
-                  >
-                    📋 ID
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!confirm(`Delete client design "${d.title}"?`)) return;
-                      await deleteDesign(d.id);
-                      toast.success("Design removed");
-                      loadData();
-                    }}
-                    className="btn btn-ghost !py-1.5 !px-2.5 font-meta text-[9px] !text-red-500 hover:!bg-red-500/10 ml-auto"
-                    title="Delete design"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       )}
     </div>
