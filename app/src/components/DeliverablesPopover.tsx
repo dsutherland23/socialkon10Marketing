@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { Check, Sparkles, Clock, RefreshCw, ArrowRight, Layers, X } from "lucide-react";
-import { formatMoney, type CurrencyCode } from "../lib/data";
+import { Check, Sparkles, Clock, RefreshCw, ArrowRight, Layers, X, Plus, ShoppingBag } from "lucide-react";
+import { formatMoney, type CurrencyCode, type BillingType } from "../lib/data";
 import { useShop } from "../lib/shop";
 
 export interface DeliverablesPopoverProps {
@@ -18,7 +18,7 @@ export interface DeliverablesPopoverProps {
   serviceSlug?: string;
   price?: number;
   currency?: CurrencyCode;
-  billing?: string;
+  billing?: BillingType | string;
   triggerText?: string;
   countExtra?: number;
   className?: string;
@@ -48,13 +48,14 @@ export function DeliverablesPopover({
   serviceSlug,
   price,
   currency,
-  billing,
+  billing = "one_time",
   triggerText,
   countExtra,
   className = "",
 }: DeliverablesPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [coords, setCoords] = useState<{ top: number; left: number }>({
     top: 0,
     left: 0,
@@ -63,18 +64,59 @@ export function DeliverablesPopover({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { currency: shopCurrency } = useShop();
+  const { currency: shopCurrency, add, items } = useShop();
   const curr: CurrencyCode = currency || shopCurrency || "USD";
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  const selectedAddons = useMemo(() => {
+    return addons.filter((a) => selectedAddonIds.includes(a.id));
+  }, [addons, selectedAddonIds]);
+
+  const toggleAddon = (addonId: string) => {
+    setSelectedAddonIds((prev) =>
+      prev.includes(addonId) ? prev.filter((id) => id !== addonId) : [...prev, addonId]
+    );
+  };
+
+  const calculatedPrice = useMemo(() => {
+    const base = price ?? 0;
+    const addOnTotal = selectedAddons.reduce((sum, a) => sum + (a.price || 0), 0);
+    return base + addOnTotal;
+  }, [price, selectedAddons]);
+
+  const isAlreadyInCart = useMemo(() => {
+    if (!serviceSlug) return false;
+    return items.some((i) => i.serviceSlug === serviceSlug);
+  }, [items, serviceSlug]);
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!price && !serviceSlug) return;
+
+    add({
+      serviceSlug: serviceSlug || "custom-service",
+      name: title,
+      unitPrice: price ?? 0,
+      tierLabel: selectedAddons.length > 0 ? `+ ${selectedAddons.length} Add-on${selectedAddons.length === 1 ? "" : "s"}` : undefined,
+      addons: selectedAddons.map((a) => ({ id: a.id, name: a.name, price: a.price })),
+      rush: selectedAddons.some((a) => a.id === "rush"),
+      billing: billing === "monthly" ? "monthly" : "one_time",
+      depositPct,
+    });
+
+    setIsOpen(false);
+  };
+
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const popoverWidth = Math.min(380, window.innerWidth - 32);
-    const popoverHeight = 420; // safe estimation for auto-flip
+    const popoverWidth = Math.min(390, window.innerWidth - 32);
+    const popoverHeight = 440; // safe estimation for auto-flip
 
     // Horizontal centering relative to trigger button with viewport edge guards
     let left = rect.left + rect.width / 2 - popoverWidth / 2;
@@ -107,7 +149,7 @@ export function DeliverablesPopover({
   const handleMouseLeave = () => {
     closeTimer.current = setTimeout(() => {
       setIsOpen(false);
-    }, 220);
+    }, 240);
   };
 
   const handleTriggerClick = (e: React.MouseEvent) => {
@@ -163,9 +205,9 @@ export function DeliverablesPopover({
         left: coords.left,
         zIndex: 999999,
       }}
-      className="w-[340px] sm:w-[380px] max-w-[calc(100vw-32px)] bg-[var(--panel)]/95 backdrop-blur-2xl border border-[var(--line-strong)] rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.6)] p-5 animate-in fade-in zoom-in-95 duration-200 text-[var(--ink)] select-text"
+      className="w-[340px] sm:w-[390px] max-w-[calc(100vw-32px)] bg-[var(--panel)]/95 backdrop-blur-2xl border border-[var(--line-strong)] rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.65)] p-5 animate-in fade-in zoom-in-95 duration-200 text-[var(--ink)] select-text"
       role="dialog"
-      aria-label={`Inclusions for ${title}`}
+      aria-label={`Inclusions and options for ${title}`}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}
@@ -173,7 +215,7 @@ export function DeliverablesPopover({
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded bg-[var(--dept-soft)] text-[var(--dept)] font-mono text-[9px] font-bold uppercase tracking-wider">
-              COMPLETE SCOPE
+              SCOPE & INCLUSIONS
             </span>
             {billing === "monthly" && (
               <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono text-[9px] font-bold uppercase">
@@ -215,17 +257,17 @@ export function DeliverablesPopover({
         )}
         <div className="flex items-center gap-1.5 text-[var(--muted)] col-span-2">
           <Layers className="w-3.5 h-3.5 text-[var(--dept)]" />
-          <span>{depositPct}% deposit to kick off · Master vector files</span>
+          <span>{depositPct}% kickoff deposit · Master production files</span>
         </div>
       </div>
 
       {/* All Deliverables List with dynamic currency conversion */}
       <div className="mt-3">
         <p className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2 flex items-center justify-between">
-          <span>What's inside this package ({deliverables.length})</span>
+          <span>What's inside ({deliverables.length})</span>
           <span className="text-[var(--dept)] font-bold">100% Guaranteed</span>
         </p>
-        <ul className="space-y-1.5 max-h-52 overflow-y-auto pr-1 text-xs scrollbar-thin">
+        <ul className="space-y-1.5 max-h-44 overflow-y-auto pr-1 text-xs scrollbar-thin">
           {deliverables.map((item, idx) => (
             <li
               key={idx}
@@ -242,59 +284,91 @@ export function DeliverablesPopover({
         </ul>
       </div>
 
-      {/* Optional Add-Ons Summary with dynamic currency conversion */}
+      {/* 2026 Interactive Add-Ons Selection */}
       {addons.length > 0 && (
         <div className="mt-3 pt-3 border-t border-[var(--line)]">
-          <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider mb-1.5">
-            Available Add-Ons
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {addons.slice(0, 3).map((addon) => (
-              <span
-                key={addon.id}
-                className="text-[10px] px-2 py-0.5 rounded bg-[var(--bg)] border border-[var(--line)] text-[var(--muted)]"
-              >
-                + {addon.name} ({addon.priceType === "quote" ? "Quote" : formatMoney(addon.price, curr)})
-              </span>
-            ))}
-            {addons.length > 3 && (
-              <span className="text-[10px] px-1.5 py-0.5 text-[var(--muted)] font-meta">
-                +{addons.length - 3} more
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">
+              Available Add-Ons (Click to add)
+            </p>
+            {selectedAddonIds.length > 0 && (
+              <span className="font-meta text-[9px] text-[var(--dept)] font-bold">
+                {selectedAddonIds.length} selected
               </span>
             )}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {addons.map((addon) => {
+              const isSelected = selectedAddonIds.includes(addon.id);
+              const addonPriceText = addon.priceType === "quote" ? "Quote" : `+${formatMoney(addon.price, curr)}`;
+
+              return (
+                <button
+                  key={addon.id}
+                  type="button"
+                  onClick={() => toggleAddon(addon.id)}
+                  className={`text-[10px] px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 select-none font-medium cursor-pointer ${
+                    isSelected
+                      ? "border-[var(--dept)] bg-[var(--dept-soft)] text-[var(--dept)] font-semibold shadow-xs"
+                      : "border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
+                  }`}
+                  title={isSelected ? `Remove ${addon.name}` : `Add ${addon.name}`}
+                >
+                  {isSelected ? (
+                    <Check className="w-3 h-3 text-[var(--dept)] stroke-[2.5]" />
+                  ) : (
+                    <Plus className="w-3 h-3 text-[var(--muted)]" />
+                  )}
+                  <span>{addon.name}</span>
+                  <span className="font-mono text-[9px] opacity-80 font-normal">
+                    ({addonPriceText})
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Footer CTA with dynamic currency conversion */}
-      <div className="mt-4 pt-3 border-t border-[var(--line)] flex items-center justify-between gap-3">
+      {/* Footer CTA & 1-Click Add to Cart */}
+      <div className="mt-4 pt-3 border-t border-[var(--line)] flex flex-wrap items-center justify-between gap-3">
         {price !== undefined && (
           <div>
-            <span className="font-meta text-[9px] text-[var(--muted)] block">Total Investment</span>
+            <span className="font-meta text-[9px] text-[var(--muted)] block">
+              {selectedAddonIds.length > 0 ? "Total (with add-ons)" : "Total Investment"}
+            </span>
             <span className="font-display font-bold text-sm text-[var(--ink)]">
-              {formatMoney(price, curr)}
+              {formatMoney(calculatedPrice, curr)}
               {billing === "monthly" ? "/mo" : ""}
             </span>
           </div>
         )}
 
-        {serviceSlug ? (
-          <Link
-            to={`/services/${serviceSlug}`}
-            onClick={() => setIsOpen(false)}
-            className="btn btn-dept !py-1.5 !px-3 text-[11px] font-meta flex items-center gap-1.5 ml-auto"
-          >
-            <span>View Full Page</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        ) : (
-          <button
-            onClick={() => setIsOpen(false)}
-            className="btn btn-ghost !py-1.5 !px-3 text-[11px] font-meta ml-auto"
-          >
-            Got it
-          </button>
-        )}
+        <div className="flex items-center gap-2 ml-auto">
+          {price !== undefined && (
+            <button
+              type="button"
+              onClick={handleAddToCart}
+              className="btn btn-fill !py-1.5 !px-3 text-[11px] font-meta flex items-center gap-1.5 shadow-sm"
+              title="Add this package with selected add-ons directly to your cart"
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>{isAlreadyInCart ? "Add Another +" : "Add to Cart"}</span>
+            </button>
+          )}
+
+          {serviceSlug && (
+            <Link
+              to={`/services/${serviceSlug}`}
+              onClick={() => setIsOpen(false)}
+              className="btn btn-ghost !py-1.5 !px-2.5 text-[11px] font-meta flex items-center gap-1"
+            >
+              <span>Details</span>
+              <ArrowRight className="w-3 h-3" />
+            </Link>
+          )}
+        </div>
       </div>
     </div>
   ) : null;
@@ -307,7 +381,7 @@ export function DeliverablesPopover({
         type="button"
         onClick={handleTriggerClick}
         onMouseEnter={handleMouseEnter}
-        className="group/more inline-flex items-center gap-1.5 font-meta text-[10px] text-[var(--dept)] hover:text-[var(--ink)] bg-[var(--dept-soft)] hover:bg-[var(--line)] px-2 py-0.5 rounded transition-all duration-200 border border-[var(--dept)]/30 hover:border-[var(--dept)]"
+        className="group/more inline-flex items-center gap-1.5 font-meta text-[10px] text-[var(--dept)] hover:text-[var(--ink)] bg-[var(--dept-soft)] hover:bg-[var(--line)] px-2 py-0.5 rounded transition-all duration-200 border border-[var(--dept)]/30 hover:border-[var(--dept)] cursor-pointer"
         aria-expanded={isOpen}
         aria-haspopup="dialog"
       >
