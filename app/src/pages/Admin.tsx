@@ -40,11 +40,16 @@ import {
 import { sendEmail, proposalEmail } from "../lib/email";
 import { BatchActionBar } from "../components/BatchActionBar";
 import { exportToCsv, exportToJson } from "../lib/export-utils";
+import { GeoWorldMap } from "../components/analytics/GeoWorldMap";
+import { ExecutiveBriefingModal } from "../components/analytics/ExecutiveBriefingModal";
 import {
   getSessionCount, getTopPages, getTrafficSources,
   getServiceInterestRanking, getFunnelCounts, getRecentSessions,
   getCampaignPerformance, getActiveLiveVisitors, getSessionEvents,
-  type SessionData, type AnalyticsEvent,
+  getGeographicDistribution, getActivityHeatmap, getTechnologyDistribution,
+  getEntryAndExitPages,
+  type SessionData, type AnalyticsEvent, type GeoDistributionRecord,
+  type HeatmapCell, type TechDistribution, type EntryExitPageRecord,
 } from "../lib/analytics";
 
 /* ------------------------------------------------------------------
@@ -1163,6 +1168,23 @@ function Orders() {
                             </p>
                           </div>
                         )}
+
+                        {/* First-Party Marketing Attribution */}
+                        {Boolean((current as any).first_touch_source || (current as any).utm_source) && (
+                          <div className="pt-2 border-t border-[var(--line)] flex flex-wrap items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider bg-[var(--dept)]/10 text-[var(--dept)] border border-[var(--dept)]/30 font-meta">
+                              <span>🎯 Acquired via {(current as any).first_touch_source || (current as any).utm_source}</span>
+                              {((current as any).first_touch_campaign || (current as any).utm_campaign) && (
+                                <span>· "{((current as any).first_touch_campaign || (current as any).utm_campaign)}"</span>
+                              )}
+                            </span>
+                            {(current as any).session_id && (
+                              <span className="font-meta text-[9px] text-[var(--muted)] font-mono">
+                                Session: #{(current as any).session_id.slice(0, 10)}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1388,9 +1410,16 @@ function ConvertLead({ lead, onDone }: { lead: LeadRecord; onDone: () => void })
 
 function Leads() {
   const [leads, setLeads] = useState<LeadRecord[]>([]);
+  const [search, setSearch] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [filter, setFilter] = useState<"ALL" | "new" | "contacted" | "converted" | "closed">("ALL");
-  const [search, setSearch] = useState("");
+  const [leadJourneySession, setLeadJourneySession] = useState<{ id: string; events: AnalyticsEvent[]; loading: boolean } | null>(null);
+
+  const openLeadJourney = async (sessionId: string) => {
+    setLeadJourneySession({ id: sessionId, events: [], loading: true });
+    const evs = await getSessionEvents(sessionId);
+    setLeadJourneySession({ id: sessionId, events: evs, loading: false });
+  };
 
   const reload = () => listLeads().then(setLeads);
   useEffect(() => {
@@ -1478,16 +1507,18 @@ function Leads() {
     toast.success(`Exported ${exportData.length} leads to JSON`);
   };
 
-  const isAllFilteredSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selectedLeadIds.includes(l.id));
-
   return (
-    <div className="flex flex-col gap-5 relative">
+    <div className="space-y-6">
       {/* Batch Action Bar */}
       <BatchActionBar
         selectedCount={selectedLeadIds.length}
         totalCount={filteredLeads.length}
-        onClearSelection={clearSelection}
         onSelectAll={selectAllFiltered}
+        onClearSelection={clearSelection}
+        onExportCsv={handleExportCsv}
+        onExportJson={handleExportJson}
+        onDelete={handleBatchDelete}
+        deleteLabel="Delete Leads"
         statusOptions={[
           { label: "NEW", value: "new" },
           { label: "CONTACTED", value: "contacted" },
@@ -1495,48 +1526,29 @@ function Leads() {
           { label: "CLOSED", value: "closed" },
         ]}
         onStatusChange={handleBatchStatus}
-        onDelete={handleBatchDelete}
-        deleteLabel="Delete Leads"
-        onExportCsv={handleExportCsv}
-        onExportJson={handleExportJson}
       />
 
-      {/* Toolbar: Filters, Search, Select All */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
-        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter leads">
-          {(["ALL", "new", "contacted", "converted", "closed"] as const).map((st) => (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+          {(["ALL", "new", "contacted", "converted", "closed"] as const).map((s) => (
             <button
-              key={st}
-              onClick={() => setFilter(st)}
-              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 uppercase ${
-                filter === st ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              key={s}
+              onClick={() => setFilter(s)}
+              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all ${
+                filter === s
+                  ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs"
+                  : "border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
               }`}
             >
-              {st} ({st === "ALL" ? leads.length : leads.filter((l) => l.status === st).length})
+              {s.toUpperCase()}
             </button>
           ))}
-
-          {filteredLeads.length > 0 && (
-            <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl">
-              <input
-                type="checkbox"
-                checked={isAllFilteredSelected}
-                onChange={(e) => {
-                  if (e.target.checked) selectAllFiltered();
-                  else clearSelection();
-                }}
-                className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
-              />
-              <span>Select all ({filteredLeads.length})</span>
-            </label>
-          )}
         </div>
-
         <input
           type="search"
+          placeholder="Search leads by name, email, service..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search leads by name, email, query…"
           className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
         />
       </div>
@@ -1556,6 +1568,10 @@ function Leads() {
         <div className="flex flex-col gap-3">
           {filteredLeads.map((l) => {
             const isChecked = selectedLeadIds.includes(l.id);
+            const attribution = (l as any).first_touch_source || (l as any).utm_source;
+            const campaign = (l as any).first_touch_campaign || (l as any).utm_campaign;
+            const sessionId = (l as any).session_id;
+
             return (
               <div
                 key={l.id}
@@ -1579,6 +1595,26 @@ function Leads() {
                   <p className="font-meta text-[9px] text-[var(--muted)] mt-2">
                     {[l.dept, l.service, l.budget, l.timeline, l.date && `${l.date} ${l.time ?? ""}`].filter(Boolean).join(" · ") || "—"}
                   </p>
+
+                  {/* Direct CRM Attribution Linkage */}
+                  {attribution && (
+                    <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[8.5px] font-bold uppercase tracking-wider bg-[var(--dept)]/10 text-[var(--dept)] border border-[var(--dept)]/30 font-meta">
+                        <span>🎯 Acquired via {attribution}</span>
+                        {campaign && <span>· "{campaign}"</span>}
+                      </span>
+                      {sessionId && (
+                        <button
+                          type="button"
+                          onClick={() => openLeadJourney(sessionId)}
+                          className="font-meta text-[9px] text-[var(--muted)] hover:text-[var(--ink)] underline cursor-pointer"
+                        >
+                          Inspect Visitor Journey 🔍
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="mt-3"><ConvertLead lead={l} onDone={reload} /></div>
                 </div>
                 <span className="font-meta text-[9px] text-[var(--muted)]">{l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ""}</span>
@@ -1601,6 +1637,55 @@ function Leads() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Lead Journey Inspection Modal */}
+      {leadJourneySession && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+        >
+          <div
+            className="w-full max-w-lg max-h-[85vh] overflow-y-auto border border-[var(--line-strong)] rounded-2xl p-6 shadow-2xl space-y-4"
+            style={{ background: "var(--panel)", color: "var(--ink)" }}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--line)] pb-3">
+              <div>
+                <h3 className="font-display text-sm font-bold uppercase tracking-tight">Lead Session History</h3>
+                <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">Session #{leadJourneySession.id.slice(0, 12)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLeadJourneySession(null)}
+                className="btn btn-ghost !py-1 !px-2 text-xs rounded-xl"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            {leadJourneySession.loading ? (
+              <p className="font-meta text-[10px] text-[var(--muted)] py-8 text-center animate-pulse">Loading journey events…</p>
+            ) : leadJourneySession.events.length === 0 ? (
+              <p className="font-meta text-[10px] text-[var(--muted)] py-6 text-center">No individual page events recorded for this session.</p>
+            ) : (
+              <div className="space-y-2 relative border-l border-[var(--line)] ml-3 pl-4">
+                {leadJourneySession.events.map((ev, idx) => (
+                  <div key={`${ev.event_name}-${idx}`} className="relative font-meta text-[10px]">
+                    <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-[var(--dept)]" />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold uppercase text-[var(--ink)]">{ev.event_name.replace("_", " ")}</span>
+                      <span className="text-[8.5px] text-[var(--muted)]">
+                        {new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </span>
+                    </div>
+                    <code className="text-[8.5px] text-[var(--muted)] block mt-0.5">{ev.path}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -3420,13 +3505,16 @@ function Bar({ label, value, max, pct }: { label: string; value: number; max: nu
   );
 }
 
-type AnalyticsTab = "overview" | "visitors" | "traffic" | "services" | "funnel" | "campaigns" | "ai";
+type AnalyticsTab = "overview" | "geo" | "visitors" | "traffic" | "services" | "rhythm" | "tech" | "funnel" | "campaigns" | "ai";
 
 const ANALYTICS_TABS: { id: AnalyticsTab; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📊" },
+  { id: "geo", label: "Geo & Map", icon: "🗺️" },
   { id: "visitors", label: "Live Visitors", icon: "👥" },
   { id: "traffic", label: "Traffic & Sources", icon: "🌐" },
-  { id: "services", label: "Service Intelligence", icon: "🎯" },
+  { id: "services", label: "Service Demand", icon: "🎯" },
+  { id: "rhythm", label: "24×7 Heatmap", icon: "⏰" },
+  { id: "tech", label: "Tech & Devices", icon: "💻" },
   { id: "funnel", label: "Funnel & Journeys", icon: "🔽" },
   { id: "campaigns", label: "Campaigns", icon: "📣" },
   { id: "ai", label: "AI Insights", icon: "✨" },
@@ -3462,6 +3550,12 @@ function Analytics() {
   // Funnel switcher: lead vs booking
   const [selectedFunnel, setSelectedFunnel] = useState<"lead" | "booking">("lead");
 
+  // Geo view mode: map vs list
+  const [geoView, setGeoView] = useState<"map" | "list">("map");
+
+  // Executive briefing modal
+  const [showExecutiveBriefing, setShowExecutiveBriefing] = useState(false);
+
   // Visitor Journey Inspection Modal
   const [inspectSession, setInspectSession] = useState<SessionData | null>(null);
   const [sessionEvents, setSessionEvents] = useState<AnalyticsEvent[]>([]);
@@ -3480,7 +3574,7 @@ function Analytics() {
   const byIntent = ["quote", "consultation", "question"].map((i) => ({ label: i.toUpperCase(), value: leads.filter((l) => l.intent === i).length }));
   const intentMax = Math.max(1, ...byIntent.map((x) => x.value));
 
-  // First-party analytics state
+  // Telemetry & Platform Analytics state
   const [sessionCount, setSessionCount] = useState(0);
   const [liveVisitors, setLiveVisitors] = useState<SessionData[]>([]);
   const [topPages, setTopPages] = useState<{ path: string; views: number }[]>([]);
@@ -3489,12 +3583,26 @@ function Analytics() {
   const [funnelCounts, setFunnelCounts] = useState<Record<string, number>>({});
   const [campaigns, setCampaigns] = useState<{ campaign: string; source: string; medium: string; sessions: number }[]>([]);
   const [recentSessions, setRecentSessions] = useState<SessionData[]>([]);
+  const [geoData, setGeoData] = useState<GeoDistributionRecord[]>([]);
+  const [heatmapData, setHeatmapData] = useState<HeatmapCell[]>([]);
+  const [techData, setTechData] = useState<TechDistribution>({ devices: [], browsers: [], osList: [] });
+  const [entryExitData, setEntryExitData] = useState<EntryExitPageRecord[]>([]);
   const [loading, setLoading] = useState(false);
 
   // AI Q&A interactive state
   const [aiQuery, setAiQuery] = useState("");
   const [aiAnswer, setAiAnswer] = useState<{ query: string; answer: string; insight: string } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+
+  // Live count by country for map pulsating dots
+  const liveCountByCountry = useMemo(() => {
+    const counts: Record<string, number> = {};
+    liveVisitors.forEach((v) => {
+      const code = v.country_code || "JM";
+      counts[code] = (counts[code] || 0) + 1;
+    });
+    return counts;
+  }, [liveVisitors]);
 
   // Lead source attribution breakdown from lead records
   const leadSources = useMemo(() => {
@@ -3523,6 +3631,10 @@ function Analytics() {
       getFunnelCounts(days).then(setFunnelCounts),
       getCampaignPerformance(days).then(setCampaigns),
       getRecentSessions(25).then(setRecentSessions),
+      getGeographicDistribution(days).then(setGeoData),
+      getActivityHeatmap(days).then(setHeatmapData),
+      getTechnologyDistribution(days).then(setTechData),
+      getEntryAndExitPages(days).then(setEntryExitData),
     ]).finally(() => setLoading(false));
   };
 
@@ -3619,9 +3731,18 @@ function Analytics() {
   const funnelValues = activeFunnelSteps.map((s) => s.key === "page_view" ? (funnelCounts[s.key] ?? Math.max(sessionCount * 2, 1)) : (funnelCounts[s.key] ?? 0));
   const funnelMax = Math.max(1, ...funnelValues);
 
+  // Peak heatmap cell
+  const peakHeatmapCell = useMemo(() => {
+    if (heatmapData.length === 0) return null;
+    return heatmapData.reduce((prev, current) => (current.sessions > prev.sessions ? current : prev), heatmapData[0]);
+  }, [heatmapData]);
+
+  const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const FULL_DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
   return (
     <div className="space-y-8">
-      {/* Analytics top toolbar: day range, export menu, live status */}
+      {/* Analytics top toolbar: day range, executive brief, export menu, live status */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[var(--line)]">
         <div className="flex items-center gap-2">
           {(["7", "14", "30", "90"] as const).map((d) => (
@@ -3640,7 +3761,7 @@ function Analytics() {
           {loading && <span className="font-meta text-[9px] text-[var(--muted)] animate-pulse ml-2">Refreshing…</span>}
         </div>
 
-        {/* Action buttons: Exports & Live badge */}
+        {/* Action buttons: Briefing, Exports & Live badge */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 font-meta text-[9px] font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -3652,6 +3773,16 @@ function Analytics() {
             <span>{firebaseReady ? "FIREBASE CONNECTED" : "LOCAL BUFFER ACTIVE"}</span>
           </div>
 
+          <button
+            type="button"
+            onClick={() => setShowExecutiveBriefing(true)}
+            className="btn btn-dept !py-1 !px-3 font-meta text-[9px] rounded-xl flex items-center gap-1.5 font-bold shadow-xs"
+            title="Generate 1-Click Executive Summary & PDF Briefing"
+          >
+            <span>📊</span>
+            <span>Executive Briefing</span>
+          </button>
+
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -3660,6 +3791,7 @@ function Analytics() {
                   { key: "sessionId", header: "Session ID" },
                   { key: "startedAt", header: "Started At" },
                   { key: "lastActive", header: "Last Active" },
+                  { key: "country", header: "Country" },
                   { key: "source", header: "Traffic Source" },
                   { key: "campaign", header: "Campaign" },
                   { key: "landingPage", header: "Landing Page" },
@@ -3675,6 +3807,7 @@ function Analytics() {
                     sessionId: s.session_id,
                     startedAt: s.started_at,
                     lastActive: s.last_active,
+                    country: s.country_name || "Jamaica",
                     source: s.utm_source || "direct",
                     campaign: s.utm_campaign || "(none)",
                     landingPage: s.landing_page,
@@ -3705,6 +3838,9 @@ function Analytics() {
                     trafficSources,
                     serviceInterest,
                     funnelCounts,
+                    geoData,
+                    techData,
+                    entryExitData,
                   },
                 ]);
                 toast.success("Analytics JSON archive downloaded");
@@ -3804,7 +3940,127 @@ function Analytics() {
         </div>
       )}
 
-      {/* ─── 2. LIVE VISITORS & JOURNEYS TAB (PRD §Live Visitor Dashboard) ─── */}
+      {/* ─── 2. GEOGRAPHIC INTELLIGENCE & MAP TAB ─── */}
+      {tab === "geo" && (
+        <div className="space-y-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="idx">/geographic-visitor-intelligence ({days}d)</span>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                Visual spatial distribution and country-level conversion performance.
+              </p>
+            </div>
+            {/* View Mode Toggle: Map vs List */}
+            <div className="flex items-center gap-1 bg-[var(--panel)] p-1 border border-[var(--line)] rounded-xl">
+              <button
+                type="button"
+                onClick={() => setGeoView("map")}
+                className={`font-meta text-[9.5px] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                  geoView === "map" ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold" : "text-[var(--muted)]"
+                }`}
+              >
+                <span>🗺️</span>
+                <span>Interactive Map</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setGeoView("list")}
+                className={`font-meta text-[9.5px] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                  geoView === "list" ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold" : "text-[var(--muted)]"
+                }`}
+              >
+                <span>📋</span>
+                <span>Ranked Country List</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive World Map View */}
+          {geoView === "map" && (
+            <div className="space-y-6">
+              <GeoWorldMap data={geoData} liveCountByCountry={liveCountByCountry} />
+
+              {/* Geographic KPI Summary Chips */}
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
+                  <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider block">DOMINANT MARKET</span>
+                  <p className="font-display text-base font-bold mt-1 flex items-center gap-1.5">
+                    <span>{geoData[0]?.flag || "🇯🇲"}</span>
+                    <span>{geoData[0]?.country_name || "Jamaica"}</span>
+                  </p>
+                  <span className="font-meta text-[9px] text-[var(--muted)] mt-0.5 block">{geoData[0]?.share_pct || 100}% of all visitors</span>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
+                  <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider block">ACTIVE REGIONS</span>
+                  <p className="font-display text-base font-bold mt-1 font-mono">
+                    {geoData.length} Countr{geoData.length === 1 ? "y" : "ies"}
+                  </p>
+                  <span className="font-meta text-[9px] text-[var(--muted)] mt-0.5 block">Global reach</span>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
+                  <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider block">TOP REGIONAL CVR</span>
+                  <p className="font-display text-base font-bold mt-1 font-mono text-emerald-500">
+                    {Math.max(0, ...geoData.map((g) => g.cvr))}% CVR
+                  </p>
+                  <span className="font-meta text-[9px] text-[var(--muted)] mt-0.5 block">Highest converting region</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Country Leaderboard Table View */}
+          {geoView === "list" && (
+            <div className="border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
+                    {["Country", "Code", "Sessions", "Traffic Share", "Conversions", "CVR %", "Top Cities"].map((h) => (
+                      <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {geoData.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center font-meta text-[10px] text-[var(--muted)]">
+                        No geographic telemetry recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    geoData.map((g, i) => (
+                      <tr key={g.country_code} className={`border-b border-[var(--line)] last:border-0 hover:bg-[var(--bg)] transition-colors ${i % 2 === 0 ? "" : "bg-[var(--bg)]/50"}`}>
+                        <td className="px-4 py-3 font-display text-[11px] font-bold">
+                          <span className="mr-1.5">{g.flag}</span>
+                          <span>{g.country_name}</span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-[9px] text-[var(--muted)] font-bold">{g.country_code}</td>
+                        <td className="px-4 py-3 font-mono text-[10px] font-bold">{g.sessions.toLocaleString()}</td>
+                        <td className="px-4 py-3 font-meta text-[10px]">
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-2 rounded-full bg-[var(--line)] overflow-hidden">
+                              <div className="h-full rounded-full dept-bg" style={{ width: `${g.share_pct}%` }} />
+                            </div>
+                            <span className="font-bold">{g.share_pct}%</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-[10px] text-emerald-500 font-bold">{g.conversions}</td>
+                        <td className="px-4 py-3 font-mono text-[10px] font-bold text-emerald-500">{g.cvr}%</td>
+                        <td className="px-4 py-3 font-meta text-[9.5px] text-[var(--muted)]">
+                          {g.top_cities.join(", ") || "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── 3. LIVE VISITORS & JOURNEYS TAB (PRD §Live Visitor Dashboard) ─── */}
       {tab === "visitors" && (
         <div className="space-y-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3829,7 +4085,7 @@ function Analytics() {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
-                  {["Status / Score", "Last Active", "Device", "Source / Campaign", "Current Page", "Actions"].map((h) => (
+                  {["Status / Score", "Last Active", "Origin", "Device & OS", "Source / Campaign", "Current Page", "Actions"].map((h) => (
                     <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -3837,7 +4093,7 @@ function Analytics() {
               <tbody>
                 {recentSessions.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center font-meta text-[10px] text-[var(--muted)]">
+                    <td colSpan={7} className="px-4 py-8 text-center font-meta text-[10px] text-[var(--muted)]">
                       No visitor telemetry recorded yet. Browse any page to record your visit in real time!
                     </td>
                   </tr>
@@ -3855,10 +4111,16 @@ function Analytics() {
                         <td className="px-4 py-3 font-meta text-[9.5px] text-[var(--muted)]">
                           {new Date(s.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                         </td>
+                        <td className="px-4 py-3 font-meta text-[10px]">
+                          <span className="flex items-center gap-1">
+                            <span>{s.country_flag || "🇯🇲"}</span>
+                            <span>{s.country_name || "Jamaica"}</span>
+                          </span>
+                        </td>
                         <td className="px-4 py-3 font-meta text-[10px] capitalize">
                           <span className="flex items-center gap-1">
                             <span>{s.device_type === "mobile" ? "📱" : s.device_type === "tablet" ? "📟" : "💻"}</span>
-                            <span>{s.device_type}</span>
+                            <span>{s.browser || "Chrome"} · {s.os || "macOS"}</span>
                           </span>
                         </td>
                         <td className="px-4 py-3 font-meta text-[10px]">
@@ -3887,7 +4149,7 @@ function Analytics() {
         </div>
       )}
 
-      {/* ─── 3. TRAFFIC & SOURCES TAB ─── */}
+      {/* ─── 4. TRAFFIC & SOURCES TAB (with Entry vs. Exit Bounce Analysis) ─── */}
       {tab === "traffic" && (
         <div className="space-y-10">
           <div className="grid lg:grid-cols-2 gap-8">
@@ -3911,40 +4173,66 @@ function Analytics() {
             </div>
           </div>
 
-          {/* Source breakdown table */}
-          {trafficSources.length > 0 && (
-            <div>
-              <span className="idx">/source-share-breakdown</span>
-              <div className="mt-4 border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
-                      {["Channel / Source", "Sessions", "Traffic Share"].map((h) => (
-                        <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
-                      ))}
+          {/* Top Entry vs. Exit & Bounce Rate Table */}
+          <div>
+            <span className="idx">/entry-vs-exit-and-bounce-rates</span>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">
+              Identifies landing pages that capture visits vs drop-off bounce pages needing CTA optimization.
+            </p>
+            <div className="border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
+                    {["Page Path", "Landing Entries", "Exits", "Bounces", "Bounce Rate %", "Performance"].map((h) => (
+                      <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {entryExitData.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center font-meta text-[10px] text-[var(--muted)]">
+                        No page entry/exit telemetry recorded yet.
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {trafficSources.map((s, i) => {
-                      const total = trafficSources.reduce((sum, x) => sum + x.sessions, 0);
-                      const share = total ? Math.round((s.sessions / total) * 100) : 0;
-                      return (
-                        <tr key={s.source} className={`border-b border-[var(--line)] last:border-0 ${i % 2 === 0 ? "" : "bg-[var(--bg)]"}`}>
-                          <td className="px-4 py-2.5 font-display text-[11px] font-bold">{s.source}</td>
-                          <td className="px-4 py-2.5 font-meta text-[10px]">{s.sessions.toLocaleString()}</td>
-                          <td className="px-4 py-2.5 font-meta text-[10px] dept-accent font-bold">{share}%</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                  ) : (
+                    entryExitData.map((p, i) => (
+                      <tr key={p.path} className={`border-b border-[var(--line)] last:border-0 hover:bg-[var(--bg)] transition-colors ${i % 2 === 0 ? "" : "bg-[var(--bg)]/50"}`}>
+                        <td className="px-4 py-3 font-mono text-[10px] font-bold truncate max-w-[200px]">
+                          <code>{p.path}</code>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-[10px]">{p.entry_count}</td>
+                        <td className="px-4 py-3 font-mono text-[10px] text-[var(--muted)]">{p.exit_count}</td>
+                        <td className="px-4 py-3 font-mono text-[10px]">{p.bounce_count}</td>
+                        <td className="px-4 py-3 font-mono text-[10px] font-bold" style={{ color: p.bounce_rate > 50 ? "#ef4444" : "#22c55e" }}>
+                          {p.bounce_rate}%
+                        </td>
+                        <td className="px-4 py-3 font-meta text-[9px]">
+                          {p.bounce_rate <= 30 ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 font-bold">
+                              ✓ High Engagement
+                            </span>
+                          ) : p.bounce_rate <= 60 ? (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 font-bold">
+                              ⚡ Standard
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/30 font-bold">
+                              ⚠️ Optimize CTA
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-          )}
+          </div>
         </div>
       )}
 
-      {/* ─── 4. SERVICE INTELLIGENCE TAB ─── */}
+      {/* ─── 5. SERVICE DEMAND INTELLIGENCE TAB ─── */}
       {tab === "services" && (
         <div className="space-y-10">
           <div className="grid lg:grid-cols-2 gap-8">
@@ -3998,7 +4286,166 @@ function Analytics() {
         </div>
       )}
 
-      {/* ─── 5. FUNNEL & JOURNEYS TAB (PRD §Funnel Builder) ─── */}
+      {/* ─── 6. 24×7 PEAK ACTIVITY HEATMAP TAB ("Studio Rhythm Grid") ─── */}
+      {tab === "rhythm" && (
+        <div className="space-y-8">
+          <div>
+            <span className="idx">/24x7-peak-activity-heatmap ({days}d)</span>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+              Time-matrix analysis illustrating exactly when visitors and potential clients browse and convert.
+            </p>
+          </div>
+
+          {/* Peak Recommendation Banner */}
+          {peakHeatmapCell && peakHeatmapCell.sessions > 0 && (
+            <div className="p-4 rounded-2xl border border-[var(--dept)]/40 bg-[var(--dept)]/10 flex items-center gap-3">
+              <span className="text-2xl">🔥</span>
+              <div>
+                <p className="font-display text-xs font-bold uppercase text-[var(--ink)]">
+                  Peak Studio Activity: {FULL_DAY_NAMES[peakHeatmapCell.day]} at {String(peakHeatmapCell.hour).padStart(2, "0")}:00
+                </p>
+                <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+                  Optimal timing to launch Instagram campaigns, send proposals, or schedule live consultative broadcasts.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 7-Day x 24-Hour Matrix Grid */}
+          <div className="border border-[var(--line)] p-4 sm:p-6 rounded-2xl overflow-x-auto" style={{ background: "var(--panel)" }}>
+            <div className="min-w-[680px]">
+              {/* Hour Headers */}
+              <div className="grid grid-cols-[60px_repeat(24,1fr)] gap-1 mb-2 text-center">
+                <span className="font-meta text-[8.5px] text-[var(--muted)] text-left">DAY</span>
+                {Array.from({ length: 24 }).map((_, h) => (
+                  <span key={h} className="font-mono text-[7.5px] text-[var(--muted)]">
+                    {h % 3 === 0 ? `${h}h` : ""}
+                  </span>
+                ))}
+              </div>
+
+              {/* Day Rows */}
+              {DAY_NAMES.map((dayName, dIdx) => (
+                <div key={dayName} className="grid grid-cols-[60px_repeat(24,1fr)] gap-1 mb-1.5 items-center">
+                  <span className="font-display text-[9.5px] font-bold uppercase text-[var(--muted)]">{dayName}</span>
+                  {Array.from({ length: 24 }).map((_, hIdx) => {
+                    const cell = heatmapData.find((c) => c.day === dIdx && c.hour === hIdx) || { sessions: 0, intensity: 0 };
+                    const isHot = cell.sessions > 0;
+                    return (
+                      <div
+                        key={hIdx}
+                        className="h-6 rounded-xs transition-transform hover:scale-125 cursor-pointer relative group"
+                        style={{
+                          backgroundColor: isHot
+                            ? `rgba(var(--dept-rgb, 124, 58, 237), ${Math.max(0.15, cell.intensity)})`
+                            : "var(--bg)",
+                          border: "1px solid var(--line)",
+                        }}
+                      >
+                        {/* Hover Tooltip */}
+                        <div className="absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block pointer-events-none p-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel)] shadow-lg font-meta text-[8px] whitespace-nowrap text-[var(--ink)]">
+                          {FULL_DAY_NAMES[dIdx]} {String(hIdx).padStart(2, "0")}:00 · <strong>{cell.sessions} visits</strong>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            {/* Heatmap Legend */}
+            <div className="flex items-center justify-between text-[9px] font-meta text-[var(--muted)] mt-4 pt-3 border-t border-[var(--line)]">
+              <span>Low Visitor Traffic</span>
+              <div className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded-xs bg-[var(--bg)] border border-[var(--line)]" />
+                <span className="w-3 h-3 rounded-xs bg-[var(--dept)]/20 border border-[var(--line)]" />
+                <span className="w-3 h-3 rounded-xs bg-[var(--dept)]/50 border border-[var(--line)]" />
+                <span className="w-3 h-3 rounded-xs bg-[var(--dept)] border border-[var(--line)]" />
+              </div>
+              <span>Peak Concentrated Traffic</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 7. TECHNOLOGY, BROWSER & OS MATRIX TAB ─── */}
+      {tab === "tech" && (
+        <div className="space-y-8">
+          <div>
+            <span className="idx">/technology-and-client-environment ({days}d)</span>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+              Device hardware, browser engine, and operating system breakdown.
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* Device Form Factors */}
+            <div className="p-5 rounded-2xl border border-[var(--line)] space-y-4" style={{ background: "var(--panel)" }}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📱</span>
+                <h3 className="font-display text-xs font-bold uppercase tracking-wide">Device Forms</h3>
+              </div>
+              <div className="space-y-3">
+                {techData.devices.map((d) => (
+                  <div key={d.label}>
+                    <div className="flex justify-between font-meta text-[10px] mb-1">
+                      <span className="capitalize">{d.label}</span>
+                      <span className="font-mono font-bold">{d.count} ({d.pct}%)</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-[var(--line)] overflow-hidden">
+                      <div className="h-full rounded-full dept-bg" style={{ width: `${d.pct}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Browsers */}
+            <div className="p-5 rounded-2xl border border-[var(--line)] space-y-4" style={{ background: "var(--panel)" }}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🌐</span>
+                <h3 className="font-display text-xs font-bold uppercase tracking-wide">Browsers</h3>
+              </div>
+              <div className="space-y-3">
+                {techData.browsers.map((b) => (
+                  <div key={b.label}>
+                    <div className="flex justify-between font-meta text-[10px] mb-1">
+                      <span>{b.label}</span>
+                      <span className="font-mono font-bold">{b.count} ({b.pct}%)</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-[var(--line)] overflow-hidden">
+                      <div className="h-full rounded-full dept-bg" style={{ width: `${b.pct}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Operating Systems */}
+            <div className="p-5 rounded-2xl border border-[var(--line)] space-y-4" style={{ background: "var(--panel)" }}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">💻</span>
+                <h3 className="font-display text-xs font-bold uppercase tracking-wide">Operating Systems</h3>
+              </div>
+              <div className="space-y-3">
+                {techData.osList.map((o) => (
+                  <div key={o.label}>
+                    <div className="flex justify-between font-meta text-[10px] mb-1">
+                      <span>{o.label}</span>
+                      <span className="font-mono font-bold">{o.count} ({o.pct}%)</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-[var(--line)] overflow-hidden">
+                      <div className="h-full rounded-full dept-bg" style={{ width: `${o.pct}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 8. FUNNEL & JOURNEYS TAB (PRD §Funnel Builder) ─── */}
       {tab === "funnel" && (
         <div className="space-y-8">
           {/* Funnel Selector */}
@@ -4089,7 +4536,7 @@ function Analytics() {
         </div>
       )}
 
-      {/* ─── 6. CAMPAIGNS TAB ─── */}
+      {/* ─── 9. CAMPAIGNS TAB ─── */}
       {tab === "campaigns" && (
         <div className="space-y-8">
           {campaigns.length === 0 ? (
@@ -4146,7 +4593,7 @@ function Analytics() {
         </div>
       )}
 
-      {/* ─── 7. AI INSIGHTS & NATURAL LANGUAGE QUERY TAB (PRD §AI Analytics) ─── */}
+      {/* ─── 10. AI INSIGHTS & NATURAL LANGUAGE QUERY TAB (PRD §AI Analytics) ─── */}
       {tab === "ai" && (
         <div className="space-y-8">
           {/* AI Assistant Interactive Q&A Engine */}
@@ -4266,6 +4713,25 @@ function Analytics() {
         </div>
       )}
 
+      {/* ─── EXECUTIVE BRIEFING REPORT MODAL ─── */}
+      {showExecutiveBriefing && (
+        <ExecutiveBriefingModal
+          days={days}
+          revenue={revenue}
+          aov={aov}
+          sessionCount={sessionCount}
+          leadsCount={leads.length}
+          ordersCount={orders.length}
+          topPages={topPages}
+          trafficSources={trafficSources}
+          serviceInterest={serviceInterest}
+          geoData={geoData}
+          techData={techData}
+          recentSessions={recentSessions}
+          onClose={() => setShowExecutiveBriefing(false)}
+        />
+      )}
+
       {/* ─── VISITOR JOURNEY MAP MODAL ─── */}
       {inspectSession && (
         <div
@@ -4301,16 +4767,16 @@ function Analytics() {
                 <span className="font-bold dept-accent">{inspectSession.utm_source || "direct"}</span>
               </div>
               <div className="p-2.5 rounded-xl border border-[var(--line)] bg-[var(--bg)]">
-                <span className="text-[var(--muted)] block text-[8.5px]">DEVICE</span>
-                <span className="font-bold capitalize">{inspectSession.device_type}</span>
+                <span className="text-[var(--muted)] block text-[8.5px]">ORIGIN</span>
+                <span className="font-bold">{inspectSession.country_flag || "🇯🇲"} {inspectSession.country_name || "Jamaica"}</span>
               </div>
               <div className="p-2.5 rounded-xl border border-[var(--line)] bg-[var(--bg)]">
-                <span className="text-[var(--muted)] block text-[8.5px]">SCORE / SEGMENT</span>
+                <span className="text-[var(--muted)] block text-[8.5px]">DEVICE & OS</span>
+                <span className="font-bold capitalize">{inspectSession.device_type} · {inspectSession.os || "macOS"}</span>
+              </div>
+              <div className="p-2.5 rounded-xl border border-[var(--line)] bg-[var(--bg)]">
+                <span className="text-[var(--muted)] block text-[8.5px]">SCORE & SEGMENT</span>
                 <span className="font-bold capitalize">{inspectSession.segment} ({inspectSession.engagement_score})</span>
-              </div>
-              <div className="p-2.5 rounded-xl border border-[var(--line)] bg-[var(--bg)]">
-                <span className="text-[var(--muted)] block text-[8.5px]">CONVERSION</span>
-                <span className="font-bold text-emerald-500">{inspectSession.converted ? "Converted" : "Browsing"}</span>
               </div>
             </div>
 
@@ -4321,7 +4787,7 @@ function Analytics() {
                 <p className="font-meta text-[10px] text-[var(--muted)] py-6 text-center animate-pulse">Loading journey events…</p>
               ) : sessionEvents.length === 0 ? (
                 <div className="mt-3 p-4 rounded-xl border border-[var(--line)] text-center font-meta text-[10px] text-[var(--muted)]">
-                  Landing page: <code className="text-black font-bold">{inspectSession.landing_page}</code>
+                  Landing page: <code className="text-[var(--ink)] font-bold">{inspectSession.landing_page}</code>
                   <p className="mt-1">Pages viewed: {inspectSession.page_count}</p>
                 </div>
               ) : (

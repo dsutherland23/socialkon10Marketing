@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------
    WEBSITE INTELLIGENCE & ATTRIBUTION ENGINE — First-Party SDK
-   PRD §1-5 — Comprehensive 2026 Implementation
+   PRD §1-5 + 2026 Modern Platform Enhancements
 
    Architecture:
    • Anonymous session ID in sessionStorage (privacy-first, zero PII)
@@ -10,9 +10,11 @@
    • Dead click & rage click detection
    • Dual Persistence: IndexedDB / LocalStorage (zero-config, offline-ready) + Firestore
    • Omni-channel mirroring to GA4 (gtag), Meta Pixel (fbq), and dataLayer
-   • Consent-aware (Necessary, Analytics, Marketing, Advertising)
-   • Real-time Live Visitor telemetry & Journey reconstruction
-   • Multi-funnel analysis & reporting data aggregation
+   • Geo-Intelligence: Privacy-friendly country & city detection via timezone & locale
+   • Technology Intelligence: Device, Browser, OS, and Screen Matrix
+   • 24×7 Peak Activity Heatmap (Day × Hour Rhythm Grid)
+   • Entry vs. Exit Page & Bounce Rate Analysis
+   • Direct CRM Lead & Order Attribution Linkage
 ------------------------------------------------------------------- */
 
 import {
@@ -38,14 +40,20 @@ export interface SessionData {
   utm_term: string | null;
   landing_page: string;
   current_page?: string;
+  exit_page?: string;
   referrer: string;
   device_type: "mobile" | "tablet" | "desktop";
+  browser?: string;
+  os?: string;
+  country_code?: string;
+  country_name?: string;
+  country_flag?: string;
+  city?: string;
   user_agent: string;
   engagement_score: number;
   segment: VisitorSegment;
   converted: boolean;
   conversion_type?: string;
-  country?: string;
   pages_viewed?: string[];
   services_viewed?: string[];
 }
@@ -84,6 +92,8 @@ export interface AttributionData {
   landing_page: string;
   referrer: string;
   engagement_score?: number;
+  country_name?: string;
+  country_flag?: string;
 }
 
 export interface ConsentPreferences {
@@ -94,7 +104,54 @@ export interface ConsentPreferences {
   updated_at: string;
 }
 
-/* ─── Scoring Rules (PRD §Engagement Scoring) ─────────────────────── */
+export interface GeoDistributionRecord {
+  country_code: string;
+  country_name: string;
+  flag: string;
+  sessions: number;
+  share_pct: number;
+  conversions: number;
+  cvr: number;
+  top_cities: string[];
+}
+
+export interface HeatmapCell {
+  day: number; // 0 = Mon, 6 = Sun
+  hour: number; // 0 to 23
+  sessions: number;
+  intensity: number; // 0 to 1
+}
+
+export interface TechDistribution {
+  devices: { label: string; count: number; pct: number }[];
+  browsers: { label: string; count: number; pct: number }[];
+  osList: { label: string; count: number; pct: number }[];
+}
+
+export interface EntryExitPageRecord {
+  path: string;
+  entry_count: number;
+  exit_count: number;
+  bounce_count: number;
+  bounce_rate: number;
+}
+
+export interface ExecutiveSummary {
+  periodDays: number;
+  totalSessions: number;
+  totalLeads: number;
+  totalOrders: number;
+  revenueCollected: number;
+  conversionRate: number;
+  topSource: string;
+  topCampaign: string;
+  topCountry: string;
+  topService: string;
+  peakHour: string;
+  recommendations: string[];
+}
+
+/* ─── Scoring Rules ──────────────────────────────────────────────── */
 
 export const ENGAGEMENT_RULES: Record<string, number> = {
   page_view: 2,
@@ -132,14 +189,11 @@ let _sessionData: SessionData | null = null;
 let _currentPath = "";
 const _scoredActions = new Set<string>();
 
-// Event batch queue — flush every 3 seconds or when queue reaches 10
 const _queue: AnalyticsEvent[] = [];
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-// Rage click detection
 let _clickHistory: { x: number; y: number; time: number }[] = [];
 
-/* ─── Utilities ──────────────────────────────────────────────────── */
+/* ─── Utilities & Geo / Tech Parsers ─────────────────────────────── */
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -154,6 +208,85 @@ function detectDevice(): "mobile" | "tablet" | "desktop" {
   if (/Mobi|Android|iPhone/i.test(ua)) return "mobile";
   if (/iPad|Tablet/i.test(ua)) return "tablet";
   return "desktop";
+}
+
+function detectBrowser(): string {
+  if (typeof window === "undefined") return "Chrome";
+  const ua = navigator.userAgent;
+  if (/Edg/i.test(ua)) return "Edge";
+  if (/OPR|Opera/i.test(ua)) return "Opera";
+  if (/Chrome/i.test(ua) && !/Chromium/i.test(ua)) return "Chrome";
+  if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return "Safari";
+  if (/Firefox/i.test(ua)) return "Firefox";
+  if (/SamsungBrowser/i.test(ua)) return "Samsung Internet";
+  return "Other";
+}
+
+function detectOs(): string {
+  if (typeof window === "undefined") return "macOS";
+  const ua = navigator.userAgent;
+  if (/Macintosh|Mac OS X/i.test(ua)) return "macOS";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "iOS";
+  if (/Windows NT/i.test(ua)) return "Windows";
+  if (/Android/i.test(ua)) return "Android";
+  if (/Linux/i.test(ua)) return "Linux";
+  if (/CrOS/i.test(ua)) return "ChromeOS";
+  return "Other";
+}
+
+/**
+ * Resolves visitor geographic country & city via client timezone and locale.
+ * Privacy-first: zero IP tracking or invasive fingerprinting.
+ */
+function resolveClientGeo(): { code: string; name: string; flag: string; city: string } {
+  if (typeof window === "undefined") {
+    return { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" };
+  }
+
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    const TZ_MAP: Record<string, { code: string; name: string; flag: string; city: string }> = {
+      "America/Jamaica": { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" },
+      "America/New_York": { code: "US", name: "United States", flag: "🇺🇸", city: "New York" },
+      "America/Chicago": { code: "US", name: "United States", flag: "🇺🇸", city: "Chicago" },
+      "America/Los_Angeles": { code: "US", name: "United States", flag: "🇺🇸", city: "Los Angeles" },
+      "America/Denver": { code: "US", name: "United States", flag: "🇺🇸", city: "Denver" },
+      "America/Phoenix": { code: "US", name: "United States", flag: "🇺🇸", city: "Phoenix" },
+      "America/Toronto": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Toronto" },
+      "America/Vancouver": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Vancouver" },
+      "America/Montreal": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Montreal" },
+      "Europe/London": { code: "GB", name: "United Kingdom", flag: "🇬🇧", city: "London" },
+      "Europe/Paris": { code: "FR", name: "France", flag: "🇫🇷", city: "Paris" },
+      "Europe/Berlin": { code: "DE", name: "Germany", flag: "🇩🇪", city: "Berlin" },
+      "Europe/Amsterdam": { code: "NL", name: "Netherlands", flag: "🇳🇱", city: "Amsterdam" },
+      "Europe/Madrid": { code: "ES", name: "Spain", flag: "🇪🇸", city: "Madrid" },
+      "America/Port_of_Spain": { code: "TT", name: "Trinidad & Tobago", flag: "🇹🇹", city: "Port of Spain" },
+      "America/Barbados": { code: "BB", name: "Barbados", flag: "🇧🇧", city: "Bridgetown" },
+      "America/Nassau": { code: "BS", name: "Bahamas", flag: "🇧🇸", city: "Nassau" },
+      "America/Grand_Turk": { code: "TC", name: "Turks & Caicos", flag: "🇹🇨", city: "Grand Turk" },
+      "America/Cayman": { code: "KY", name: "Cayman Islands", flag: "🇰🇾", city: "George Town" },
+      "Asia/Tokyo": { code: "JP", name: "Japan", flag: "🇯🇵", city: "Tokyo" },
+      "Asia/Singapore": { code: "SG", name: "Singapore", flag: "🇸🇬", city: "Singapore" },
+      "Asia/Dubai": { code: "AE", name: "United Arab Emirates", flag: "🇦🇪", city: "Dubai" },
+      "Australia/Sydney": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Sydney" },
+      "Australia/Melbourne": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Melbourne" },
+    };
+
+    if (TZ_MAP[tz]) return TZ_MAP[tz];
+
+    // Generic timezone prefix matching
+    if (tz.startsWith("America/")) {
+      return { code: "US", name: "United States", flag: "🇺🇸", city: tz.replace("America/", "").replace("_", " ") };
+    }
+    if (tz.startsWith("Europe/")) {
+      return { code: "GB", name: "Europe", flag: "🇪🇺", city: tz.replace("Europe/", "").replace("_", " ") };
+    }
+    if (tz.startsWith("Asia/")) {
+      return { code: "JP", name: "Asia", flag: "🌏", city: tz.replace("Asia/", "").replace("_", " ") };
+    }
+  } catch { /* fallback */ }
+
+  return { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" };
 }
 
 function getUtmFromUrl(url: string): Record<string, string | null> {
@@ -181,7 +314,7 @@ function notifyAnalyticsUpdated(): void {
   }
 }
 
-/* ─── Consent Management (PRD §Privacy & Consent) ─────────────────── */
+/* ─── Consent Management ─────────────────────────────────────────── */
 
 export function getConsentPreferences(): ConsentPreferences {
   if (typeof window === "undefined") {
@@ -215,7 +348,7 @@ export function hasConsent(category: keyof ConsentPreferences): boolean {
   return Boolean(prefs[category]);
 }
 
-/* ─── Local Storage / IndexedDB Analytics Helpers ────────────────── */
+/* ─── Local Storage / IndexedDB Storage Layer ────────────────────── */
 
 async function getLocalSessions(): Promise<SessionData[]> {
   try {
@@ -233,8 +366,7 @@ async function saveLocalSession(session: SessionData): Promise<void> {
     } else {
       list.unshift(session);
     }
-    // Retain up to 200 sessions locally
-    await idbSet(IDB_SESSIONS_KEY, list.slice(0, 200));
+    await idbSet(IDB_SESSIONS_KEY, list.slice(0, 300));
   } catch { /* non-blocking */ }
 }
 
@@ -242,7 +374,7 @@ async function appendLocalEvent(ev: AnalyticsEvent): Promise<void> {
   try {
     const list = (await idbGet<AnalyticsEvent[]>(IDB_EVENTS_KEY)) || [];
     list.unshift(ev);
-    await idbSet(IDB_EVENTS_KEY, list.slice(0, 500));
+    await idbSet(IDB_EVENTS_KEY, list.slice(0, 1000));
   } catch { /* non-blocking */ }
 }
 
@@ -250,7 +382,7 @@ async function appendLocalPageView(pv: PageViewRecord): Promise<void> {
   try {
     const list = (await idbGet<PageViewRecord[]>(IDB_PAGE_VIEWS_KEY)) || [];
     list.unshift(pv);
-    await idbSet(IDB_PAGE_VIEWS_KEY, list.slice(0, 500));
+    await idbSet(IDB_PAGE_VIEWS_KEY, list.slice(0, 1000));
   } catch { /* non-blocking */ }
 }
 
@@ -258,7 +390,7 @@ async function appendLocalServiceInterest(si: ServiceInterestRecord): Promise<vo
   try {
     const list = (await idbGet<ServiceInterestRecord[]>(IDB_SERVICE_INTEREST_KEY)) || [];
     list.unshift(si);
-    await idbSet(IDB_SERVICE_INTEREST_KEY, list.slice(0, 500));
+    await idbSet(IDB_SERVICE_INTEREST_KEY, list.slice(0, 1000));
   } catch { /* non-blocking */ }
 }
 
@@ -282,6 +414,8 @@ function loadOrCreateSession(): SessionData {
     if (saved) storedUtm = JSON.parse(saved);
   } catch { /* ignore */ }
 
+  const geo = resolveClientGeo();
+
   const merged = {
     utm_source: utms.utm_source ?? storedUtm.utm_source ?? null,
     utm_medium: utms.utm_medium ?? storedUtm.utm_medium ?? null,
@@ -300,6 +434,12 @@ function loadOrCreateSession(): SessionData {
     current_page: window.location.pathname,
     referrer: document.referrer || "",
     device_type: detectDevice(),
+    browser: detectBrowser(),
+    os: detectOs(),
+    country_code: geo.code,
+    country_name: geo.name,
+    country_flag: geo.flag,
+    city: geo.city,
     user_agent: navigator.userAgent.slice(0, 200),
     engagement_score: 0,
     segment: "cold",
@@ -322,7 +462,6 @@ function persistSession(): void {
 }
 
 async function upsertSessionInFirestore(session: SessionData): Promise<void> {
-  // Always update local IndexedDB storage
   await saveLocalSession(session);
   notifyAnalyticsUpdated();
 
@@ -363,7 +502,6 @@ async function flushQueue(): Promise<void> {
   if (_queue.length === 0) return;
   const batch = _queue.splice(0, _queue.length);
 
-  // Always write batch to local storage
   await Promise.all(batch.map((ev) => appendLocalEvent(ev)));
   notifyAnalyticsUpdated();
 
@@ -448,9 +586,6 @@ function mirrorToDataLayer(event: string, params: Record<string, unknown>): void
 
 /* ─── Public Tracking API ────────────────────────────────────────── */
 
-/**
- * Initialize the tracking engine. Call once on app boot.
- */
 export function initTracking(): void {
   if (typeof window === "undefined") return;
   if (_initialized) return;
@@ -459,12 +594,10 @@ export function initTracking(): void {
   const session = loadOrCreateSession();
   void upsertSessionInFirestore(session);
 
-  // Time-in-session scoring (+10 points after 120 seconds)
   setTimeout(() => {
     addEngagementPoints("session_over_120_seconds");
   }, 120_000);
 
-  // Scroll depth tracking (25, 50, 75%)
   let maxScrollReached = 0;
   const onScrollThrottled = () => {
     const docHeight = document.documentElement.scrollHeight - window.innerHeight;
@@ -485,7 +618,6 @@ export function initTracking(): void {
   };
   window.addEventListener("scroll", onScrollThrottled, { passive: true });
 
-  // Rage click detection (3 fast clicks within 300px and 700ms)
   window.addEventListener("click", (e) => {
     const clickTime = Date.now();
     _clickHistory.push({ x: e.clientX, y: e.clientY, time: clickTime });
@@ -504,9 +636,6 @@ export function initTracking(): void {
   if (import.meta.env.DEV) console.info("[analytics] Engine initialized:", session.session_id);
 }
 
-/**
- * Track a generic event with full first-party enrichment and engagement scoring.
- */
 export function trackEvent(name: string, props: Record<string, unknown> = {}): void {
   if (typeof window === "undefined") return;
 
@@ -520,6 +649,7 @@ export function trackEvent(name: string, props: Record<string, unknown> = {}): v
     utm_source: session.utm_source,
     utm_medium: session.utm_medium,
     utm_campaign: session.utm_campaign,
+    country: session.country_name,
     engagement_score: session.engagement_score,
     segment: session.segment,
   };
@@ -538,9 +668,6 @@ export function trackEvent(name: string, props: Record<string, unknown> = {}): v
   if (import.meta.env.DEV) console.info("[analytics]", name, enriched);
 }
 
-/**
- * Track a page view on route transitions.
- */
 export async function trackPageView(path: string): Promise<void> {
   if (typeof window === "undefined") return;
 
@@ -581,9 +708,6 @@ export async function trackPageView(path: string): Promise<void> {
   if (import.meta.env.DEV) console.info("[analytics] page_view", path);
 }
 
-/**
- * Track a service or department page view.
- */
 export async function trackServiceView(serviceSlug: string, serviceName: string): Promise<void> {
   if (typeof window === "undefined") return;
 
@@ -614,25 +738,16 @@ export async function trackServiceView(serviceSlug: string, serviceName: string)
   trackEvent("service_view", { service_slug: serviceSlug, service_name: serviceName });
 }
 
-/**
- * Track pricing or package page view.
- */
 export function trackPricingView(source = "packages_page"): void {
   addEngagementPoints("pricing_view");
   trackEvent("pricing_view", { source });
 }
 
-/**
- * Track CTA button click.
- */
 export function trackCtaClick(label: string, location = "page"): void {
   addEngagementPoints("cta_click");
   trackEvent("cta_click", { cta_label: label, cta_location: location });
 }
 
-/**
- * Track form interactions.
- */
 export function trackFormStart(formId: string, extra?: Record<string, unknown>): void {
   addEngagementPoints("form_start");
   trackEvent("form_start", { form_id: formId, ...extra });
@@ -647,9 +762,6 @@ export function trackFormAbandon(formId: string, lastField = ""): void {
   trackEvent("form_abandon", { form_id: formId, last_field: lastField });
 }
 
-/**
- * Track lead submission and mark conversion status.
- */
 export function trackLeadSubmit(data: {
   intent: string;
   dept?: string | null;
@@ -671,9 +783,6 @@ export function trackLeadSubmit(data: {
   });
 }
 
-/**
- * Track checkout & ecommerce conversion funnels.
- */
 export function trackAddToCart(item: {
   name: string;
   serviceSlug?: string;
@@ -733,9 +842,6 @@ export function trackCheckoutComplete(data: {
   });
 }
 
-/**
- * Returns complete session attribution metadata (for enriching LeadRecord / OrderRecord).
- */
 export function getSessionAttribution(): AttributionData {
   const session = typeof window !== "undefined" ? loadOrCreateSession() : null;
   return {
@@ -748,10 +854,12 @@ export function getSessionAttribution(): AttributionData {
     landing_page: session?.landing_page ?? "",
     referrer: session?.referrer ?? "",
     engagement_score: session?.engagement_score ?? 0,
+    country_name: session?.country_name,
+    country_flag: session?.country_flag,
   };
 }
 
-/* ─── Hybrid Dashboard Query Helpers (Firestore + IndexedDB fallback) ── */
+/* ─── Dashboard Query Helpers (Hybrid Firestore + IndexedDB) ─────── */
 
 export async function getSessionCount(days = 30): Promise<number> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
@@ -762,7 +870,7 @@ export async function getSessionCount(days = 30): Promise<number> {
       );
       const count = snap.data().count;
       if (count > 0) return count;
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   const local = await getLocalSessions();
   return local.filter((s) => s.started_at >= since).length;
@@ -783,7 +891,7 @@ export async function getActiveLiveVisitors(withinMinutes = 15): Promise<Session
       if (!snap.empty) {
         return snap.docs.map((d) => ({ ...d.data() } as SessionData));
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   const local = await getLocalSessions();
   return local
@@ -815,7 +923,7 @@ export async function getTopPages(days = 30, topN = 10): Promise<{ path: string;
           .slice(0, topN)
           .map(([path, views]) => ({ path, views }));
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   try {
     const local = (await idbGet<PageViewRecord[]>(IDB_PAGE_VIEWS_KEY)) || [];
@@ -854,7 +962,7 @@ export async function getTrafficSources(days = 30): Promise<{ source: string; se
           .sort((a, b) => b[1] - a[1])
           .map(([source, sessions]) => ({ source, sessions }));
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   const local = await getLocalSessions();
   const counts = new Map<string, number>();
@@ -893,7 +1001,7 @@ export async function getServiceInterestRanking(days = 30): Promise<{ service_na
           .sort((a, b) => b[1].views - a[1].views)
           .map(([service_slug, v]) => ({ service_slug, ...v }));
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   try {
     const local = (await idbGet<ServiceInterestRecord[]>(IDB_SERVICE_INTEREST_KEY)) || [];
@@ -935,7 +1043,7 @@ export async function getFunnelCounts(days = 30): Promise<Record<string, number>
       );
       const totalCount = Object.values(results).reduce((a, b) => a + b, 0);
       if (totalCount > 0) return results;
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
 
   try {
@@ -960,7 +1068,7 @@ export async function getRecentSessions(limitN = 25): Promise<SessionData[]> {
       if (!snap.empty) {
         return snap.docs.map((d) => ({ ...d.data() } as SessionData));
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   const local = await getLocalSessions();
   return local
@@ -994,7 +1102,7 @@ export async function getCampaignPerformance(days = 30): Promise<{ campaign: str
         });
         return [...counts.values()].sort((a, b) => b.sessions - a.sessions);
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   const local = await getLocalSessions();
   const counts = new Map<string, { campaign: string; source: string; medium: string; sessions: number }>();
@@ -1025,7 +1133,7 @@ export async function getSessionEvents(sessionId: string): Promise<AnalyticsEven
       if (!snap.empty) {
         return snap.docs.map((d) => ({ ...d.data() } as AnalyticsEvent));
       }
-    } catch { /* fallback to local */ }
+    } catch { /* fallback */ }
   }
   try {
     const localEvents = (await idbGet<AnalyticsEvent[]>(IDB_EVENTS_KEY)) || [];
@@ -1035,13 +1143,182 @@ export async function getSessionEvents(sessionId: string): Promise<AnalyticsEven
   } catch { return []; }
 }
 
-export async function analyticsHasData(): Promise<boolean> {
-  if (firebaseReady && db) {
-    try {
-      const snap = await getDocs(query(collection(db, "analytics_sessions"), fsLimit(1)));
-      if (!snap.empty) return true;
-    } catch { /* fallback */ }
+/* ─── 2026 Enhanced Platform Queries ─────────────────────────────── */
+
+/**
+ * 1. Geographic Distribution: Returns sessions and conversion rates grouped by Country.
+ */
+export async function getGeographicDistribution(days = 30): Promise<GeoDistributionRecord[]> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const sessions = await getRecentSessions(500);
+  const filtered = sessions.filter((s) => s.started_at >= since);
+
+  const countryMap = new Map<string, {
+    country_name: string;
+    flag: string;
+    sessions: number;
+    conversions: number;
+    cities: Set<string>;
+  }>();
+
+  // If no sessions, provide default studio region
+  if (filtered.length === 0) {
+    return [
+      { country_code: "JM", country_name: "Jamaica", flag: "🇯🇲", sessions: 1, share_pct: 100, conversions: 0, cvr: 0, top_cities: ["Kingston"] }
+    ];
   }
-  const local = await getLocalSessions();
-  return local.length > 0;
+
+  filtered.forEach((s) => {
+    const code = s.country_code || "JM";
+    const name = s.country_name || (code === "JM" ? "Jamaica" : "United States");
+    const flag = s.country_flag || (code === "JM" ? "🇯🇲" : "🇺🇸");
+    const city = s.city || "Kingston";
+
+    const ex = countryMap.get(code) ?? {
+      country_name: name,
+      flag,
+      sessions: 0,
+      conversions: 0,
+      cities: new Set<string>(),
+    };
+
+    ex.sessions += 1;
+    if (s.converted) ex.conversions += 1;
+    if (city) ex.cities.add(city);
+    countryMap.set(code, ex);
+  });
+
+  const total = filtered.length;
+  return [...countryMap.entries()]
+    .map(([code, data]) => ({
+      country_code: code,
+      country_name: data.country_name,
+      flag: data.flag,
+      sessions: data.sessions,
+      share_pct: Math.round((data.sessions / total) * 100),
+      conversions: data.conversions,
+      cvr: data.sessions > 0 ? Math.round((data.conversions / data.sessions) * 100) : 0,
+      top_cities: [...data.cities].slice(0, 3),
+    }))
+    .sort((a, b) => b.sessions - a.sessions);
+}
+
+/**
+ * 2. 24×7 Activity Heatmap Grid: Returns a 7-day (Mon-Sun) × 24-hour activity matrix.
+ */
+export async function getActivityHeatmap(days = 30): Promise<HeatmapCell[]> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const sessions = await getRecentSessions(500);
+  const filtered = sessions.filter((s) => s.started_at >= since);
+
+  // Initialize 7x24 grid: 0 = Mon, 6 = Sun
+  const grid: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+
+  filtered.forEach((s) => {
+    const date = new Date(s.started_at);
+    let day = date.getDay(); // 0 is Sunday in JS
+    day = day === 0 ? 6 : day - 1; // Convert to 0 = Monday ... 6 = Sunday
+    const hour = date.getHours();
+    grid[day][hour] += 1;
+  });
+
+  let maxSessions = 1;
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      if (grid[d][h] > maxSessions) maxSessions = grid[d][h];
+    }
+  }
+
+  const cells: HeatmapCell[] = [];
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      const count = grid[d][h];
+      cells.push({
+        day: d,
+        hour: h,
+        sessions: count,
+        intensity: count / maxSessions,
+      });
+    }
+  }
+  return cells;
+}
+
+/**
+ * 3. Technology, Browser & OS Distribution.
+ */
+export async function getTechnologyDistribution(days = 30): Promise<TechDistribution> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const sessions = await getRecentSessions(500);
+  const filtered = sessions.filter((s) => s.started_at >= since);
+  const total = Math.max(1, filtered.length);
+
+  const deviceMap = new Map<string, number>();
+  const browserMap = new Map<string, number>();
+  const osMap = new Map<string, number>();
+
+  filtered.forEach((s) => {
+    const dev = (s.device_type || "desktop").toLowerCase();
+    const browser = s.browser || "Chrome";
+    const os = s.os || "macOS";
+
+    deviceMap.set(dev, (deviceMap.get(dev) ?? 0) + 1);
+    browserMap.set(browser, (browserMap.get(browser) ?? 0) + 1);
+    osMap.set(os, (osMap.get(os) ?? 0) + 1);
+  });
+
+  // Defaults if empty
+  if (deviceMap.size === 0) deviceMap.set("desktop", 1);
+  if (browserMap.size === 0) browserMap.set("Chrome", 1);
+  if (osMap.size === 0) osMap.set("macOS", 1);
+
+  const devices = [...deviceMap.entries()]
+    .map(([label, count]) => ({ label, count, pct: Math.round((count / total) * 100) }))
+    .sort((a, b) => b.count - a.count);
+
+  const browsers = [...browserMap.entries()]
+    .map(([label, count]) => ({ label, count, pct: Math.round((count / total) * 100) }))
+    .sort((a, b) => b.count - a.count);
+
+  const osList = [...osMap.entries()]
+    .map(([label, count]) => ({ label, count, pct: Math.round((count / total) * 100) }))
+    .sort((a, b) => b.count - a.count);
+
+  return { devices, browsers, osList };
+}
+
+/**
+ * 4. Entry vs. Exit Pages & Bounce Rate Calculation.
+ */
+export async function getEntryAndExitPages(days = 30): Promise<EntryExitPageRecord[]> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const sessions = await getRecentSessions(500);
+  const filtered = sessions.filter((s) => s.started_at >= since);
+
+  const pageMap = new Map<string, { entries: number; exits: number; bounces: number }>();
+
+  filtered.forEach((s) => {
+    const entry = (s.landing_page || "/").split("?")[0];
+    const exit = s.current_page || entry;
+    const isBounce = s.page_count <= 1 && s.engagement_score <= 10;
+
+    const entryEx = pageMap.get(entry) ?? { entries: 0, exits: 0, bounces: 0 };
+    entryEx.entries += 1;
+    if (isBounce) entryEx.bounces += 1;
+    pageMap.set(entry, entryEx);
+
+    const exitEx = pageMap.get(exit) ?? { entries: 0, exits: 0, bounces: 0 };
+    exitEx.exits += 1;
+    pageMap.set(exit, exitEx);
+  });
+
+  return [...pageMap.entries()]
+    .map(([path, counts]) => ({
+      path,
+      entry_count: counts.entries,
+      exit_count: counts.exits,
+      bounce_count: counts.bounces,
+      bounce_rate: counts.entries > 0 ? Math.round((counts.bounces / counts.entries) * 100) : 0,
+    }))
+    .sort((a, b) => b.entry_count - a.entry_count);
 }
