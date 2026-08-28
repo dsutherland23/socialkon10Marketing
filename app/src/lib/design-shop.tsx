@@ -158,15 +158,18 @@ export interface PackageItem {
   key: string;
   slug: string;
   sel: ConfigSelection;
+  originPackageSlug?: string;
+  originPackageName?: string;
 }
 
 interface PackageState {
   items: PackageItem[];
-  add: (slug: string, sel?: ConfigSelection) => void;
+  add: (slug: string, sel?: ConfigSelection, originPkg?: { slug: string; name: string }) => void;
   remove: (key: string) => void;
   setQty: (key: string, qty: number) => void;
   clear: () => void;
   loadPackage: (pkg: DesignPackage) => void;
+  hasItem: (slug: string) => boolean;
   count: number;
   lines: (PricedLine & { key: string })[];
   subtotal: number;
@@ -198,8 +201,17 @@ export function DesignPackageProvider({ children }: { children: ReactNode }) {
     return { sizeId: def?.sizeId, tierId: defTier, optionIds: [], qty: s?.minQty ?? 1, selectedVariants };
   };
 
-  const add: PackageState["add"] = (slug, sel) => {
-    setItems((xs) => [...xs, { key: `${slug}-${Date.now()}`, slug, sel: sel ?? defaultSel(slug) }]);
+  const add: PackageState["add"] = (slug, sel, originPkg) => {
+    setItems((xs) => [
+      ...xs,
+      {
+        key: `${slug}-${Date.now()}`,
+        slug,
+        sel: sel ?? defaultSel(slug),
+        originPackageSlug: originPkg?.slug,
+        originPackageName: originPkg?.name,
+      },
+    ]);
     track("package_add", { service: slug });
   };
   const remove = (key: string) => setItems((xs) => xs.filter((x) => x.key !== key));
@@ -208,9 +220,17 @@ export function DesignPackageProvider({ children }: { children: ReactNode }) {
   const clear = () => setItems([]);
   const loadPackage = (pkg: DesignPackage) => {
     setItems(pkg.items.filter((it) => services.some((s) => s.slug === it.slug))
-      .map((it, i) => ({ key: `${it.slug}-${Date.now()}-${i}`, slug: it.slug, sel: { ...defaultSel(it.slug), qty: it.qty } })));
+      .map((it, i) => ({
+        key: `${it.slug}-${Date.now()}-${i}`,
+        slug: it.slug,
+        sel: { ...defaultSel(it.slug), qty: it.qty },
+        originPackageSlug: pkg.slug,
+        originPackageName: pkg.name,
+      })));
     track("package_load_predefined", { package: pkg.slug });
   };
+
+  const hasItem = (slug: string) => items.some((it) => it.slug === slug);
 
   const { lines, subtotal, discount, total, hasQuoteOnly } = useMemo(() => {
     const lines = items
@@ -230,7 +250,7 @@ export function DesignPackageProvider({ children }: { children: ReactNode }) {
   }, [items, services, sizes, options, discounts]);
 
   const value: PackageState = {
-    items, add, remove, setQty, clear, loadPackage,
+    items, add, remove, setQty, clear, loadPackage, hasItem,
     count: items.length, lines, subtotal, discount, total, hasQuoteOnly,
   };
   return <PackageCtx.Provider value={value}>{children}</PackageCtx.Provider>;

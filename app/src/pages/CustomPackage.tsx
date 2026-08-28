@@ -12,6 +12,12 @@ import { activeProviders } from "../lib/payments";
 import { Reveal } from "../lib/motion";
 import { useMoney } from "../lib/money";
 import { DeliverablesPopover } from "../components/DeliverablesPopover";
+import { CartConflictModal } from "../components/CartConflictModal";
+import { DuplicateOrderModal } from "../components/DuplicateOrderModal";
+import {
+  detectPackageOverlap, computeOrderFingerprint, checkRecentDuplicateOrder,
+  recordCompletedOrder, acquirePaymentLock, releasePaymentLock, type RecentOrderRecord,
+} from "../lib/orderConflict";
 
 /* ------------------------------------------------------------------
    CUSTOM PACKAGE BUILDER (PRD §17–§23, §26–§30, §52–§53)
@@ -187,11 +193,72 @@ export default function CustomPackage() {
     path: "/custom-package",
   });
 
+  const [conflictModal, setConflictModal] = useState<{
+    isOpen: boolean;
+    itemName: string;
+    packageName: string;
+    action: () => void;
+  }>({ isOpen: false, itemName: "", packageName: "", action: () => {} });
+
+  const [duplicateModal, setDuplicateModal] = useState<{
+    isOpen: boolean;
+    recentOrder: RecentOrderRecord | null;
+    minutesAgo: number;
+    pendingMode: "quote" | "purchase" | null;
+  }>({ isOpen: false, recentOrder: null, minutesAgo: 0, pendingMode: null });
+
   const visible = services.filter((s) => (cat === "all" || s.category === cat));
 
-  const submit = async (m: "quote" | "purchase") => {
+  const handleAddService = (s: (typeof services)[0]) => {
+    const overlap = detectPackageOverlap(s.slug, pkg.items, packages);
+    if (overlap.hasOverlap) {
+      setConflictModal({
+        isOpen: true,
+        itemName: s.name,
+        packageName: overlap.originPackageName || "your active package",
+        action: () => {
+          pkg.add(s.slug);
+          toast.success(`${s.name} added as additional item`);
+        },
+      });
+      return;
+    }
+    pkg.add(s.slug);
+    toast.success(`${s.name} added`);
+  };
+
+  const submit = async (m: "quote" | "purchase", forceDuplicate = false) => {
     if (!brief.name.trim() || !brief.email.trim()) { toast.error("Name and email are required."); return; }
     if (pkg.lines.length === 0) { toast.error("Add at least one service first."); return; }
+
+    const itemDescriptors = pkg.lines.map((l) => ({
+      name: l.service.name,
+      unitPrice: l.unitBase,
+      qty: l.qty,
+      serviceSlug: l.service.slug,
+    }));
+    const fingerprint = computeOrderFingerprint(brief.email, itemDescriptors, pkg.total);
+
+    // 2026 Duplicate Order Interceptor (10-minute duplicate guard)
+    if (!forceDuplicate) {
+      const dupCheck = checkRecentDuplicateOrder(fingerprint);
+      if (dupCheck.isDuplicate && dupCheck.recentOrder) {
+        setDuplicateModal({
+          isOpen: true,
+          recentOrder: dupCheck.recentOrder,
+          minutesAgo: dupCheck.minutesAgo ?? 1,
+          pendingMode: m,
+        });
+        return;
+      }
+    }
+
+    // Atomic session mutex lock
+    if (!acquirePaymentLock()) {
+      toast.error("A submission is already processing. Please wait a moment.");
+      return;
+    }
+
     setMode(m);
     setBusy(true);
     try {
@@ -206,7 +273,7 @@ export default function CustomPackage() {
           ...(l.projectFees > 0 ? [{ name: "Project fees", price: Math.round(l.projectFees * 100) / 100 }] : []),
         ],
         rush: l.options.some((o) => o.id === "rush"),
-        billing: "one_time",
+        billing: "one_time" as const,
       }));
       const id = await createOrder({
         email: brief.email.trim(),
@@ -245,6 +312,15 @@ export default function CustomPackage() {
         }
       }
 
+      // Record completed order fingerprint into cache
+      recordCompletedOrder(
+        id,
+        fingerprint,
+        pkg.total,
+        brief.email,
+        pkg.lines.map((l) => l.service.name)
+      );
+
       setOrderId(id);
       setStep("done");
       pkg.clear();
@@ -252,8 +328,10 @@ export default function CustomPackage() {
       window.dispatchEvent(new CustomEvent("sk-order-complete"));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Submission failed — please try again.");
+    } finally {
+      releasePaymentLock();
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   /* ---------- success ---------- */
@@ -358,7 +436,7 @@ export default function CustomPackage() {
                   <Link to={`/design-services/${s.slug}`} className="font-meta text-[9px] text-[var(--muted)] u-line hidden md:inline">CONFIGURE</Link>
                   {s.packageEligible !== false && s.price > 0 && (
                     <button className="font-meta text-[9px] px-3 py-2 border border-[var(--line-strong)] hover:bg-[var(--ink)] hover:text-[var(--bg)] transition-colors"
-                      onClick={() => { pkg.add(s.slug); toast.success(`${s.name} added`); }}
+                      onClick={() => handleAddService(s)}
                       aria-label={`Add ${s.name} to package`}>
                       Add +
                     </button>
@@ -531,6 +609,30 @@ export default function CustomPackage() {
           <span className="font-meta text-[10px]">{pkg.count} item{pkg.count === 1 ? "" : "s"} · {money(pkg.total)}</span>
           <span className="font-meta text-[10px] dept-accent">CONTINUE →</span>
         </button>
+      )}
+
+      {/* Modals for Conflict and Duplicate Order Guard */}
+      <CartConflictModal
+        isOpen={conflictModal.isOpen}
+        onClose={() => setConflictModal((prev) => ({ ...prev, isOpen: false }))}
+        itemName={conflictModal.itemName}
+        packageName={conflictModal.packageName}
+        onAddAnyway={conflictModal.action}
+        packageUrl="/custom-package"
+      />
+
+      {duplicateModal.recentOrder && (
+        <DuplicateOrderModal
+          isOpen={duplicateModal.isOpen}
+          onClose={() => setDuplicateModal((prev) => ({ ...prev, isOpen: false, recentOrder: null, pendingMode: null }))}
+          recentOrder={duplicateModal.recentOrder}
+          minutesAgo={duplicateModal.minutesAgo}
+          onConfirmDuplicate={() => {
+            if (duplicateModal.pendingMode) {
+              submit(duplicateModal.pendingMode, true);
+            }
+          }}
+        />
       )}
     </>
   );

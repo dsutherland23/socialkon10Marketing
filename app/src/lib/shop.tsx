@@ -95,15 +95,30 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const add: ShopState["add"] = (item) => {
+    const existingCount = items.filter(
+      (x) => x.serviceSlug === item.serviceSlug && x.tierLabel === item.tierLabel && x.variantLabel === item.variantLabel
+    ).length;
+
     const key = `${item.serviceSlug}-${item.tierLabel ?? ""}-${Date.now()}`;
     setItems((xs) => [...xs, { ...item, key }]);
     track("add_to_cart", { service: item.serviceSlug, tier: item.tierLabel, value: item.unitPrice });
-    toast.success(`Added "${item.name}" to cart`, {
-      action: {
-        label: "Checkout →",
-        onClick: () => { window.location.pathname = "/checkout"; },
-      },
-    });
+
+    if (existingCount > 0) {
+      toast.info(`"${item.name}" is already in your cart (now ×${existingCount + 1})`, {
+        description: "An additional deliverable was added. Review in cart if you only need one.",
+        action: {
+          label: "View Cart →",
+          onClick: () => { window.location.pathname = "/checkout"; },
+        },
+      });
+    } else {
+      toast.success(`Added "${item.name}" to cart`, {
+        action: {
+          label: "Checkout →",
+          onClick: () => { window.location.pathname = "/checkout"; },
+        },
+      });
+    }
   };
 
   const toggleServiceAddon: ShopState["toggleServiceAddon"] = (serviceSlug, addon, fallbackItem) => {

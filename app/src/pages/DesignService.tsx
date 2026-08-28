@@ -13,6 +13,8 @@ import { FinalCta } from "../components/blocks";
 import { CustomProjectCta, TalkToUs } from "../components/TalkToUs";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
+import { CartConflictModal } from "../components/CartConflictModal";
+import { detectPackageOverlap } from "../lib/orderConflict";
 
 /* ------------------------------------------------------------------
    DESIGN SERVICE PAGE (PRD §5/§10/§11/§16/§25/§48) — hybrid commerce:
@@ -478,15 +480,34 @@ export default function DesignServicePage() {
     .map((r) => services.find((x) => x.slug === r))
     .filter(Boolean) as DesignService[];
 
-  const add = (sel: ConfigSelection) => {
+  const [conflictModal, setConflictModal] = useState<{
+    isOpen: boolean;
+    packageName: string;
+    action: () => void;
+  }>({ isOpen: false, packageName: "", action: () => {} });
+
+  const executeAdd = (sel: ConfigSelection) => {
     pkg.add(s.slug, sel);
     toast.success(`Added "${s.name}" to package & cart`, {
       action: { label: "Checkout →", onClick: () => navigate("/checkout") },
     });
   };
 
+  const add = (sel: ConfigSelection) => {
+    const overlap = detectPackageOverlap(s.slug, pkg.items);
+    if (overlap.hasOverlap) {
+      setConflictModal({
+        isOpen: true,
+        packageName: overlap.originPackageName || "your active package",
+        action: () => executeAdd(sel),
+      });
+      return;
+    }
+    executeAdd(sel);
+  };
+
   /** Journey A fast path: add the configured service directly to cart and go straight to checkout. */
-  const order = (sel: ConfigSelection) => {
+  const executeOrder = (sel: ConfigSelection) => {
     const line = priceLine(s, sel, { sizes, options });
     const selectedOptions = (line.options || []).map((opt) => ({
       id: opt.id,
@@ -511,6 +532,19 @@ export default function DesignServicePage() {
     track("checkout_start", { service: s.slug, via: "order-now" });
     toast.success(`${s.name} added to cart — proceeding to checkout`);
     navigate("/checkout");
+  };
+
+  const order = (sel: ConfigSelection) => {
+    const overlap = detectPackageOverlap(s.slug, pkg.items);
+    if (overlap.hasOverlap) {
+      setConflictModal({
+        isOpen: true,
+        packageName: overlap.originPackageName || "your active package",
+        action: () => executeOrder(sel),
+      });
+      return;
+    }
+    executeOrder(sel);
   };
 
   return (
@@ -567,6 +601,14 @@ export default function DesignServicePage() {
       )}
       <CustomProjectCta serviceName={s.name} />
       <FinalCta />
+      <CartConflictModal
+        isOpen={conflictModal.isOpen}
+        onClose={() => setConflictModal((prev) => ({ ...prev, isOpen: false }))}
+        itemName={s.name}
+        packageName={conflictModal.packageName}
+        onAddAnyway={conflictModal.action}
+        packageUrl="/custom-package"
+      />
     </>
   );
 }

@@ -19,6 +19,11 @@ import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type Intake
 import { useContent } from "../lib/content";
 import { sendEmail, orderConfirmationEmail, adminNewOrderEmail } from "../lib/email";
 import { DeliverablesPopover } from "../components/DeliverablesPopover";
+import { DuplicateOrderModal } from "../components/DuplicateOrderModal";
+import {
+  auditCartOverlaps, computeOrderFingerprint, checkRecentDuplicateOrder,
+  recordCompletedOrder, acquirePaymentLock, releasePaymentLock, type RecentOrderRecord,
+} from "../lib/orderConflict";
 
 /* ------------------------------------------------------------------
    CHECKOUT (PRD §29–31)
@@ -73,6 +78,14 @@ export default function Checkout() {
   const [intakeOrderId, setIntakeOrderId] = useState<string | null>(null);
   const [intakeOrderCtx, setIntakeOrderCtx] = useState<IntakeOrderContext | null>(null);
   const [intakeOpen, setIntakeOpen] = useState(false);
+  const [duplicateModal, setDuplicateModal] = useState<{
+    isOpen: boolean;
+    recentOrder: RecentOrderRecord | null;
+    minutesAgo: number;
+  }>({ isOpen: false, recentOrder: null, minutesAgo: 0 });
+
+  const cartOverlaps = useMemo(() => auditCartOverlaps(items, pkg.items), [items, pkg.items]);
+
   const fileRef = useRef<HTMLInputElement>(null);
   const { user, signUp, signInGoogle, sendMagicLink } = useAuth();
   const { services } = useContent();
@@ -336,18 +349,44 @@ export default function Checkout() {
     setFiles(next);
   };
 
-  const pay = async () => {
+  const pay = async (forceDuplicate: boolean = false) => {
     // hard guard: never charge without a reachable customer identity
     if (!details.name.trim() || !/.+@.+\..+/.test(details.email)) {
       setPayError("We need your name and a valid email before payment — so we can deliver your order and receipt.");
       setStep(1);
       return;
     }
+
+    const allItemNames = [...items.map((i) => i.name), ...pkg.lines.map((l) => `${l.service.name}${l.sizeLabel ? ` (${l.sizeLabel})` : ""}`)];
+    const allOrderItems = [
+      ...cartToOrderItems(items),
+      ...pkgOrderItems,
+    ];
+    const fingerprint = computeOrderFingerprint(details.email, allOrderItems, dueToday);
+
+    // 2026 Duplicate Order Guard: check for identical order placed in last 10 minutes
+    if (forceDuplicate !== true) {
+      const dupCheck = checkRecentDuplicateOrder(fingerprint);
+      if (dupCheck.isDuplicate && dupCheck.recentOrder) {
+        setDuplicateModal({
+          isOpen: true,
+          recentOrder: dupCheck.recentOrder,
+          minutesAgo: dupCheck.minutesAgo ?? 1,
+        });
+        return;
+      }
+    }
+
+    // Atomic payment lock to prevent double-clicks & concurrent tabs
+    if (!acquirePaymentLock()) {
+      setPayError("A payment submission is already in progress. Please wait a moment.");
+      return;
+    }
+
     setPaying(true);
     setPayError(null);
     track("payment_start", { value: dueToday, mode: payMode });
     const provider = activeProviders()[0];
-    const allItemNames = [...items.map((i) => i.name), ...pkg.lines.map((l) => `${l.service.name}${l.sizeLabel ? ` (${l.sizeLabel})` : ""}`)];
     const res = await provider.pay({
       orderId: `SK-${Date.now()}`,
       amountUsd: dueToday,
@@ -355,6 +394,7 @@ export default function Checkout() {
       kind: "full",
     });
     if (!res.ok) {
+      releasePaymentLock();
       setPaying(false);
       setPayError(res.error ?? "Payment failed — no charge was made. Try again.");
       track("payment_failed", {});
@@ -463,6 +503,16 @@ export default function Checkout() {
       if (!err) setMagicSent(true);
     }
 
+    // Record completed order fingerprint for duplicate order prevention
+    recordCompletedOrder(
+      finalOid,
+      fingerprint,
+      dueToday,
+      details.email,
+      allItemNames
+    );
+    releasePaymentLock();
+
     setPaying(false);
     track("purchase", { value: dueToday, transaction_id: res.transactionId });
     // First-party checkout complete event (Firestore + GA4 purchase + Meta Pixel Purchase)
@@ -538,6 +588,40 @@ export default function Checkout() {
               </div>
             ) : (
               <>
+                {/* 2026 Package Overlap & Conflict Audit Banner */}
+                {cartOverlaps.length > 0 && (
+                  <div className="mb-6 p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 space-y-2">
+                    <div className="flex items-center gap-2 text-amber-500 font-bold font-meta text-[10px] uppercase tracking-wider">
+                      <span>⚠️ Package Overlap Detected</span>
+                    </div>
+                    <p className="text-xs text-[var(--ink)] leading-relaxed">
+                      Your cart contains deliverables that are already included as part of an active package:
+                    </p>
+                    <div className="space-y-1.5 pt-1">
+                      {cartOverlaps.map((o, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-3 text-xs bg-[var(--panel)]/80 p-2.5 rounded-xl border border-[var(--line)]">
+                          <span>
+                            <strong className="text-[var(--ink)]">{o.itemName || o.itemSlug}</strong> is already covered inside <span className="dept-accent font-semibold">{o.originPackageName}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const matchingCartItem = items.find((i) => i.serviceSlug === o.itemSlug);
+                              if (matchingCartItem) remove(matchingCartItem.key);
+                            }}
+                            className="font-meta text-[9px] text-red-500 hover:underline shrink-0 font-bold"
+                          >
+                            Remove Standalone Copy ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="font-meta text-[9px] text-[var(--muted)] pt-1">
+                      If you only need one design deliverable, removing the duplicate avoids paying twice. If you need both, you can safely keep both.
+                    </p>
+                  </div>
+                )}
+
                 {/* 2026 Master Selection & Batch Operations Header */}
                 <div className="mb-4 p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] flex flex-wrap items-center justify-between gap-3 text-xs">
                   <label className="flex items-center gap-2 cursor-pointer font-medium select-none">
@@ -983,7 +1067,7 @@ export default function Checkout() {
                     </button>
                   )}
                   {activeProviders().map((p) => (
-                    <button key={p.id} disabled={paying} onClick={pay} className="btn btn-dept justify-center disabled:opacity-60">
+                    <button key={p.id} disabled={paying} onClick={() => pay(false)} className="btn btn-dept justify-center disabled:opacity-60">
                       {paying ? "Processing…" : `Pay with ${p.name}`} <span className="btn-arrow" aria-hidden>→</span>
                     </button>
                   ))}
@@ -1108,6 +1192,16 @@ export default function Checkout() {
           profile={savedProfile}
           priceFor={priceFor}
           onClose={() => setIntakeOpen(false)}
+        />
+      )}
+
+      {duplicateModal.recentOrder && (
+        <DuplicateOrderModal
+          isOpen={duplicateModal.isOpen}
+          onClose={() => setDuplicateModal({ isOpen: false, recentOrder: null, minutesAgo: 0 })}
+          recentOrder={duplicateModal.recentOrder}
+          minutesAgo={duplicateModal.minutesAgo}
+          onConfirmDuplicate={() => pay(true)}
         />
       )}
     </section>
