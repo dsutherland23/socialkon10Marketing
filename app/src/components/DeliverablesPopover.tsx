@@ -55,7 +55,6 @@ export function DeliverablesPopover({
 }: DeliverablesPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [coords, setCoords] = useState<{ top: number; left: number }>({
     top: 0,
     left: 0,
@@ -64,53 +63,60 @@ export function DeliverablesPopover({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { currency: shopCurrency, add, items } = useShop();
+  const { currency: shopCurrency, add, toggleServiceAddon, remove, items } = useShop();
   const curr: CurrencyCode = currency || shopCurrency || "USD";
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const selectedAddons = useMemo(() => {
-    return addons.filter((a) => selectedAddonIds.includes(a.id));
-  }, [addons, selectedAddonIds]);
+  // Find existing cart line for this service (if any)
+  const cartItem = useMemo(() => {
+    if (!serviceSlug) return null;
+    return items.find((i) => i.serviceSlug === serviceSlug) || null;
+  }, [items, serviceSlug]);
 
-  const toggleAddon = (addonId: string) => {
-    setSelectedAddonIds((prev) =>
-      prev.includes(addonId) ? prev.filter((id) => id !== addonId) : [...prev, addonId]
-    );
+  const isAlreadyInCart = !!cartItem;
+
+  // Active addon IDs come directly from the cart item state
+  const activeAddonIds = useMemo(() => {
+    return cartItem ? cartItem.addons.map((a) => a.id) : [];
+  }, [cartItem]);
+
+  const fallbackBaseItem = useMemo(() => ({
+    serviceSlug: serviceSlug || "custom-service",
+    name: title,
+    unitPrice: price ?? 0,
+    tierLabel: undefined,
+    addons: [],
+    rush: false,
+    billing: billing === "monthly" ? "monthly" as const : "one_time" as const,
+    depositPct,
+  }), [serviceSlug, title, price, billing, depositPct]);
+
+  // Handle instant add-on click: adds to cart immediately or toggles on existing cart line
+  const handleAddonClick = (addon: { id: string; name: string; price: number }) => {
+    toggleServiceAddon(serviceSlug || "custom-service", addon, fallbackBaseItem);
+  };
+
+  const handleToggleBaseCart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (cartItem) {
+      remove(cartItem.key);
+    } else {
+      add(fallbackBaseItem);
+    }
   };
 
   const calculatedPrice = useMemo(() => {
     const base = price ?? 0;
-    const addOnTotal = selectedAddons.reduce((sum, a) => sum + (a.price || 0), 0);
-    return base + addOnTotal;
-  }, [price, selectedAddons]);
-
-  const isAlreadyInCart = useMemo(() => {
-    if (!serviceSlug) return false;
-    return items.some((i) => i.serviceSlug === serviceSlug);
-  }, [items, serviceSlug]);
-
-  const handleAddToCart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!price && !serviceSlug) return;
-
-    add({
-      serviceSlug: serviceSlug || "custom-service",
-      name: title,
-      unitPrice: price ?? 0,
-      tierLabel: selectedAddons.length > 0 ? `+ ${selectedAddons.length} Add-on${selectedAddons.length === 1 ? "" : "s"}` : undefined,
-      addons: selectedAddons.map((a) => ({ id: a.id, name: a.name, price: a.price })),
-      rush: selectedAddons.some((a) => a.id === "rush"),
-      billing: billing === "monthly" ? "monthly" : "one_time",
-      depositPct,
-    });
-
-    setIsOpen(false);
-  };
+    const activeAddonsSum = cartItem
+      ? cartItem.addons.reduce((sum, a) => sum + (a.price || 0), 0)
+      : 0;
+    return base + activeAddonsSum;
+  }, [price, cartItem]);
 
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return;
@@ -130,7 +136,6 @@ export function DeliverablesPopover({
     if (top + popoverHeight > window.innerHeight && rect.top > popoverHeight) {
       top = Math.max(16, rect.top - popoverHeight - 8);
     } else if (top + popoverHeight > window.innerHeight) {
-      // If fits neither cleanly, clamp within viewport
       top = Math.max(16, window.innerHeight - popoverHeight - 16);
     }
 
@@ -222,6 +227,11 @@ export function DeliverablesPopover({
                 MONTHLY RETAINER
               </span>
             )}
+            {isAlreadyInCart && (
+              <span className="px-2 py-0.5 rounded bg-green-500/15 text-green-400 font-mono text-[9px] font-bold uppercase flex items-center gap-1">
+                <Check className="w-2.5 h-2.5 stroke-[3]" /> IN CART
+              </span>
+            )}
           </div>
           <h4 className="font-display text-base font-bold uppercase tracking-tight mt-1.5 text-[var(--ink)]">
             {title}
@@ -234,7 +244,7 @@ export function DeliverablesPopover({
         </div>
         <button
           onClick={() => setIsOpen(false)}
-          className="p-1 rounded-full text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--line)] transition-colors"
+          className="p-1 rounded-full text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--line)] transition-colors cursor-pointer"
           aria-label="Close popup"
         >
           <X className="w-4 h-4" />
@@ -284,38 +294,38 @@ export function DeliverablesPopover({
         </ul>
       </div>
 
-      {/* 2026 Interactive Add-Ons Selection */}
+      {/* 2026 Zero-Friction Instant Add-Ons (Clicking directly updates cart) */}
       {addons.length > 0 && (
         <div className="mt-3 pt-3 border-t border-[var(--line)]">
           <div className="flex items-center justify-between mb-1.5">
             <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">
-              Available Add-Ons (Click to add)
+              Available Add-Ons (Click to add directly)
             </p>
-            {selectedAddonIds.length > 0 && (
+            {activeAddonIds.length > 0 && (
               <span className="font-meta text-[9px] text-[var(--dept)] font-bold">
-                {selectedAddonIds.length} selected
+                {activeAddonIds.length} in cart
               </span>
             )}
           </div>
 
           <div className="flex flex-wrap gap-1.5">
             {addons.map((addon) => {
-              const isSelected = selectedAddonIds.includes(addon.id);
+              const isInCart = activeAddonIds.includes(addon.id);
               const addonPriceText = addon.priceType === "quote" ? "Quote" : `+${formatMoney(addon.price, curr)}`;
 
               return (
                 <button
                   key={addon.id}
                   type="button"
-                  onClick={() => toggleAddon(addon.id)}
+                  onClick={() => handleAddonClick(addon)}
                   className={`text-[10px] px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 select-none font-medium cursor-pointer ${
-                    isSelected
+                    isInCart
                       ? "border-[var(--dept)] bg-[var(--dept-soft)] text-[var(--dept)] font-semibold shadow-xs"
                       : "border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
                   }`}
-                  title={isSelected ? `Remove ${addon.name}` : `Add ${addon.name}`}
+                  title={isInCart ? `Remove ${addon.name} from cart` : `Add ${addon.name} to cart`}
                 >
-                  {isSelected ? (
+                  {isInCart ? (
                     <Check className="w-3 h-3 text-[var(--dept)] stroke-[2.5]" />
                   ) : (
                     <Plus className="w-3 h-3 text-[var(--muted)]" />
@@ -331,12 +341,12 @@ export function DeliverablesPopover({
         </div>
       )}
 
-      {/* Footer CTA & 1-Click Add to Cart */}
+      {/* Footer CTA */}
       <div className="mt-4 pt-3 border-t border-[var(--line)] flex flex-wrap items-center justify-between gap-3">
         {price !== undefined && (
           <div>
             <span className="font-meta text-[9px] text-[var(--muted)] block">
-              {selectedAddonIds.length > 0 ? "Total (with add-ons)" : "Total Investment"}
+              {activeAddonIds.length > 0 ? "Total (with add-ons)" : "Total Investment"}
             </span>
             <span className="font-display font-bold text-sm text-[var(--ink)]">
               {formatMoney(calculatedPrice, curr)}
@@ -349,16 +359,40 @@ export function DeliverablesPopover({
           {price !== undefined && (
             <button
               type="button"
-              onClick={handleAddToCart}
-              className="btn btn-fill !py-1.5 !px-3 text-[11px] font-meta flex items-center gap-1.5 shadow-sm"
-              title="Add this package with selected add-ons directly to your cart"
+              onClick={handleToggleBaseCart}
+              className={`btn !py-1.5 !px-3 text-[11px] font-meta flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                isAlreadyInCart
+                  ? "border border-green-500/40 bg-green-500/10 text-green-400 hover:bg-red-500/10 hover:border-red-500/40 hover:text-red-400"
+                  : "btn-fill"
+              }`}
+              title={isAlreadyInCart ? "Click to remove from cart" : "Add base package to cart"}
             >
-              <ShoppingBag className="w-3.5 h-3.5" />
-              <span>{isAlreadyInCart ? "Add Another +" : "Add to Cart"}</span>
+              {isAlreadyInCart ? (
+                <>
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  <span>In Cart</span>
+                </>
+              ) : (
+                <>
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>Add to Cart</span>
+                </>
+              )}
             </button>
           )}
 
-          {serviceSlug && (
+          {isAlreadyInCart && (
+            <Link
+              to="/checkout"
+              onClick={() => setIsOpen(false)}
+              className="btn btn-dept !py-1.5 !px-2.5 text-[11px] font-meta flex items-center gap-1"
+            >
+              <span>Checkout</span>
+              <ArrowRight className="w-3 h-3" />
+            </Link>
+          )}
+
+          {serviceSlug && !isAlreadyInCart && (
             <Link
               to={`/services/${serviceSlug}`}
               onClick={() => setIsOpen(false)}

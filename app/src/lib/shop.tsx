@@ -28,6 +28,11 @@ interface ShopState {
   fxTick: number;
   fxLive: boolean;
   add: (item: Omit<CartItem, "key">) => void;
+  toggleServiceAddon: (
+    serviceSlug: string,
+    addon: { id: string; name: string; price: number },
+    fallbackItem: Omit<CartItem, "key">
+  ) => void;
   remove: (key: string) => void;
   clear: () => void;
   promo: string | null;
@@ -99,6 +104,59 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       },
     });
   };
+
+  const toggleServiceAddon: ShopState["toggleServiceAddon"] = (serviceSlug, addon, fallbackItem) => {
+    setItems((xs) => {
+      const idx = xs.findIndex((x) => x.serviceSlug === serviceSlug);
+      if (idx === -1) {
+        // Base item not in cart yet: add item with this addon attached directly
+        const key = `${fallbackItem.serviceSlug}-${fallbackItem.tierLabel ?? ""}-${Date.now()}`;
+        const newItem: CartItem = {
+          ...fallbackItem,
+          key,
+          addons: [addon],
+          rush: addon.id === "rush",
+        };
+        track("add_to_cart", { service: fallbackItem.serviceSlug, tier: fallbackItem.tierLabel, value: fallbackItem.unitPrice });
+        toast.success(`Added "${fallbackItem.name}" with "${addon.name}" to cart`, {
+          action: {
+            label: "Checkout →",
+            onClick: () => { window.location.pathname = "/checkout"; },
+          },
+        });
+        return [...xs, newItem];
+      }
+
+      // Base item already in cart: toggle addon without creating duplicate base services
+      const existing = xs[idx];
+      const hasAddon = existing.addons.some((a) => a.id === addon.id);
+      let updatedAddons: { id: string; name: string; price: number }[];
+
+      if (hasAddon) {
+        updatedAddons = existing.addons.filter((a) => a.id !== addon.id);
+        toast.success(`Removed "${addon.name}" from "${existing.name}"`);
+      } else {
+        updatedAddons = [...existing.addons, addon];
+        toast.success(`Added "${addon.name}" to "${existing.name}" in cart`, {
+          action: {
+            label: "Checkout →",
+            onClick: () => { window.location.pathname = "/checkout"; },
+          },
+        });
+      }
+
+      const updatedItem: CartItem = {
+        ...existing,
+        addons: updatedAddons,
+        rush: updatedAddons.some((a) => a.id === "rush"),
+      };
+
+      const copy = [...xs];
+      copy[idx] = updatedItem;
+      return copy;
+    });
+  };
+
   const remove = (key: string) => setItems((xs) => xs.filter((x) => x.key !== key));
   const clear = () => { setItems([]); setPromo(null); setFlash(null); };
 
@@ -139,7 +197,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   }, [items, promo, allPromos, flash]);
 
   const value: ShopState = {
-    items, currency, setCurrency, fxTick, fxLive: fxStatus().live, add, remove, clear,
+    items, currency, setCurrency, fxTick, fxLive: fxStatus().live, add, toggleServiceAddon, remove, clear,
     promo, applyPromo, clearPromo: () => setPromo(null),
     flash, applyFlash, clearFlash,
     subtotal, discount, total, count: items.length,
