@@ -7,7 +7,6 @@ import { AuthProvider } from "./lib/auth";
 import { ContentProvider } from "./lib/content";
 import { DesignCatalogProvider, DesignPackageProvider } from "./lib/design-shop";
 import { TemplateCatalogProvider } from "./lib/templates";
-import { track } from "./lib/seo";
 import { trackPageView } from "./lib/analytics";
 import { SiteHeader } from "./components/header";
 import { SiteFooter } from "./components/footer";
@@ -74,8 +73,7 @@ function ScrollAndTrack() {
   const { pathname } = useLocation();
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-    track("page_view", { path: pathname });
-    void trackPageView(pathname); // first-party Firestore + session tracking
+    void trackPageView(pathname); // First-party dual-persistence + GA4/Pixel/dataLayer mirroring
   }, [pathname]);
   return null;
 }

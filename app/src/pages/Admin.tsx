@@ -44,7 +44,6 @@ import {
   getSessionCount, getTopPages, getTrafficSources,
   getServiceInterestRanking, getFunnelCounts, getRecentSessions,
   getCampaignPerformance, getActiveLiveVisitors, getSessionEvents,
-  analyticsHasData,
   type SessionData, type AnalyticsEvent,
 } from "../lib/analytics";
 
@@ -3453,29 +3452,12 @@ function getSegmentBadge(segment: string, score: number) {
   );
 }
 
-function AnalyticsEmptyState({ tab }: { tab: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-[var(--line)] rounded-2xl" style={{ background: "var(--panel)" }}>
-      <span className="text-4xl mb-4">📡</span>
-      <p className="font-display text-sm font-bold uppercase">No data yet — {tab}</p>
-      <p className="font-meta text-[10px] text-[var(--muted)] mt-2 max-w-sm">
-        First-party tracking events will appear here once visitors browse the site. Enable tracking in{" "}
-        <strong>Site & CMS → Settings → Analytics & Tracking</strong>.
-      </p>
-      <p className="font-meta text-[9px] text-[var(--muted)] mt-3">
-        Requires Firebase to be configured (VITE_FIREBASE_PROJECT_ID set).
-      </p>
-    </div>
-  );
-}
-
 function Analytics() {
   const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
   const [tab, setTab] = useState<AnalyticsTab>("overview");
   const [days, setDays] = useState(30);
-  const [hasData, setHasData] = useState<boolean | null>(null);
 
   // Funnel switcher: lead vs booking
   const [selectedFunnel, setSelectedFunnel] = useState<"lead" | "booking">("lead");
@@ -3530,12 +3512,7 @@ function Analytics() {
     return () => { unsubOrders(); unsubLeads(); };
   }, []);
 
-  useEffect(() => {
-    void analyticsHasData().then(setHasData);
-  }, []);
-
   const refreshAnalytics = () => {
-    if (!firebaseReady) return;
     setLoading(true);
     Promise.all([
       getSessionCount(days).then(setSessionCount),
@@ -3551,13 +3528,16 @@ function Analytics() {
 
   useEffect(() => {
     refreshAnalytics();
-    // Heartbeat auto-poll for live visitors every 20 seconds
+    const handleUpdate = () => refreshAnalytics();
+    window.addEventListener("sk-analytics-updated", handleUpdate);
+    // Heartbeat auto-poll for live visitors every 10 seconds
     const interval = setInterval(() => {
-      if (firebaseReady) {
-        void getActiveLiveVisitors(15).then(setLiveVisitors);
-      }
-    }, 20_000);
-    return () => clearInterval(interval);
+      void getActiveLiveVisitors(15).then(setLiveVisitors);
+    }, 10_000);
+    return () => {
+      window.removeEventListener("sk-analytics-updated", handleUpdate);
+      clearInterval(interval);
+    };
   }, [days]);
 
   // Open visitor session journey
@@ -3662,12 +3642,15 @@ function Analytics() {
 
         {/* Action buttons: Exports & Live badge */}
         <div className="flex items-center gap-2">
-          {firebaseReady && (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 font-meta text-[9px] font-bold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>{liveVisitors.length} ACTIVE NOW</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 font-meta text-[9px] font-bold">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>{liveVisitors.length} ACTIVE NOW</span>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-[var(--line)] bg-[var(--panel)] font-meta text-[8.5px] text-[var(--muted)]">
+            <span className={`w-1.5 h-1.5 rounded-full ${firebaseReady ? "bg-emerald-500" : "bg-cyan-500"}`} />
+            <span>{firebaseReady ? "FIREBASE CONNECTED" : "LOCAL BUFFER ACTIVE"}</span>
+          </div>
 
           <div className="flex items-center gap-1">
             <button
@@ -3773,17 +3756,15 @@ function Analytics() {
           </div>
 
           {/* KPI row 2 — web intelligence */}
-          {firebaseReady && (
-            <div>
-              <span className="idx">/web-telemetry ({days}d)</span>
-              <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
-                <Stat label="TOTAL SESSIONS" value={sessionCount.toLocaleString()} sub={`last ${days} days`} tone="var(--dept)" />
-                <Stat label="SERVICE VIEWS" value={(funnelCounts["service_view"] ?? 0).toLocaleString()} sub="interested visitors" />
-                <Stat label="INTENT SIGNALS" value={(funnelCounts["form_start"] ?? 0).toLocaleString()} sub="form started" />
-                <Stat label="CONVERSIONS" value={(funnelCounts["form_submit"] ?? 0 + (funnelCounts["checkout_complete"] ?? 0)).toLocaleString()} sub="leads + orders" tone="#22c55e" />
-              </div>
+          <div>
+            <span className="idx">/web-telemetry ({days}d)</span>
+            <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
+              <Stat label="TOTAL SESSIONS" value={sessionCount.toLocaleString()} sub={`last ${days} days`} tone="var(--dept)" />
+              <Stat label="SERVICE VIEWS" value={(funnelCounts["service_view"] ?? 0).toLocaleString()} sub="interested visitors" />
+              <Stat label="INTENT SIGNALS" value={(funnelCounts["form_start"] ?? 0).toLocaleString()} sub="form started" />
+              <Stat label="CONVERSIONS" value={((funnelCounts["form_submit"] ?? 0) + (funnelCounts["checkout_complete"] ?? 0)).toLocaleString()} sub="leads + orders" tone="#22c55e" />
             </div>
-          )}
+          </div>
 
           {/* Pipeline + popular services + lead intents */}
           <div className="grid lg:grid-cols-3 gap-8">
@@ -3805,7 +3786,7 @@ function Analytics() {
               <div className="flex flex-col gap-2.5 mt-4">
                 {byIntent.map((x) => <Bar key={x.label} label={x.label} value={x.value} max={intentMax} />)}
               </div>
-              {firebaseReady && leadSources.length > 0 && (
+              {leadSources.length > 0 && (
                 <div className="mt-6 pt-4 border-t border-[var(--line)]">
                   <span className="idx">/lead-attribution-sources</span>
                   <div className="flex flex-col gap-2 mt-3">
@@ -3820,159 +3801,145 @@ function Analytics() {
               )}
             </div>
           </div>
-
-          {!firebaseReady && <AnalyticsEmptyState tab="Web Intelligence" />}
         </div>
       )}
 
       {/* ─── 2. LIVE VISITORS & JOURNEYS TAB (PRD §Live Visitor Dashboard) ─── */}
       {tab === "visitors" && (
         <div className="space-y-8">
-          {!firebaseReady || (hasData === false) ? (
-            <AnalyticsEmptyState tab="Live Visitors" />
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <span className="idx">/realtime-active-visitors</span>
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
-                    Visitors active in the last 15 minutes. Click any visitor to inspect their journey map.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={refreshAnalytics}
-                  className="btn btn-ghost !py-1 !px-3 text-[9.5px] rounded-xl flex items-center gap-1.5"
-                >
-                  <span>🔄</span>
-                  <span>Refresh Realtime</span>
-                </button>
-              </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="idx">/realtime-active-visitors</span>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                Visitors active in the last 15 minutes. Click any visitor to inspect their journey map.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={refreshAnalytics}
+              className="btn btn-ghost !py-1 !px-3 text-[9.5px] rounded-xl flex items-center gap-1.5"
+            >
+              <span>🔄</span>
+              <span>Refresh Realtime</span>
+            </button>
+          </div>
 
-              {/* Live Visitors Table */}
-              <div className="border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
-                      {["Status / Score", "Last Active", "Device", "Source / Campaign", "Current Page", "Actions"].map((h) => (
-                        <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentSessions.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center font-meta text-[10px] text-[var(--muted)]">
-                          No active visitor telemetry recorded yet.
+          {/* Live Visitors Table */}
+          <div className="border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
+                  {["Status / Score", "Last Active", "Device", "Source / Campaign", "Current Page", "Actions"].map((h) => (
+                    <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {recentSessions.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center font-meta text-[10px] text-[var(--muted)]">
+                      No visitor telemetry recorded yet. Browse any page to record your visit in real time!
+                    </td>
+                  </tr>
+                ) : (
+                  recentSessions.map((s, i) => {
+                    const isLive = new Date().getTime() - new Date(s.last_active).getTime() < 15 * 60_000;
+                    return (
+                      <tr key={s.session_id} className={`border-b border-[var(--line)] last:border-0 hover:bg-[var(--bg)] transition-colors ${i % 2 === 0 ? "" : "bg-[var(--bg)]/50"}`}>
+                        <td className="px-4 py-3 font-meta text-[10px]">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${isLive ? "bg-emerald-500 animate-pulse" : "bg-gray-400"}`} title={isLive ? "Active now" : "Recent"} />
+                            {getSegmentBadge(s.segment || "cold", s.engagement_score || 0)}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-meta text-[9.5px] text-[var(--muted)]">
+                          {new Date(s.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-3 font-meta text-[10px] capitalize">
+                          <span className="flex items-center gap-1">
+                            <span>{s.device_type === "mobile" ? "📱" : s.device_type === "tablet" ? "📟" : "💻"}</span>
+                            <span>{s.device_type}</span>
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-meta text-[10px]">
+                          <span className="font-bold dept-accent block">{s.utm_source || "direct"}</span>
+                          {s.utm_campaign && <span className="text-[8.5px] text-[var(--muted)] block">{s.utm_campaign}</span>}
+                        </td>
+                        <td className="px-4 py-3 font-meta text-[10px] truncate max-w-[180px]" title={s.current_page || s.landing_page}>
+                          <code className="text-[9px] bg-[var(--bg)] px-1.5 py-0.5 rounded border border-[var(--line)]">{s.current_page || s.landing_page}</code>
+                        </td>
+                        <td className="px-4 py-3 font-meta text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => openVisitorJourney(s)}
+                            className="btn btn-dept !py-1 !px-2.5 text-[9px] rounded-xl"
+                          >
+                            View Journey 🔍
+                          </button>
                         </td>
                       </tr>
-                    ) : (
-                      recentSessions.map((s, i) => {
-                        const isLive = new Date().getTime() - new Date(s.last_active).getTime() < 15 * 60_000;
-                        return (
-                          <tr key={s.session_id} className={`border-b border-[var(--line)] last:border-0 hover:bg-[var(--bg)] transition-colors ${i % 2 === 0 ? "" : "bg-[var(--bg)]/50"}`}>
-                            <td className="px-4 py-3 font-meta text-[10px]">
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${isLive ? "bg-emerald-500 animate-pulse" : "bg-gray-400"}`} title={isLive ? "Active now" : "Recent"} />
-                                {getSegmentBadge(s.segment || "cold", s.engagement_score || 0)}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 font-meta text-[9.5px] text-[var(--muted)]">
-                              {new Date(s.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                            </td>
-                            <td className="px-4 py-3 font-meta text-[10px] capitalize">
-                              <span className="flex items-center gap-1">
-                                <span>{s.device_type === "mobile" ? "📱" : s.device_type === "tablet" ? "📟" : "💻"}</span>
-                                <span>{s.device_type}</span>
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 font-meta text-[10px]">
-                              <span className="font-bold dept-accent block">{s.utm_source || "direct"}</span>
-                              {s.utm_campaign && <span className="text-[8.5px] text-[var(--muted)] block">{s.utm_campaign}</span>}
-                            </td>
-                            <td className="px-4 py-3 font-meta text-[10px] truncate max-w-[180px]" title={s.current_page || s.landing_page}>
-                              <code className="text-[9px] bg-[var(--bg)] px-1.5 py-0.5 rounded border border-[var(--line)]">{s.current_page || s.landing_page}</code>
-                            </td>
-                            <td className="px-4 py-3 font-meta text-[10px]">
-                              <button
-                                type="button"
-                                onClick={() => openVisitorJourney(s)}
-                                className="btn btn-dept !py-1 !px-2.5 text-[9px] rounded-xl"
-                              >
-                                View Journey 🔍
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {/* ─── 3. TRAFFIC & SOURCES TAB ─── */}
       {tab === "traffic" && (
         <div className="space-y-10">
-          {!firebaseReady || (hasData === false) ? (
-            <AnalyticsEmptyState tab="Traffic & Sources" />
-          ) : (
-            <>
-              <div className="grid lg:grid-cols-2 gap-8">
-                <div>
-                  <span className="idx">/traffic-acquisition-sources ({days}d)</span>
-                  <div className="flex flex-col gap-2.5 mt-4">
-                    {trafficSources.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No source data yet.</p>}
-                    {trafficSources.map((s) => (
-                      <Bar key={s.source} label={s.source.toUpperCase()} value={s.sessions} max={sourceMax} />
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <span className="idx">/top-visited-pages ({days}d)</span>
-                  <div className="flex flex-col gap-2.5 mt-4">
-                    {topPages.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No page view data yet.</p>}
-                    {topPages.map((p) => (
-                      <Bar key={p.path} label={p.path} value={p.views} max={pagesMax} />
-                    ))}
-                  </div>
-                </div>
+          <div className="grid lg:grid-cols-2 gap-8">
+            <div>
+              <span className="idx">/traffic-acquisition-sources ({days}d)</span>
+              <div className="flex flex-col gap-2.5 mt-4">
+                {trafficSources.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No source data yet.</p>}
+                {trafficSources.map((s) => (
+                  <Bar key={s.source} label={s.source.toUpperCase()} value={s.sessions} max={sourceMax} />
+                ))}
               </div>
+            </div>
+            <div>
+              <span className="idx">/top-visited-pages ({days}d)</span>
+              <div className="flex flex-col gap-2.5 mt-4">
+                {topPages.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No page view data yet.</p>}
+                {topPages.map((p) => (
+                  <Bar key={p.path} label={p.path} value={p.views} max={pagesMax} />
+                ))}
+              </div>
+            </div>
+          </div>
 
-              {/* Source breakdown table */}
-              {trafficSources.length > 0 && (
-                <div>
-                  <span className="idx">/source-share-breakdown</span>
-                  <div className="mt-4 border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
-                          {["Channel / Source", "Sessions", "Traffic Share"].map((h) => (
-                            <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
-                          ))}
+          {/* Source breakdown table */}
+          {trafficSources.length > 0 && (
+            <div>
+              <span className="idx">/source-share-breakdown</span>
+              <div className="mt-4 border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-[var(--line)] bg-[var(--bg)]">
+                      {["Channel / Source", "Sessions", "Traffic Share"].map((h) => (
+                        <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trafficSources.map((s, i) => {
+                      const total = trafficSources.reduce((sum, x) => sum + x.sessions, 0);
+                      const share = total ? Math.round((s.sessions / total) * 100) : 0;
+                      return (
+                        <tr key={s.source} className={`border-b border-[var(--line)] last:border-0 ${i % 2 === 0 ? "" : "bg-[var(--bg)]"}`}>
+                          <td className="px-4 py-2.5 font-display text-[11px] font-bold">{s.source}</td>
+                          <td className="px-4 py-2.5 font-meta text-[10px]">{s.sessions.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 font-meta text-[10px] dept-accent font-bold">{share}%</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {trafficSources.map((s, i) => {
-                          const total = trafficSources.reduce((sum, x) => sum + x.sessions, 0);
-                          const share = total ? Math.round((s.sessions / total) * 100) : 0;
-                          return (
-                            <tr key={s.source} className={`border-b border-[var(--line)] last:border-0 ${i % 2 === 0 ? "" : "bg-[var(--bg)]"}`}>
-                              <td className="px-4 py-2.5 font-display text-[11px] font-bold">{s.source}</td>
-                              <td className="px-4 py-2.5 font-meta text-[10px]">{s.sessions.toLocaleString()}</td>
-                              <td className="px-4 py-2.5 font-meta text-[10px] dept-accent font-bold">{share}%</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -3980,59 +3947,53 @@ function Analytics() {
       {/* ─── 4. SERVICE INTELLIGENCE TAB ─── */}
       {tab === "services" && (
         <div className="space-y-10">
-          {!firebaseReady || (hasData === false) ? (
-            <AnalyticsEmptyState tab="Service Intelligence" />
-          ) : (
-            <>
-              <div className="grid lg:grid-cols-2 gap-8">
-                <div>
-                  <span className="idx">/service-demand-interest ({days}d)</span>
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Services receiving the most visitor engagement</p>
-                  <div className="flex flex-col gap-2.5">
-                    {serviceInterest.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No service view data yet.</p>}
-                    {serviceInterest.map((s) => (
-                      <Bar key={s.service_slug} label={s.service_name} value={s.views} max={interestMax} />
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <span className="idx">/completed-service-orders</span>
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Services converted into paid studio orders</p>
-                  <div className="flex flex-col gap-2.5">
-                    {topOrderServices.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No orders yet.</p>}
-                    {topOrderServices.map(([name, v]) => <Bar key={name} label={name} value={v} max={svcMax} />)}
-                  </div>
-                </div>
+          <div className="grid lg:grid-cols-2 gap-8">
+            <div>
+              <span className="idx">/service-demand-interest ({days}d)</span>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Services receiving the most visitor engagement</p>
+              <div className="flex flex-col gap-2.5">
+                {serviceInterest.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No service view data yet. Visit any service page to generate telemetry.</p>}
+                {serviceInterest.map((s) => (
+                  <Bar key={s.service_slug} label={s.service_name} value={s.views} max={interestMax} />
+                ))}
               </div>
+            </div>
+            <div>
+              <span className="idx">/completed-service-orders</span>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Services converted into paid studio orders</p>
+              <div className="flex flex-col gap-2.5">
+                {topOrderServices.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No orders yet.</p>}
+                {topOrderServices.map(([name, v]) => <Bar key={name} label={name} value={v} max={svcMax} />)}
+              </div>
+            </div>
+          </div>
 
-              {/* Interest vs Conversion insight */}
-              {serviceInterest.length > 0 && (
-                <div>
-                  <span className="idx">/opportunity-matrix (Interest vs Conversion)</span>
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">High interest + low conversion = highest ROI optimization opportunity</p>
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {serviceInterest.slice(0, 6).map((s) => {
-                      const orderedCount = serviceCount.get(s.service_name) ?? 0;
-                      const cvr = s.views > 0 ? Math.round((orderedCount / s.views) * 100) : 0;
-                      return (
-                        <div key={s.service_slug} className="border border-[var(--line)] p-4 rounded-2xl" style={{ background: "var(--panel)" }}>
-                          <p className="font-display text-[11px] font-bold uppercase truncate">{s.service_name}</p>
-                          <div className="flex items-center justify-between mt-2 font-meta text-[10px]">
-                            <span className="text-[var(--muted)]">{s.views} views · {orderedCount} orders</span>
-                            <span className="font-bold font-mono" style={{ color: cvr > 5 ? "#22c55e" : cvr > 0 ? "#f59e0b" : "#ef4444" }}>
-                              {cvr}% CVR
-                            </span>
-                          </div>
-                          <div className="w-full h-1.5 bg-[var(--line)] mt-2.5 rounded-full overflow-hidden">
-                            <div className="h-full rounded-full dept-bg" style={{ width: `${Math.min(100, Math.max(cvr * 5, 8))}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
+          {/* Interest vs Conversion insight */}
+          {serviceInterest.length > 0 && (
+            <div>
+              <span className="idx">/opportunity-matrix (Interest vs Conversion)</span>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">High interest + low conversion = highest ROI optimization opportunity</p>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {serviceInterest.slice(0, 6).map((s) => {
+                  const orderedCount = serviceCount.get(s.service_name) ?? 0;
+                  const cvr = s.views > 0 ? Math.round((orderedCount / s.views) * 100) : 0;
+                  return (
+                    <div key={s.service_slug} className="border border-[var(--line)] p-4 rounded-2xl" style={{ background: "var(--panel)" }}>
+                      <p className="font-display text-[11px] font-bold uppercase truncate">{s.service_name}</p>
+                      <div className="flex items-center justify-between mt-2 font-meta text-[10px]">
+                        <span className="text-[var(--muted)]">{s.views} views · {orderedCount} orders</span>
+                        <span className="font-bold font-mono" style={{ color: cvr > 5 ? "#22c55e" : cvr > 0 ? "#f59e0b" : "#ef4444" }}>
+                          {cvr}% CVR
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-[var(--line)] mt-2.5 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full dept-bg" style={{ width: `${Math.min(100, Math.max(cvr * 5, 8))}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -4040,106 +4001,98 @@ function Analytics() {
       {/* ─── 5. FUNNEL & JOURNEYS TAB (PRD §Funnel Builder) ─── */}
       {tab === "funnel" && (
         <div className="space-y-8">
-          {!firebaseReady || (hasData === false) ? (
-            <AnalyticsEmptyState tab="Funnel & Journeys" />
-          ) : (
-            <>
-              {/* Funnel Selector */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <span className="idx">/multi-funnel-analysis ({days}d)</span>
-                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
-                    Step-by-step conversion drop-off analysis across primary studio pathways.
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 bg-[var(--panel)] p-1 border border-[var(--line)] rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFunnel("lead")}
-                    className={`font-meta text-[9.5px] px-3 py-1.5 rounded-lg transition-all ${
-                      selectedFunnel === "lead" ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold" : "text-[var(--muted)]"
-                    }`}
-                  >
-                    🧲 Lead Funnel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFunnel("booking")}
-                    className={`font-meta text-[9.5px] px-3 py-1.5 rounded-lg transition-all ${
-                      selectedFunnel === "booking" ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold" : "text-[var(--muted)]"
-                    }`}
-                  >
-                    🛒 Booking / Checkout Funnel
-                  </button>
-                </div>
-              </div>
+          {/* Funnel Selector */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="idx">/multi-funnel-analysis ({days}d)</span>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
+                Step-by-step conversion drop-off analysis across primary studio pathways.
+              </p>
+            </div>
+            <div className="flex items-center gap-1 bg-[var(--panel)] p-1 border border-[var(--line)] rounded-xl">
+              <button
+                type="button"
+                onClick={() => setSelectedFunnel("lead")}
+                className={`font-meta text-[9.5px] px-3 py-1.5 rounded-lg transition-all ${
+                  selectedFunnel === "lead" ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold" : "text-[var(--muted)]"
+                }`}
+              >
+                🧲 Lead Funnel
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedFunnel("booking")}
+                className={`font-meta text-[9.5px] px-3 py-1.5 rounded-lg transition-all ${
+                  selectedFunnel === "booking" ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold" : "text-[var(--muted)]"
+                }`}
+              >
+                🛒 Booking / Checkout Funnel
+              </button>
+            </div>
+          </div>
 
-              {/* Conversion Funnel Bar Stages */}
-              <div className="p-6 border border-[var(--line)] rounded-2xl space-y-4" style={{ background: "var(--panel)" }}>
-                {activeFunnelSteps.map((step, i) => {
-                  const v = funnelValues[i];
-                  const prevV = i > 0 ? funnelValues[i - 1] : null;
-                  const dropPct = prevV && prevV > 0 ? Math.round(((prevV - v) / prevV) * 100) : null;
-                  return (
-                    <div key={step.key} className="relative">
-                      {i > 0 && dropPct !== null && (
-                        <div className="flex items-center gap-2 mb-1 ml-36">
-                          <div className="h-px w-4 bg-[var(--line)]" />
-                          <span className={`font-meta text-[8.5px] ${dropPct > 50 ? "text-red-500 font-bold" : "text-[var(--muted)]"}`}>
-                            {dropPct > 0 ? `↓ ${dropPct}% drop-off` : "→ maintained"}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-3">
-                        <span className="text-base shrink-0 w-6 text-center">{step.icon}</span>
-                        <span className="font-meta text-[10px] w-36 shrink-0 text-[var(--muted)] truncate">{step.label}</span>
-                        <div className="flex-1 h-6 border border-[var(--line)] overflow-hidden rounded-full" style={{ background: "var(--bg)" }}>
-                          <div
-                            className="h-full transition-all duration-700 rounded-full"
-                            style={{
-                              width: `${funnelMax ? Math.round((v / funnelMax) * 100) : 0}%`,
-                              background: step.color,
-                              opacity: 0.85,
-                            }}
-                          />
-                        </div>
-                        <span className="font-display text-xs font-bold w-12 text-right shrink-0 font-mono">{v.toLocaleString()}</span>
-                      </div>
+          {/* Conversion Funnel Bar Stages */}
+          <div className="p-6 border border-[var(--line)] rounded-2xl space-y-4" style={{ background: "var(--panel)" }}>
+            {activeFunnelSteps.map((step, i) => {
+              const v = funnelValues[i];
+              const prevV = i > 0 ? funnelValues[i - 1] : null;
+              const dropPct = prevV && prevV > 0 ? Math.round(((prevV - v) / prevV) * 100) : null;
+              return (
+                <div key={step.key} className="relative">
+                  {i > 0 && dropPct !== null && (
+                    <div className="flex items-center gap-2 mb-1 ml-36">
+                      <div className="h-px w-4 bg-[var(--line)]" />
+                      <span className={`font-meta text-[8.5px] ${dropPct > 50 ? "text-red-500 font-bold" : "text-[var(--muted)]"}`}>
+                        {dropPct > 0 ? `↓ ${dropPct}% drop-off` : "→ maintained"}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <span className="text-base shrink-0 w-6 text-center">{step.icon}</span>
+                    <span className="font-meta text-[10px] w-36 shrink-0 text-[var(--muted)] truncate">{step.label}</span>
+                    <div className="flex-1 h-6 border border-[var(--line)] overflow-hidden rounded-full" style={{ background: "var(--bg)" }}>
+                      <div
+                        className="h-full transition-all duration-700 rounded-full"
+                        style={{
+                          width: `${funnelMax ? Math.round((v / funnelMax) * 100) : 0}%`,
+                          background: step.color,
+                          opacity: 0.85,
+                        }}
+                      />
+                    </div>
+                    <span className="font-display text-xs font-bold w-12 text-right shrink-0 font-mono">{v.toLocaleString()}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
-              {/* Funnel KPI Summary Cards */}
-              <div className="grid sm:grid-cols-3 gap-3">
-                {(() => {
-                  const sv = funnelCounts["service_view"] ?? 0;
-                  const fs = funnelCounts["form_start"] ?? 0;
-                  const ls = funnelCounts["lead_submit"] ?? 0;
-                  const cc = funnelCounts["checkout_complete"] ?? 0;
-                  const formCvr = sv > 0 ? ((fs / sv) * 100).toFixed(1) : "0.0";
-                  const leadCvr = fs > 0 ? ((ls / fs) * 100).toFixed(1) : "0.0";
-                  const orderCvr = ls > 0 ? ((cc / ls) * 100).toFixed(1) : "0.0";
-                  return (
-                    <>
-                      <Stat label="VIEW → FORM CVR" value={`${formCvr}%`} sub="Service views starting a form" />
-                      <Stat label="FORM → LEAD CVR" value={`${leadCvr}%`} sub="Form starts completing submission" />
-                      <Stat label="LEAD → ORDER CVR" value={`${orderCvr}%`} sub="Leads converting to paid orders" />
-                    </>
-                  );
-                })()}
-              </div>
-            </>
-          )}
+          {/* Funnel KPI Summary Cards */}
+          <div className="grid sm:grid-cols-3 gap-3">
+            {(() => {
+              const sv = funnelCounts["service_view"] ?? 0;
+              const fs = funnelCounts["form_start"] ?? 0;
+              const ls = funnelCounts["lead_submit"] ?? 0;
+              const cc = funnelCounts["checkout_complete"] ?? 0;
+              const formCvr = sv > 0 ? ((fs / sv) * 100).toFixed(1) : "0.0";
+              const leadCvr = fs > 0 ? ((ls / fs) * 100).toFixed(1) : "0.0";
+              const orderCvr = ls > 0 ? ((cc / ls) * 100).toFixed(1) : "0.0";
+              return (
+                <>
+                  <Stat label="VIEW → FORM CVR" value={`${formCvr}%`} sub="Service views starting a form" />
+                  <Stat label="FORM → LEAD CVR" value={`${leadCvr}%`} sub="Form starts completing submission" />
+                  <Stat label="LEAD → ORDER CVR" value={`${orderCvr}%`} sub="Leads converting to paid orders" />
+                </>
+              );
+            })()}
+          </div>
         </div>
       )}
 
       {/* ─── 6. CAMPAIGNS TAB ─── */}
       {tab === "campaigns" && (
         <div className="space-y-8">
-          {!firebaseReady || (hasData === false) ? (
-            <AnalyticsEmptyState tab="Campaigns" />
-          ) : campaigns.length === 0 ? (
+          {campaigns.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-[var(--line)] rounded-2xl" style={{ background: "var(--panel)" }}>
               <span className="text-4xl mb-4">📣</span>
               <p className="font-display text-sm font-bold uppercase">No UTM Campaign Data</p>

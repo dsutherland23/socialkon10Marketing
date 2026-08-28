@@ -8,7 +8,7 @@
    • Dynamic engagement scoring (0–100) with real-time segment classification
    • Behavioral tracking: scroll depth, CTA clicks, pricing views, form abandonment
    • Dead click & rage click detection
-   • Event queue batched & stream-written to Firestore analytics_* collections
+   • Dual Persistence: IndexedDB / LocalStorage (zero-config, offline-ready) + Firestore
    • Omni-channel mirroring to GA4 (gtag), Meta Pixel (fbq), and dataLayer
    • Consent-aware (Necessary, Analytics, Marketing, Advertising)
    • Real-time Live Visitor telemetry & Journey reconstruction
@@ -20,6 +20,7 @@ import {
   query, orderBy, limit as fsLimit, where, getCountFromServer,
 } from "firebase/firestore";
 import { db, firebaseReady } from "./firebase";
+import { idbGet, idbSet } from "./backend";
 
 /* ─── Types ──────────────────────────────────────────────────────── */
 
@@ -116,11 +117,15 @@ export function calculateSegment(score: number): VisitorSegment {
   return "cold";
 }
 
-/* ─── Internal state ─────────────────────────────────────────────── */
+/* ─── Storage Keys ───────────────────────────────────────────────── */
 
 const SESSION_KEY = "sk_analytics_session";
 const UTM_KEY = "sk_analytics_utm";
 const CONSENT_KEY = "sk_consent_preferences";
+const IDB_SESSIONS_KEY = "sk_analytics_sessions";
+const IDB_EVENTS_KEY = "sk_analytics_events";
+const IDB_PAGE_VIEWS_KEY = "sk_analytics_page_views";
+const IDB_SERVICE_INTEREST_KEY = "sk_analytics_service_interest";
 
 let _initialized = false;
 let _sessionData: SessionData | null = null;
@@ -170,6 +175,12 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function notifyAnalyticsUpdated(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("sk-analytics-updated"));
+  }
+}
+
 /* ─── Consent Management (PRD §Privacy & Consent) ─────────────────── */
 
 export function getConsentPreferences(): ConsentPreferences {
@@ -189,7 +200,7 @@ export function setConsentPreferences(prefs: Partial<ConsentPreferences>): void 
   const updated: ConsentPreferences = {
     ...current,
     ...prefs,
-    necessary: true, // Always true
+    necessary: true,
     updated_at: now(),
   };
   try {
@@ -202,6 +213,53 @@ export function hasConsent(category: keyof ConsentPreferences): boolean {
   if (category === "necessary") return true;
   const prefs = getConsentPreferences();
   return Boolean(prefs[category]);
+}
+
+/* ─── Local Storage / IndexedDB Analytics Helpers ────────────────── */
+
+async function getLocalSessions(): Promise<SessionData[]> {
+  try {
+    const list = await idbGet<SessionData[]>(IDB_SESSIONS_KEY);
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+
+async function saveLocalSession(session: SessionData): Promise<void> {
+  try {
+    const list = await getLocalSessions();
+    const idx = list.findIndex((s) => s.session_id === session.session_id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...session };
+    } else {
+      list.unshift(session);
+    }
+    // Retain up to 200 sessions locally
+    await idbSet(IDB_SESSIONS_KEY, list.slice(0, 200));
+  } catch { /* non-blocking */ }
+}
+
+async function appendLocalEvent(ev: AnalyticsEvent): Promise<void> {
+  try {
+    const list = (await idbGet<AnalyticsEvent[]>(IDB_EVENTS_KEY)) || [];
+    list.unshift(ev);
+    await idbSet(IDB_EVENTS_KEY, list.slice(0, 500));
+  } catch { /* non-blocking */ }
+}
+
+async function appendLocalPageView(pv: PageViewRecord): Promise<void> {
+  try {
+    const list = (await idbGet<PageViewRecord[]>(IDB_PAGE_VIEWS_KEY)) || [];
+    list.unshift(pv);
+    await idbSet(IDB_PAGE_VIEWS_KEY, list.slice(0, 500));
+  } catch { /* non-blocking */ }
+}
+
+async function appendLocalServiceInterest(si: ServiceInterestRecord): Promise<void> {
+  try {
+    const list = (await idbGet<ServiceInterestRecord[]>(IDB_SERVICE_INTEREST_KEY)) || [];
+    list.unshift(si);
+    await idbSet(IDB_SERVICE_INTEREST_KEY, list.slice(0, 500));
+  } catch { /* non-blocking */ }
 }
 
 /* ─── Session Management ─────────────────────────────────────────── */
@@ -251,6 +309,7 @@ function loadOrCreateSession(): SessionData {
   };
 
   persistSession();
+  void saveLocalSession(_sessionData);
   return _sessionData;
 }
 
@@ -259,9 +318,14 @@ function persistSession(): void {
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(_sessionData));
   } catch { /* ignore */ }
+  void saveLocalSession(_sessionData);
 }
 
 async function upsertSessionInFirestore(session: SessionData): Promise<void> {
+  // Always update local IndexedDB storage
+  await saveLocalSession(session);
+  notifyAnalyticsUpdated();
+
   if (!firebaseReady || !db || !hasConsent("analytics")) return;
   try {
     await setDoc(
@@ -282,7 +346,6 @@ function addEngagementPoints(action: string, pointsMultiplier = 1): void {
   const basePoints = ENGAGEMENT_RULES[action] || 5;
   const points = basePoints * pointsMultiplier;
 
-  // Deduplicate single-fire scoring items (e.g. scroll_75, session_120)
   if (action === "scroll_over_75_percent" || action === "session_over_120_seconds") {
     if (_scoredActions.has(action)) return;
     _scoredActions.add(action);
@@ -299,6 +362,10 @@ function addEngagementPoints(action: string, pointsMultiplier = 1): void {
 async function flushQueue(): Promise<void> {
   if (_queue.length === 0) return;
   const batch = _queue.splice(0, _queue.length);
+
+  // Always write batch to local storage
+  await Promise.all(batch.map((ev) => appendLocalEvent(ev)));
+  notifyAnalyticsUpdated();
 
   if (!firebaseReady || !db || !hasConsent("analytics")) return;
 
@@ -319,11 +386,14 @@ function scheduleFlush(): void {
   _flushTimer = setTimeout(() => {
     _flushTimer = null;
     void flushQueue();
-  }, 3000);
+  }, 2000);
 }
 
 function enqueue(ev: Omit<AnalyticsEvent, "created_at">): void {
-  _queue.push({ ...ev, created_at: now() });
+  const fullEvent = { ...ev, created_at: now() };
+  _queue.push(fullEvent);
+  void appendLocalEvent(fullEvent);
+
   if (_queue.length >= 10) {
     if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
     void flushQueue();
@@ -394,7 +464,7 @@ export function initTracking(): void {
     addEngagementPoints("session_over_120_seconds");
   }, 120_000);
 
-  // Scroll depth tracking (25, 50, 75, 100%)
+  // Scroll depth tracking (25, 50, 75%)
   let maxScrollReached = 0;
   const onScrollThrottled = () => {
     const docHeight = document.documentElement.scrollHeight - window.innerHeight;
@@ -488,14 +558,17 @@ export async function trackPageView(path: string): Promise<void> {
   const prevPath = _currentPath;
   _currentPath = path;
 
+  const pv: PageViewRecord = {
+    session_id: session.session_id,
+    path,
+    title: document.title,
+    referrer: prevPath || document.referrer,
+    created_at: now(),
+  };
+
+  void appendLocalPageView(pv);
+
   if (firebaseReady && db && hasConsent("analytics")) {
-    const pv: Omit<PageViewRecord, "time_on_page_ms"> = {
-      session_id: session.session_id,
-      path,
-      title: document.title,
-      referrer: prevPath || document.referrer,
-      created_at: now(),
-    };
     try {
       await addDoc(collection(db, "analytics_page_views"), { ...pv, created_at: serverTimestamp() });
     } catch { /* non-blocking */ }
@@ -520,12 +593,19 @@ export async function trackServiceView(serviceSlug: string, serviceName: string)
 
   addEngagementPoints("service_view");
 
+  const si: ServiceInterestRecord = {
+    session_id: session.session_id,
+    service_slug: serviceSlug,
+    service_name: serviceName,
+    created_at: now(),
+  };
+
+  void appendLocalServiceInterest(si);
+
   if (firebaseReady && db && hasConsent("analytics")) {
     try {
       await addDoc(collection(db, "analytics_service_interest"), {
-        session_id: session.session_id,
-        service_slug: serviceSlug,
-        service_name: serviceName,
+        ...si,
         created_at: serverTimestamp(),
       } as Omit<ServiceInterestRecord, "created_at"> & { created_at: unknown });
     } catch { /* non-blocking */ }
@@ -671,52 +751,80 @@ export function getSessionAttribution(): AttributionData {
   };
 }
 
-/* ─── Dashboard Query Helpers (PRD §3-5) ──────────────────────────── */
+/* ─── Hybrid Dashboard Query Helpers (Firestore + IndexedDB fallback) ── */
 
 export async function getSessionCount(days = 30): Promise<number> {
-  if (!firebaseReady || !db) return 0;
-  try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const snap = await getCountFromServer(
-      query(collection(db, "analytics_sessions"), where("started_at", ">=", since))
-    );
-    return snap.data().count;
-  } catch { return 0; }
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  if (firebaseReady && db) {
+    try {
+      const snap = await getCountFromServer(
+        query(collection(db, "analytics_sessions"), where("started_at", ">=", since))
+      );
+      const count = snap.data().count;
+      if (count > 0) return count;
+    } catch { /* fallback to local */ }
+  }
+  const local = await getLocalSessions();
+  return local.filter((s) => s.started_at >= since).length;
 }
 
 export async function getActiveLiveVisitors(withinMinutes = 15): Promise<SessionData[]> {
-  if (!firebaseReady || !db) return [];
-  try {
-    const since = new Date(Date.now() - withinMinutes * 60_000).toISOString();
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_sessions"),
-        where("last_active", ">=", since),
-        orderBy("last_active", "desc"),
-        fsLimit(50)
-      )
-    );
-    return snap.docs.map((d) => ({ ...d.data() } as SessionData));
-  } catch { return []; }
+  const since = new Date(Date.now() - withinMinutes * 60_000).toISOString();
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_sessions"),
+          where("last_active", ">=", since),
+          orderBy("last_active", "desc"),
+          fsLimit(50)
+        )
+      );
+      if (!snap.empty) {
+        return snap.docs.map((d) => ({ ...d.data() } as SessionData));
+      }
+    } catch { /* fallback to local */ }
+  }
+  const local = await getLocalSessions();
+  return local
+    .filter((s) => s.last_active >= since)
+    .sort((a, b) => new Date(b.last_active).getTime() - new Date(a.last_active).getTime())
+    .slice(0, 50);
 }
 
 export async function getTopPages(days = 30, topN = 10): Promise<{ path: string; views: number }[]> {
-  if (!firebaseReady || !db) return [];
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_page_views"),
+          where("created_at", ">=", since),
+          orderBy("created_at", "desc"),
+          fsLimit(500)
+        )
+      );
+      if (!snap.empty) {
+        const counts = new Map<string, number>();
+        snap.docs.forEach((d) => {
+          const path: string = (d.data().path as string) || "/";
+          counts.set(path, (counts.get(path) ?? 0) + 1);
+        });
+        return [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, topN)
+          .map(([path, views]) => ({ path, views }));
+      }
+    } catch { /* fallback to local */ }
+  }
   try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_page_views"),
-        where("created_at", ">=", since),
-        orderBy("created_at", "desc"),
-        fsLimit(500)
-      )
-    );
+    const local = (await idbGet<PageViewRecord[]>(IDB_PAGE_VIEWS_KEY)) || [];
     const counts = new Map<string, number>();
-    snap.docs.forEach((d) => {
-      const path: string = (d.data().path as string) || "/";
-      counts.set(path, (counts.get(path) ?? 0) + 1);
-    });
+    local
+      .filter((pv) => pv.created_at >= since)
+      .forEach((pv) => {
+        counts.set(pv.path, (counts.get(pv.path) ?? 0) + 1);
+      });
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, topN)
@@ -725,47 +833,77 @@ export async function getTopPages(days = 30, topN = 10): Promise<{ path: string;
 }
 
 export async function getTrafficSources(days = 30): Promise<{ source: string; sessions: number }[]> {
-  if (!firebaseReady || !db) return [];
-  try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_sessions"),
-        where("started_at", ">=", since),
-        orderBy("started_at", "desc"),
-        fsLimit(500)
-      )
-    );
-    const counts = new Map<string, number>();
-    snap.docs.forEach((d) => {
-      const src: string = (d.data().utm_source as string) || "direct";
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_sessions"),
+          where("started_at", ">=", since),
+          orderBy("started_at", "desc"),
+          fsLimit(500)
+        )
+      );
+      if (!snap.empty) {
+        const counts = new Map<string, number>();
+        snap.docs.forEach((d) => {
+          const src: string = (d.data().utm_source as string) || "direct";
+          counts.set(src, (counts.get(src) ?? 0) + 1);
+        });
+        return [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([source, sessions]) => ({ source, sessions }));
+      }
+    } catch { /* fallback to local */ }
+  }
+  const local = await getLocalSessions();
+  const counts = new Map<string, number>();
+  local
+    .filter((s) => s.started_at >= since)
+    .forEach((s) => {
+      const src = s.utm_source || "direct";
       counts.set(src, (counts.get(src) ?? 0) + 1);
     });
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([source, sessions]) => ({ source, sessions }));
-  } catch { return []; }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([source, sessions]) => ({ source, sessions }));
 }
 
 export async function getServiceInterestRanking(days = 30): Promise<{ service_name: string; service_slug: string; views: number }[]> {
-  if (!firebaseReady || !db) return [];
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_service_interest"),
+          where("created_at", ">=", since),
+          orderBy("created_at", "desc"),
+          fsLimit(500)
+        )
+      );
+      if (!snap.empty) {
+        const counts = new Map<string, { service_name: string; views: number }>();
+        snap.docs.forEach((d) => {
+          const slug: string = d.data().service_slug as string;
+          const name: string = d.data().service_name as string;
+          const existing = counts.get(slug) ?? { service_name: name, views: 0 };
+          counts.set(slug, { ...existing, views: existing.views + 1 });
+        });
+        return [...counts.entries()]
+          .sort((a, b) => b[1].views - a[1].views)
+          .map(([service_slug, v]) => ({ service_slug, ...v }));
+      }
+    } catch { /* fallback to local */ }
+  }
   try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_service_interest"),
-        where("created_at", ">=", since),
-        orderBy("created_at", "desc"),
-        fsLimit(500)
-      )
-    );
+    const local = (await idbGet<ServiceInterestRecord[]>(IDB_SERVICE_INTEREST_KEY)) || [];
     const counts = new Map<string, { service_name: string; views: number }>();
-    snap.docs.forEach((d) => {
-      const slug: string = d.data().service_slug as string;
-      const name: string = d.data().service_name as string;
-      const existing = counts.get(slug) ?? { service_name: name, views: 0 };
-      counts.set(slug, { ...existing, views: existing.views + 1 });
-    });
+    local
+      .filter((si) => si.created_at >= since)
+      .forEach((si) => {
+        const existing = counts.get(si.service_slug) ?? { service_name: si.service_name, views: 0 };
+        counts.set(si.service_slug, { ...existing, views: existing.views + 1 });
+      });
     return [...counts.entries()]
       .sort((a, b) => b[1].views - a[1].views)
       .map(([service_slug, v]) => ({ service_slug, ...v }));
@@ -773,91 +911,137 @@ export async function getServiceInterestRanking(days = 30): Promise<{ service_na
 }
 
 export async function getFunnelCounts(days = 30): Promise<Record<string, number>> {
-  if (!firebaseReady || !db) return {};
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const funnelEvents = ["page_view", "service_view", "pricing_view", "cta_click", "form_start", "form_submit", "lead_submit", "checkout_start", "checkout_complete"];
+  const results: Record<string, number> = {};
+
+  if (firebaseReady && db) {
+    try {
+      await Promise.all(
+        funnelEvents.map(async (ev) => {
+          try {
+            const snap = await getCountFromServer(
+              query(
+                collection(db!, "analytics_events"),
+                where("event_name", "==", ev),
+                where("created_at", ">=", since)
+              )
+            );
+            results[ev] = snap.data().count;
+          } catch {
+            results[ev] = 0;
+          }
+        })
+      );
+      const totalCount = Object.values(results).reduce((a, b) => a + b, 0);
+      if (totalCount > 0) return results;
+    } catch { /* fallback to local */ }
+  }
+
   try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const funnelEvents = ["page_view", "service_view", "pricing_view", "cta_click", "form_start", "form_submit", "lead_submit", "checkout_start", "checkout_complete"];
-    const results: Record<string, number> = {};
-    await Promise.all(
-      funnelEvents.map(async (ev) => {
-        try {
-          const snap = await getCountFromServer(
-            query(
-              collection(db!, "analytics_events"),
-              where("event_name", "==", ev),
-              where("created_at", ">=", since)
-            )
-          );
-          results[ev] = snap.data().count;
-        } catch {
-          results[ev] = 0;
-        }
-      })
-    );
+    const localEvents = (await idbGet<AnalyticsEvent[]>(IDB_EVENTS_KEY)) || [];
+    funnelEvents.forEach((ev) => {
+      results[ev] = localEvents.filter((e) => e.event_name === ev && e.created_at >= since).length;
+    });
     return results;
   } catch { return {}; }
 }
 
 export async function getRecentSessions(limitN = 25): Promise<SessionData[]> {
-  if (!firebaseReady || !db) return [];
-  try {
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_sessions"),
-        orderBy("last_active", "desc"),
-        fsLimit(limitN)
-      )
-    );
-    return snap.docs.map((d) => ({ ...d.data() } as SessionData));
-  } catch { return []; }
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_sessions"),
+          orderBy("last_active", "desc"),
+          fsLimit(limitN)
+        )
+      );
+      if (!snap.empty) {
+        return snap.docs.map((d) => ({ ...d.data() } as SessionData));
+      }
+    } catch { /* fallback to local */ }
+  }
+  const local = await getLocalSessions();
+  return local
+    .sort((a, b) => new Date(b.last_active).getTime() - new Date(a.last_active).getTime())
+    .slice(0, limitN);
 }
 
 export async function getCampaignPerformance(days = 30): Promise<{ campaign: string; source: string; medium: string; sessions: number }[]> {
-  if (!firebaseReady || !db) return [];
-  try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_sessions"),
-        where("started_at", ">=", since),
-        where("utm_campaign", "!=", null),
-        orderBy("utm_campaign"),
-        orderBy("started_at", "desc"),
-        fsLimit(500)
-      )
-    );
-    const counts = new Map<string, { campaign: string; source: string; medium: string; sessions: number }>();
-    snap.docs.forEach((d) => {
-      const campaign: string = (d.data().utm_campaign as string) || "(not set)";
-      const source: string = (d.data().utm_source as string) || "direct";
-      const medium: string = (d.data().utm_medium as string) || "(none)";
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_sessions"),
+          where("started_at", ">=", since),
+          where("utm_campaign", "!=", null),
+          orderBy("utm_campaign"),
+          orderBy("started_at", "desc"),
+          fsLimit(500)
+        )
+      );
+      if (!snap.empty) {
+        const counts = new Map<string, { campaign: string; source: string; medium: string; sessions: number }>();
+        snap.docs.forEach((d) => {
+          const campaign: string = (d.data().utm_campaign as string) || "(not set)";
+          const source: string = (d.data().utm_source as string) || "direct";
+          const medium: string = (d.data().utm_medium as string) || "(none)";
+          const key = `${campaign}|${source}|${medium}`;
+          const ex = counts.get(key) ?? { campaign, source, medium, sessions: 0 };
+          counts.set(key, { ...ex, sessions: ex.sessions + 1 });
+        });
+        return [...counts.values()].sort((a, b) => b.sessions - a.sessions);
+      }
+    } catch { /* fallback to local */ }
+  }
+  const local = await getLocalSessions();
+  const counts = new Map<string, { campaign: string; source: string; medium: string; sessions: number }>();
+  local
+    .filter((s) => s.started_at >= since && s.utm_campaign)
+    .forEach((s) => {
+      const campaign = s.utm_campaign || "(not set)";
+      const source = s.utm_source || "direct";
+      const medium = s.utm_medium || "(none)";
       const key = `${campaign}|${source}|${medium}`;
       const ex = counts.get(key) ?? { campaign, source, medium, sessions: 0 };
       counts.set(key, { ...ex, sessions: ex.sessions + 1 });
     });
-    return [...counts.values()].sort((a, b) => b.sessions - a.sessions);
-  } catch { return []; }
+  return [...counts.values()].sort((a, b) => b.sessions - a.sessions);
 }
 
 export async function getSessionEvents(sessionId: string): Promise<AnalyticsEvent[]> {
-  if (!firebaseReady || !db) return [];
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "analytics_events"),
+          where("session_id", "==", sessionId),
+          orderBy("created_at", "asc"),
+          fsLimit(100)
+        )
+      );
+      if (!snap.empty) {
+        return snap.docs.map((d) => ({ ...d.data() } as AnalyticsEvent));
+      }
+    } catch { /* fallback to local */ }
+  }
   try {
-    const snap = await getDocs(
-      query(
-        collection(db, "analytics_events"),
-        where("session_id", "==", sessionId),
-        orderBy("created_at", "asc"),
-        fsLimit(100)
-      )
-    );
-    return snap.docs.map((d) => ({ ...d.data() } as AnalyticsEvent));
+    const localEvents = (await idbGet<AnalyticsEvent[]>(IDB_EVENTS_KEY)) || [];
+    return localEvents
+      .filter((e) => e.session_id === sessionId)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
   } catch { return []; }
 }
 
 export async function analyticsHasData(): Promise<boolean> {
-  if (!firebaseReady || !db) return false;
-  try {
-    const snap = await getDocs(query(collection(db, "analytics_sessions"), fsLimit(1)));
-    return !snap.empty;
-  } catch { return false; }
+  if (firebaseReady && db) {
+    try {
+      const snap = await getDocs(query(collection(db, "analytics_sessions"), fsLimit(1)));
+      if (!snap.empty) return true;
+    } catch { /* fallback */ }
+  }
+  const local = await getLocalSessions();
+  return local.length > 0;
 }
