@@ -3147,8 +3147,16 @@ function PortfolioManager() {
 /* ================= SETTINGS ================= */
 
 function SettingsManager() {
+  const money = useMoney();
   const [s, setS] = useState<SiteSettings>({});
-  useEffect(() => { getSettings().then(setS); }, []);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [resetAccountingOpen, setResetAccountingOpen] = useState(false);
+
+  useEffect(() => {
+    getSettings().then(setS);
+    const unsub = subscribeAllOrders(setOrders);
+    return () => { unsub(); };
+  }, []);
 
   const socials = SOCIAL_LINKS.map((d) => s.socials?.find((x) => x.id === d.id) ?? d);
   const setSocial = (id: string, href: string) =>
@@ -3182,6 +3190,49 @@ function SettingsManager() {
       </div>
       <button className="btn btn-dept !py-2.5 mt-6" onClick={() => mutate(() => saveSettings({ ...s, socials }), "Settings saved — live now")}>Save settings</button>
       <p className="font-meta text-[9px] text-[var(--muted)] mt-4">Changes apply site-wide immediately.</p>
+
+      {/* 2026 Audit-Compliant Financial Ledger & Accounting Reset Card */}
+      <div className="mt-10 pt-8 border-t border-[var(--line)] space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">💰</span>
+          <div>
+            <h4 className="font-display text-sm font-bold uppercase tracking-tight text-[var(--ink)]">
+              Financial Ledger & Accounting Reset
+            </h4>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+              Zero out studio revenue tallies, order accounting, and receivable metrics following 2026 enterprise compliance standards.
+            </p>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl border border-red-500/30 bg-red-500/5 flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-4 text-xs font-meta">
+              <span>Current Revenue: <strong className="text-[var(--ink)] font-mono">{money(orders.reduce((s, o) => s + (o.amountPaid || 0), 0))}</strong></span>
+              <span>Outstanding: <strong className="text-[var(--ink)] font-mono">{money(orders.reduce((s, o) => s + (o.balanceDue || 0), 0))}</strong></span>
+              <span>Recorded Orders: <strong className="text-[var(--ink)] font-mono">{orders.length}</strong></span>
+            </div>
+            <p className="text-[10px] text-[var(--muted)]">
+              Wipes revenue records across all dashboards. An automated audit archive (CSV) will be downloaded prior to reset.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setResetAccountingOpen(true)}
+            className="btn !py-2 !px-4 text-xs font-bold bg-red-600 hover:bg-red-500 text-white border-red-600 transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+          >
+            <span>⚠️</span>
+            <span>Zero Out Accounting ($0.00)</span>
+          </button>
+        </div>
+
+        <ResetAccountingModal
+          orders={orders}
+          isOpen={resetAccountingOpen}
+          onClose={() => setResetAccountingOpen(false)}
+        />
+      </div>
     </div>
   );
 }
