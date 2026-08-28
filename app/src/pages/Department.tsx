@@ -13,6 +13,7 @@ import { useDesignCatalog, useDesignPackage } from "../lib/design-shop";
 import type { DesignService } from "../lib/design";
 import { ClipLines, Reveal } from "../lib/motion";
 import { ArrowLink, Faq, FinalCta, SectionHead, ServiceCard } from "../components/blocks";
+import { trackServiceView } from "../lib/analytics";
 import { ProjectCover } from "../components/cover";
 import { FilterDropdown, ServiceCard as DesignServiceCard } from "./DesignStore";
 import { DesignJourneys } from "../components/TalkToUs";
@@ -634,6 +635,14 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
       description: dept.sub,
     },
   });
+
+  // Track department interest for Website Intelligence dashboard
+  useEffect(() => {
+    if (dept) {
+      void trackServiceView(`dept:${deptId}`, dept.name);
+    }
+  }, [deptId, dept]);
+
   if (!dept) return <Navigate to="/" replace />;
 
   const services = allServices.filter((s) => s.dept === deptId);

@@ -64,6 +64,16 @@ export interface LeadRecord {
   message: string;
   status: "new" | "contacted" | "converted" | "closed";
   createdAt: string;
+  /** First-party attribution (Website Intelligence PRD) */
+  session_id?: string | null;
+  first_touch_source?: string | null;
+  first_touch_medium?: string | null;
+  first_touch_campaign?: string | null;
+  first_touch_content?: string | null;
+  landing_page?: string | null;
+  referrer?: string | null;
+  services_viewed?: string[];
+  engagement_score?: number;
 }
 
 export interface ServiceOverride {
@@ -1146,6 +1156,29 @@ export interface SiteSettings {
     sub?: string;
     marquee?: string;            // newline-separated items
     sections?: Record<string, boolean>; // section key -> visible
+  };
+  /** Analytics & tracking configuration (Website Intelligence PRD) */
+  analyticsSettings?: {
+    /** GA4 measurement ID — overrides VITE_GA_ID env var when set */
+    ga4MeasurementId?: string;
+    /** Meta Pixel ID — overrides VITE_META_PIXEL_ID env var when set */
+    metaPixelId?: string;
+    /** Google Ads conversion ID (e.g. AW-XXXXXXXXXX) */
+    googleAdsId?: string;
+    /** Google Ads conversion label for checkout complete event */
+    googleAdsConversionLabel?: string;
+    /** Enable first-party event tracking to Firestore analytics_* collections */
+    firstPartyTracking?: boolean;
+    /** Track individual service/department page views */
+    trackServiceViews?: boolean;
+    /** Track form funnel start + submit events */
+    trackFormFunnels?: boolean;
+    /** Track scroll depth milestones (25/50/75/100%) */
+    trackScrollDepth?: boolean;
+    /** Meta Conversions API (CAPI) — requires Cloud Function; doc URL for admin reference */
+    capiEnabled?: boolean;
+    /** GA4 Measurement Protocol — requires Cloud Function; doc URL for admin reference */
+    ga4MpEnabled?: boolean;
   };
 }
 

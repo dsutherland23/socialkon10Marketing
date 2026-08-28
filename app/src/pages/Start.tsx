@@ -6,6 +6,7 @@ import { useSEO, track } from "../lib/seo";
 import { Reveal } from "../lib/motion";
 import { FinalCta } from "../components/blocks";
 import { createLead } from "../lib/backend";
+import { trackFormStart, trackFormSubmit, trackLeadSubmit, getSessionAttribution } from "../lib/analytics";
 
 /* ------------------------------------------------------------------
    START A PROJECT (PRD §42–44, §70–71)
@@ -115,6 +116,16 @@ export default function Start() {
     setErrors(er);
     if (Object.keys(er).length) return;
     track(intent === "quote" ? "quote_request" : intent === "consultation" ? "consultation_request" : "contact_submit", { dept, service: preService });
+
+    // First-party: form funnel submit event
+    trackFormSubmit("contact_form", { intent, dept, service: preService });
+
+    // First-party: lead attribution
+    trackLeadSubmit({ intent: intent ?? "question", dept, service: preService });
+
+    // Capture attribution data for lead record enrichment
+    const attribution = getSessionAttribution();
+
     // persist the lead (Firestore when configured, local demo otherwise)
     createLead({
       intent: intent ?? "question",
@@ -128,6 +139,14 @@ export default function Start() {
       date: form.date || undefined,
       time: form.time || undefined,
       message: form.message,
+      // Attribution enrichment from first-party SDK
+      session_id: attribution.session_id,
+      first_touch_source: attribution.utm_source,
+      first_touch_medium: attribution.utm_medium,
+      first_touch_campaign: attribution.utm_campaign,
+      first_touch_content: attribution.utm_content,
+      landing_page: attribution.landing_page || undefined,
+      referrer: attribution.referrer || undefined,
     }).catch(() => {});
     setSent(true);
   };
@@ -164,7 +183,7 @@ export default function Start() {
                 {INTENTS.map((it) => (
                   <button
                     key={it.id}
-                    onClick={() => setIntent(it.id)}
+                    onClick={() => { setIntent(it.id); trackFormStart("contact_form", { intent: it.id }); }}
                     aria-pressed={intent === it.id}
                     className="p-6 text-left transition-colors"
                     style={intent === it.id ? { background: "var(--ink)", color: "var(--bg)" } : { background: "var(--bg)" }}

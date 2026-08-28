@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { deptById, formatMoney } from "../lib/data";
 import { useContent, useServiceBySlug } from "../lib/content";
@@ -9,6 +9,7 @@ import { ClipLines, Reveal } from "../lib/motion";
 import { ArrowLink, FinalCta } from "../components/blocks";
 import { ProjectCover } from "../components/cover";
 import { WebConfigurator } from "../components/WebConfigurator";
+import { trackServiceView } from "../lib/analytics";
 
 /* ------------------------------------------------------------------
    SERVICE PRODUCT PAGE + CONFIGURATOR (PRD §25–27)
@@ -67,6 +68,13 @@ export default function ServicePage() {
     const t = rush ? b * 1.25 : b;
     return { total: t, deposit: Math.round(t * (service.depositPct / 100)) };
   }, [service, selectedAddons, rush]);
+
+  // Track service interest for Website Intelligence dashboard
+  useEffect(() => {
+    if (service?.slug && service?.name) {
+      void trackServiceView(service.slug, service.name);
+    }
+  }, [service?.slug, service?.name]);
 
   if (!service || !dept) return <Navigate to="/packages" replace />;
 

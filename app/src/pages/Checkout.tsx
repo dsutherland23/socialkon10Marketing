@@ -8,6 +8,7 @@ import { useShop } from "../lib/shop";
 import { useDesignPackage } from "../lib/design-shop";
 import { activeProviders } from "../lib/payments";
 import { useSEO, track } from "../lib/seo";
+import { trackCheckoutStart, trackCheckoutComplete, getSessionAttribution } from "../lib/analytics";
 import { Reveal } from "../lib/motion";
 import { useAuth } from "../lib/auth";
 import { attachFiles, cartToOrderItems, claimOrders, createOrder } from "../lib/backend";
@@ -366,6 +367,7 @@ export default function Checkout() {
         ...cartToOrderItems(items),
         ...pkgOrderItems,
       ];
+      const attribution = getSessionAttribution();
       const oid = await createOrder(
         {
           email: details.email,
@@ -379,7 +381,15 @@ export default function Checkout() {
           amountPaid: dueToday,
           balanceDue: Math.max(0, Math.round((total - dueToday) * 100) / 100),
           promo: promo ? promo : (pkg.discount ? `PACKAGE:${pkg.discount.name}` : null),
-          details: { ...details, hasDesignPackage: pkg.lines.length > 0 ? "true" : "false" },
+          details: {
+            ...details,
+            hasDesignPackage: pkg.lines.length > 0 ? "true" : "false",
+            ...(attribution.utm_source ? { utm_source: attribution.utm_source } : {}),
+            ...(attribution.utm_campaign ? { utm_campaign: attribution.utm_campaign } : {}),
+            ...(attribution.utm_medium ? { utm_medium: attribution.utm_medium } : {}),
+            ...(attribution.landing_page ? { landing_page: attribution.landing_page } : {}),
+            ...(attribution.session_id ? { session_id: attribution.session_id } : {}),
+          },
           files: files.map((f) => ({ name: f.name, size: f.size })),
         },
         user
@@ -455,6 +465,12 @@ export default function Checkout() {
 
     setPaying(false);
     track("purchase", { value: dueToday, transaction_id: res.transactionId });
+    // First-party checkout complete event (Firestore + GA4 purchase + Meta Pixel Purchase)
+    trackCheckoutComplete({
+      orderId: finalOid,
+      total: dueToday,
+      itemCount: items.length + pkg.lines.length,
+    });
     setStep(4);
     if (webItem) setIntakeOpen(true);
     clear();
@@ -832,7 +848,7 @@ export default function Checkout() {
                   <div className="flex justify-between font-display text-lg font-bold"><span>Order total</span><span>{formatMoney(total, currency)}</span></div>
                 </div>
                 <div className="mt-8 flex justify-end">
-                  <button className="btn btn-fill" onClick={() => { setStep(1); track("checkout_start", { value: total }); }}>Your details <span className="btn-arrow" aria-hidden>→</span></button>
+                  <button className="btn btn-fill" onClick={() => { setStep(1); track("checkout_start", { value: total }); trackCheckoutStart(total); }}>Your details <span className="btn-arrow" aria-hidden>→</span></button>
                 </div>
               </>
             )}

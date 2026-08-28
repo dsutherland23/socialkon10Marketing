@@ -40,6 +40,12 @@ import {
 import { sendEmail, proposalEmail } from "../lib/email";
 import { BatchActionBar } from "../components/BatchActionBar";
 import { exportToCsv, exportToJson } from "../lib/export-utils";
+import {
+  getSessionCount, getTopPages, getTrafficSources,
+  getServiceInterestRanking, getFunnelCounts, getRecentSessions,
+  getCampaignPerformance, analyticsHasData,
+  type SessionData,
+} from "../lib/analytics";
 
 /* ------------------------------------------------------------------
    ADMIN DASHBOARD (PRD §33, §67, §68, §85)
@@ -3168,6 +3174,181 @@ function SettingsManager() {
       <button className="btn btn-dept !py-2.5 mt-6" onClick={() => mutate(() => saveSettings({ ...s, socials }), "Settings saved — live now")}>Save settings</button>
       <p className="font-meta text-[9px] text-[var(--muted)] mt-4">Changes apply site-wide immediately.</p>
 
+      {/* 2026 Website Intelligence & Analytics Engine Configuration Card */}
+      <div className="mt-10 pt-8 border-t border-[var(--line)] space-y-6">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">📡</span>
+          <div>
+            <h4 className="font-display text-sm font-bold uppercase tracking-tight text-[var(--ink)]">
+              Analytics, Tracking & Attribution Engine
+            </h4>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+              Manage GA4, Meta Pixel, Google Ads, and First-Party Firestore visitor intelligence tracking (PRD §1-5).
+            </p>
+          </div>
+        </div>
+
+        <div className="p-5 rounded-2xl border border-[var(--line)] space-y-5" style={{ background: "var(--panel)" }}>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <label className={labelCls}>
+              GOOGLE ANALYTICS 4 (GA4 ID)
+              <input
+                className={`${inputCls} mt-1.5`}
+                placeholder="G-XXXXXXXXXX (overrides env)"
+                value={s.analyticsSettings?.ga4MeasurementId ?? ""}
+                onChange={(e) =>
+                  setS((prev) => ({
+                    ...prev,
+                    analyticsSettings: { ...prev.analyticsSettings, ga4MeasurementId: e.target.value },
+                  }))
+                }
+              />
+              <span className="block font-meta text-[8px] text-[var(--muted)] mt-1">Leave blank to use default environment config.</span>
+            </label>
+
+            <label className={labelCls}>
+              META PIXEL ID
+              <input
+                className={`${inputCls} mt-1.5`}
+                placeholder="e.g. 123456789012345"
+                value={s.analyticsSettings?.metaPixelId ?? ""}
+                onChange={(e) =>
+                  setS((prev) => ({
+                    ...prev,
+                    analyticsSettings: { ...prev.analyticsSettings, metaPixelId: e.target.value },
+                  }))
+                }
+              />
+              <span className="block font-meta text-[8px] text-[var(--muted)] mt-1">Fires standard PageView, ViewContent, and Lead events.</span>
+            </label>
+
+            <label className={labelCls}>
+              GOOGLE ADS CONVERSION ID
+              <input
+                className={`${inputCls} mt-1.5`}
+                placeholder="AW-XXXXXXXXXX"
+                value={s.analyticsSettings?.googleAdsId ?? ""}
+                onChange={(e) =>
+                  setS((prev) => ({
+                    ...prev,
+                    analyticsSettings: { ...prev.analyticsSettings, googleAdsId: e.target.value },
+                  }))
+                }
+              />
+            </label>
+
+            <label className={labelCls}>
+              GOOGLE ADS PURCHASE CONVERSION LABEL
+              <input
+                className={`${inputCls} mt-1.5`}
+                placeholder="e.g. AbCdEfGhIjKlMnOp"
+                value={s.analyticsSettings?.googleAdsConversionLabel ?? ""}
+                onChange={(e) =>
+                  setS((prev) => ({
+                    ...prev,
+                    analyticsSettings: { ...prev.analyticsSettings, googleAdsConversionLabel: e.target.value },
+                  }))
+                }
+              />
+            </label>
+          </div>
+
+          <div className="pt-4 border-t border-[var(--line)]">
+            <span className={labelCls}>FIRST-PARTY TRACKING CAPABILITIES</span>
+            <div className="grid sm:grid-cols-2 gap-2 mt-2">
+              <label className="font-meta text-[10px] flex items-center gap-2.5 border border-[var(--line)] px-3 py-2.5 cursor-pointer rounded-xl bg-[var(--bg)]">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--dept)] w-4 h-4"
+                  checked={s.analyticsSettings?.firstPartyTracking !== false}
+                  onChange={(e) =>
+                    setS((prev) => ({
+                      ...prev,
+                      analyticsSettings: { ...prev.analyticsSettings, firstPartyTracking: e.target.checked },
+                    }))
+                  }
+                />
+                <div>
+                  <span className="font-bold block">First-Party Event Streaming</span>
+                  <span className="text-[8.5px] text-[var(--muted)]">Stream sessions & events to Firestore analytics_ collections</span>
+                </div>
+              </label>
+
+              <label className="font-meta text-[10px] flex items-center gap-2.5 border border-[var(--line)] px-3 py-2.5 cursor-pointer rounded-xl bg-[var(--bg)]">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--dept)] w-4 h-4"
+                  checked={s.analyticsSettings?.trackServiceViews !== false}
+                  onChange={(e) =>
+                    setS((prev) => ({
+                      ...prev,
+                      analyticsSettings: { ...prev.analyticsSettings, trackServiceViews: e.target.checked },
+                    }))
+                  }
+                />
+                <div>
+                  <span className="font-bold block">Service Interest Tracking</span>
+                  <span className="text-[8.5px] text-[var(--muted)]">Log high-intent service & department page visits</span>
+                </div>
+              </label>
+
+              <label className="font-meta text-[10px] flex items-center gap-2.5 border border-[var(--line)] px-3 py-2.5 cursor-pointer rounded-xl bg-[var(--bg)]">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--dept)] w-4 h-4"
+                  checked={s.analyticsSettings?.trackFormFunnels !== false}
+                  onChange={(e) =>
+                    setS((prev) => ({
+                      ...prev,
+                      analyticsSettings: { ...prev.analyticsSettings, trackFormFunnels: e.target.checked },
+                    }))
+                  }
+                />
+                <div>
+                  <span className="font-bold block">Form Funnel Analytics</span>
+                  <span className="text-[8.5px] text-[var(--muted)]">Track form_start and form_submit conversion drop-offs</span>
+                </div>
+              </label>
+
+              <label className="font-meta text-[10px] flex items-center gap-2.5 border border-[var(--line)] px-3 py-2.5 cursor-pointer rounded-xl bg-[var(--bg)]">
+                <input
+                  type="checkbox"
+                  className="accent-[var(--dept)] w-4 h-4"
+                  checked={s.analyticsSettings?.trackScrollDepth !== false}
+                  onChange={(e) =>
+                    setS((prev) => ({
+                      ...prev,
+                      analyticsSettings: { ...prev.analyticsSettings, trackScrollDepth: e.target.checked },
+                    }))
+                  }
+                />
+                <div>
+                  <span className="font-bold block">Scroll Depth & Engagement</span>
+                  <span className="text-[8.5px] text-[var(--muted)]">Capture engagement metrics for long-form landing pages</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl text-[10px] font-meta space-y-1">
+            <div className="flex items-center gap-1.5 font-bold text-[var(--ink)]">
+              <span>🔒</span>
+              <span>Server-Side Conversions API (Meta CAPI & GA4 MP)</span>
+            </div>
+            <p className="text-[var(--muted)] text-[9px] leading-relaxed">
+              For 100% ad-block resilient server-side tracking, server secrets (Meta System User Access Token, GA4 API Secret) are secured via Firebase Cloud Functions endpoints rather than exposing them client-side.
+            </p>
+          </div>
+
+          <button
+            className="btn btn-dept !py-2.5 w-full justify-center"
+            onClick={() => mutate(() => saveSettings(s), "Analytics configuration saved — live now")}
+          >
+            Save Analytics Configuration
+          </button>
+        </div>
+      </div>
+
       {/* 2026 Audit-Compliant Financial Ledger & Accounting Reset Card */}
       <div className="mt-10 pt-8 border-t border-[var(--line)] space-y-4">
         <div className="flex items-center gap-2">
@@ -3214,26 +3395,54 @@ function SettingsManager() {
   );
 }
 
-/* ================= ANALYTICS (PRD §33) ================= */
+/* ================= ANALYTICS — WEBSITE INTELLIGENCE DASHBOARD ================= */
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
     <div className="border border-[var(--line)] p-5" style={{ background: "var(--panel)" }}>
       <span className={labelCls}>{label}</span>
-      <p className="font-display-wide text-3xl font-bold mt-2">{value}</p>
+      <p className="font-display-wide text-3xl font-bold mt-2" style={tone ? { color: tone } : undefined}>{value}</p>
       {sub && <p className="font-meta text-[9px] text-[var(--muted)] mt-1">{sub}</p>}
     </div>
   );
 }
 
-function Bar({ label, value, max }: { label: string; value: number; max: number }) {
+function Bar({ label, value, max, pct }: { label: string; value: number; max: number; pct?: string }) {
+  const width = max ? Math.round((value / max) * 100) : 0;
   return (
     <div className="flex items-center gap-3">
-      <span className="font-meta text-[9px] w-36 shrink-0 truncate">{label}</span>
-      <div className="flex-1 h-4 border border-[var(--line)]" style={{ background: "var(--bg)" }}>
-        <div className="h-full dept-bg" style={{ width: `${max ? Math.round((value / max) * 100) : 0}%` }} />
+      <span className="font-meta text-[9px] w-36 shrink-0 truncate" title={label}>{label}</span>
+      <div className="flex-1 h-4 border border-[var(--line)] overflow-hidden" style={{ background: "var(--bg)" }}>
+        <div className="h-full dept-bg transition-all duration-500" style={{ width: `${width}%` }} />
       </div>
-      <span className="font-meta text-[10px] w-8 text-right">{value}</span>
+      <span className="font-meta text-[10px] w-10 text-right shrink-0">{pct ?? value}</span>
+    </div>
+  );
+}
+
+type AnalyticsTab = "overview" | "traffic" | "services" | "funnel" | "campaigns" | "ai";
+
+const ANALYTICS_TABS: { id: AnalyticsTab; label: string; icon: string }[] = [
+  { id: "overview", label: "Overview", icon: "📊" },
+  { id: "traffic", label: "Traffic & Sources", icon: "🌐" },
+  { id: "services", label: "Service Intelligence", icon: "🎯" },
+  { id: "funnel", label: "Visitor Journey", icon: "🔽" },
+  { id: "campaigns", label: "Campaigns", icon: "📣" },
+  { id: "ai", label: "AI Insights", icon: "✨" },
+];
+
+function AnalyticsEmptyState({ tab }: { tab: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-[var(--line)] rounded-2xl" style={{ background: "var(--panel)" }}>
+      <span className="text-4xl mb-4">📡</span>
+      <p className="font-display text-sm font-bold uppercase">No data yet — {tab}</p>
+      <p className="font-meta text-[10px] text-[var(--muted)] mt-2 max-w-sm">
+        First-party tracking events will appear here once visitors browse the site. Enable tracking in{" "}
+        <strong>Site & CMS → Settings → Analytics & Tracking</strong>.
+      </p>
+      <p className="font-meta text-[9px] text-[var(--muted)] mt-3">
+        Requires Firebase to be configured (VITE_FIREBASE_PROJECT_ID set).
+      </p>
     </div>
   );
 }
@@ -3242,64 +3451,564 @@ function Analytics() {
   const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
+  const [tab, setTab] = useState<AnalyticsTab>("overview");
+  const [days, setDays] = useState(30);
+  const [hasData, setHasData] = useState<boolean | null>(null);
+
+  // Revenue / pipeline from orders (always available)
+  const revenue = orders.reduce((s, o) => s + o.amountPaid, 0);
+  const aov = orders.length ? Math.round(orders.reduce((s, o) => s + o.total, 0) / orders.length) : 0;
+  const outstanding = orders.reduce((s, o) => s + o.balanceDue, 0);
+  const byStatus = ORDER_STATUSES.map((s) => ({ label: s, value: orders.filter((o) => o.status === s).length }));
+  const statusMax = Math.max(1, ...byStatus.map((x) => x.value));
+  const serviceCount = new Map<string, number>();
+  orders.forEach((o) => o.items.forEach((i) => serviceCount.set(i.name, (serviceCount.get(i.name) ?? 0) + 1)));
+  const topOrderServices = [...serviceCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const svcMax = Math.max(1, ...topOrderServices.map(([, v]) => v));
+  const byIntent = ["quote", "consultation", "question"].map((i) => ({ label: i.toUpperCase(), value: leads.filter((l) => l.intent === i).length }));
+  const intentMax = Math.max(1, ...byIntent.map((x) => x.value));
+
+  // First-party analytics state
+  const [sessionCount, setSessionCount] = useState(0);
+  const [topPages, setTopPages] = useState<{ path: string; views: number }[]>([]);
+  const [trafficSources, setTrafficSources] = useState<{ source: string; sessions: number }[]>([]);
+  const [serviceInterest, setServiceInterest] = useState<{ service_name: string; service_slug: string; views: number }[]>([]);
+  const [funnelCounts, setFunnelCounts] = useState<Record<string, number>>({});
+  const [campaigns, setCampaigns] = useState<{ campaign: string; source: string; medium: string; sessions: number }[]>([]);
+  const [recentSessions, setRecentSessions] = useState<SessionData[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Lead source attribution breakdown from lead records
+  const leadSources = useMemo(() => {
+    const counts = new Map<string, number>();
+    leads.forEach((l) => {
+      const src = (l as any).first_touch_source || "direct";
+      counts.set(src, (counts.get(src) ?? 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([source, count]) => ({ source, count }));
+  }, [leads]);
 
   useEffect(() => {
     const unsubOrders = subscribeAllOrders(setOrders);
     const unsubLeads = subscribeLeads(setLeads);
-    return () => {
-      unsubOrders();
-      unsubLeads();
-    };
+    return () => { unsubOrders(); unsubLeads(); };
   }, []);
 
-  const revenue = orders.reduce((s, o) => s + o.amountPaid, 0);
-  const aov = orders.length ? Math.round(orders.reduce((s, o) => s + o.total, 0) / orders.length) : 0;
-  const outstanding = orders.reduce((s, o) => s + o.balanceDue, 0);
+  useEffect(() => {
+    void analyticsHasData().then(setHasData);
+  }, []);
 
-  const byStatus = ORDER_STATUSES.map((s) => ({ label: s, value: orders.filter((o) => o.status === s).length }));
-  const statusMax = Math.max(1, ...byStatus.map((x) => x.value));
+  useEffect(() => {
+    if (!firebaseReady) return;
+    setLoading(true);
+    Promise.all([
+      getSessionCount(days).then(setSessionCount),
+      getTopPages(days, 10).then(setTopPages),
+      getTrafficSources(days).then(setTrafficSources),
+      getServiceInterestRanking(days).then(setServiceInterest),
+      getFunnelCounts(days).then(setFunnelCounts),
+      getCampaignPerformance(days).then(setCampaigns),
+      getRecentSessions(15).then(setRecentSessions),
+    ]).finally(() => setLoading(false));
+  }, [days]);
 
-  const serviceCount = new Map<string, number>();
-  orders.forEach((o) => o.items.forEach((i) => serviceCount.set(i.name, (serviceCount.get(i.name) ?? 0) + 1)));
-  const topServices = [...serviceCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const svcMax = Math.max(1, ...topServices.map(([, v]) => v));
+  const sourceMax = Math.max(1, ...trafficSources.map((s) => s.sessions));
+  const interestMax = Math.max(1, ...serviceInterest.map((s) => s.views));
+  const pagesMax = Math.max(1, ...topPages.map((p) => p.views));
 
-  const byIntent = ["quote", "consultation", "question"].map((i) => ({ label: i.toUpperCase(), value: leads.filter((l) => l.intent === i).length }));
-  const intentMax = Math.max(1, ...byIntent.map((x) => x.value));
+  const funnelSteps = [
+    { key: "page_view", label: "Page Views", icon: "👁️", color: "var(--dept)" },
+    { key: "service_view", label: "Service Views", icon: "🎯", color: "#8b5cf6" },
+    { key: "form_start", label: "Form Started", icon: "✏️", color: "#f59e0b" },
+    { key: "form_submit", label: "Form Submitted", icon: "📨", color: "#06b6d4" },
+    { key: "lead_submit", label: "Leads Captured", icon: "🧲", color: "#10b981" },
+    { key: "checkout_start", label: "Checkout Started", icon: "🛒", color: "#f43f5e" },
+    { key: "checkout_complete", label: "Orders Completed", icon: "✅", color: "#22c55e" },
+  ];
+  // page_view uses page_views collection so we fallback to sessionCount * 2 as estimate
+  const funnelValues = funnelSteps.map((s) => s.key === "page_view" ? (funnelCounts[s.key] ?? sessionCount * 2) : (funnelCounts[s.key] ?? 0));
+  const funnelMax = Math.max(1, ...funnelValues);
 
   return (
     <div>
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-10">
-        <Stat label="REVENUE COLLECTED" value={money(revenue)} sub={`${orders.length} orders`} />
-        <Stat label="OUTSTANDING BALANCES" value={money(outstanding)} sub="deposits → final approval" />
-        <Stat label="AVERAGE ORDER VALUE" value={money(aov)} />
-        <Stat label="LEADS" value={String(leads.length)} sub={`${leads.filter((l) => l.status === "converted").length} converted`} />
+      {/* Analytics top toolbar: day range + refresh */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          {(["7", "14", "30", "90"] as const).map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(Number(d))}
+              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all ${
+                days === Number(d)
+                  ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold"
+                  : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
+              }`}
+            >
+              {d}d
+            </button>
+          ))}
+          {loading && <span className="font-meta text-[9px] text-[var(--muted)] animate-pulse">Loading…</span>}
+        </div>
+        {!firebaseReady && (
+          <span className="font-meta text-[9px] text-amber-500 border border-amber-500/30 px-3 py-1.5 rounded-xl bg-amber-500/5">
+            ⚠️ Firebase not configured — showing order/lead data only
+          </span>
+        )}
       </div>
-      <div className="grid lg:grid-cols-3 gap-8">
-        <div>
-          <span className="idx">/pipeline</span>
-          <div className="flex flex-col gap-2.5 mt-4">
-            {byStatus.map((x) => <Bar key={x.label} label={x.label} value={x.value} max={statusMax} />)}
-          </div>
-        </div>
-        <div>
-          <span className="idx">/popular-services</span>
-          <div className="flex flex-col gap-2.5 mt-4">
-            {topServices.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No orders yet.</p>}
-            {topServices.map(([name, v]) => <Bar key={name} label={name.toUpperCase()} value={v} max={svcMax} />)}
-          </div>
-        </div>
-        <div>
-          <span className="idx">/lead-intents</span>
-          <div className="flex flex-col gap-2.5 mt-4">
-            {byIntent.map((x) => <Bar key={x.label} label={x.label} value={x.value} max={intentMax} />)}
-          </div>
-          <p className="font-meta text-[9px] text-[var(--muted)] mt-6">Traffic + funnel visualizations live in GA4 once VITE_GA_ID is set.</p>
-        </div>
+
+      {/* Sub-tab strip */}
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 mb-8">
+        {ANALYTICS_TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`font-meta text-[10px] px-3 py-2 rounded-xl border transition-all shrink-0 flex items-center gap-1.5 ${
+              tab === t.id
+                ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold"
+                : "border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--dept)]"
+            }`}
+          >
+            <span>{t.icon}</span>
+            <span>{t.label.toUpperCase()}</span>
+          </button>
+        ))}
       </div>
+
+      {/* ─── OVERVIEW TAB ─── */}
+      {tab === "overview" && (
+        <div className="space-y-10">
+          {/* KPI row 1 — revenue */}
+          <div>
+            <span className="idx">/studio-revenue</span>
+            <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
+              <Stat label="REVENUE COLLECTED" value={money(revenue)} sub={`${orders.length} orders`} tone="#22c55e" />
+              <Stat label="OUTSTANDING BALANCES" value={money(outstanding)} sub="deposits → final approval" />
+              <Stat label="AVERAGE ORDER VALUE" value={money(aov)} />
+              <Stat label="LEADS" value={String(leads.length)} sub={`${leads.filter((l) => l.status === "converted").length} converted`} />
+            </div>
+          </div>
+
+          {/* KPI row 2 — web intelligence */}
+          {firebaseReady && (
+            <div>
+              <span className="idx">/web-intelligence ({days}d)</span>
+              <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
+                <Stat label="SESSIONS" value={sessionCount.toLocaleString()} sub={`last ${days} days`} tone="var(--dept)" />
+                <Stat label="SERVICE VIEWS" value={(funnelCounts["service_view"] ?? 0).toLocaleString()} sub="interested visitors" />
+                <Stat label="FORM STARTS" value={(funnelCounts["form_start"] ?? 0).toLocaleString()} sub="intent signals" />
+                <Stat label="FORM SUBMITS" value={(funnelCounts["form_submit"] ?? 0).toLocaleString()} sub="→ leads captured" />
+              </div>
+            </div>
+          )}
+
+          {/* Pipeline + popular services + lead intents */}
+          <div className="grid lg:grid-cols-3 gap-8">
+            <div>
+              <span className="idx">/pipeline</span>
+              <div className="flex flex-col gap-2.5 mt-4">
+                {byStatus.map((x) => <Bar key={x.label} label={x.label} value={x.value} max={statusMax} />)}
+              </div>
+            </div>
+            <div>
+              <span className="idx">/top-ordered-services</span>
+              <div className="flex flex-col gap-2.5 mt-4">
+                {topOrderServices.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No orders yet.</p>}
+                {topOrderServices.map(([name, v]) => <Bar key={name} label={name.toUpperCase()} value={v} max={svcMax} />)}
+              </div>
+            </div>
+            <div>
+              <span className="idx">/lead-intents</span>
+              <div className="flex flex-col gap-2.5 mt-4">
+                {byIntent.map((x) => <Bar key={x.label} label={x.label} value={x.value} max={intentMax} />)}
+              </div>
+              {firebaseReady && leadSources.length > 0 && (
+                <div className="mt-6">
+                  <span className="idx">/lead-attribution</span>
+                  <div className="flex flex-col gap-2 mt-3">
+                    {leadSources.slice(0, 5).map((s) => (
+                      <div key={s.source} className="flex items-center justify-between font-meta text-[10px]">
+                        <span className="text-[var(--muted)] truncate max-w-[120px]">{s.source}</span>
+                        <span className="font-bold dept-accent">{s.count} lead{s.count !== 1 ? "s" : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Live sessions preview */}
+          {firebaseReady && recentSessions.length > 0 && (
+            <div>
+              <span className="idx">/recent-sessions</span>
+              <div className="mt-4 border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-[var(--line)]">
+                      {["Time", "Device", "Landing Page", "Source", "Pages"].map((h) => (
+                        <th key={h} className="px-4 py-2.5 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentSessions.slice(0, 8).map((s, i) => (
+                      <tr key={s.session_id} className={`border-b border-[var(--line)] last:border-0 ${i % 2 === 0 ? "" : "bg-[var(--bg)]"}`}>
+                        <td className="px-4 py-2 font-meta text-[9px] text-[var(--muted)]">
+                          {new Date(s.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-2 font-meta text-[9px]">{s.device_type}</td>
+                        <td className="px-4 py-2 font-meta text-[9px] truncate max-w-[160px]" title={s.landing_page}>{s.landing_page || "/"}</td>
+                        <td className="px-4 py-2 font-meta text-[9px] dept-accent">{s.utm_source || "direct"}</td>
+                        <td className="px-4 py-2 font-meta text-[9px] font-bold">{s.page_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {!firebaseReady && <AnalyticsEmptyState tab="Web Intelligence" />}
+        </div>
+      )}
+
+      {/* ─── TRAFFIC & SOURCES TAB ─── */}
+      {tab === "traffic" && (
+        <div className="space-y-10">
+          {!firebaseReady || (hasData === false) ? (
+            <AnalyticsEmptyState tab="Traffic & Sources" />
+          ) : (
+            <>
+              <div className="grid lg:grid-cols-2 gap-8">
+                <div>
+                  <span className="idx">/traffic-sources ({days}d)</span>
+                  <div className="flex flex-col gap-2.5 mt-4">
+                    {trafficSources.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No source data yet.</p>}
+                    {trafficSources.map((s) => (
+                      <Bar key={s.source} label={s.source.toUpperCase()} value={s.sessions} max={sourceMax} />
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <span className="idx">/top-pages ({days}d)</span>
+                  <div className="flex flex-col gap-2.5 mt-4">
+                    {topPages.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No page view data yet.</p>}
+                    {topPages.map((p) => (
+                      <Bar key={p.path} label={p.path} value={p.views} max={pagesMax} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Source breakdown table */}
+              {trafficSources.length > 0 && (
+                <div>
+                  <span className="idx">/source-breakdown</span>
+                  <div className="mt-4 border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-[var(--line)]">
+                          {["Source", "Sessions", "Share"].map((h) => (
+                            <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trafficSources.map((s, i) => {
+                          const total = trafficSources.reduce((sum, x) => sum + x.sessions, 0);
+                          const share = total ? Math.round((s.sessions / total) * 100) : 0;
+                          return (
+                            <tr key={s.source} className={`border-b border-[var(--line)] last:border-0 ${i % 2 === 0 ? "" : "bg-[var(--bg)]"}`}>
+                              <td className="px-4 py-2.5 font-meta text-[11px] font-bold">{s.source}</td>
+                              <td className="px-4 py-2.5 font-meta text-[10px]">{s.sessions.toLocaleString()}</td>
+                              <td className="px-4 py-2.5 font-meta text-[10px] dept-accent">{share}%</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ─── SERVICE INTELLIGENCE TAB ─── */}
+      {tab === "services" && (
+        <div className="space-y-10">
+          {!firebaseReady || (hasData === false) ? (
+            <AnalyticsEmptyState tab="Service Intelligence" />
+          ) : (
+            <>
+              <div className="grid lg:grid-cols-2 gap-8">
+                <div>
+                  <span className="idx">/service-interest ({days}d)</span>
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Which services attract the most visitor attention</p>
+                  <div className="flex flex-col gap-2.5">
+                    {serviceInterest.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No service view data yet.</p>}
+                    {serviceInterest.map((s) => (
+                      <Bar key={s.service_slug} label={s.service_name} value={s.views} max={interestMax} />
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <span className="idx">/service-to-order</span>
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Services actually ordered (from order records)</p>
+                  <div className="flex flex-col gap-2.5">
+                    {topOrderServices.length === 0 && <p className="font-meta text-[10px] text-[var(--muted)]">No orders yet.</p>}
+                    {topOrderServices.map(([name, v]) => <Bar key={name} label={name} value={v} max={svcMax} />)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Interest vs Conversion insight */}
+              {serviceInterest.length > 0 && topOrderServices.length > 0 && (
+                <div>
+                  <span className="idx">/interest-vs-conversion</span>
+                  <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-4">Services with high interest but no orders = biggest conversion opportunity</p>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {serviceInterest.slice(0, 6).map((s) => {
+                      const orderedCount = serviceCount.get(s.service_name) ?? 0;
+                      const cvr = s.views > 0 ? Math.round((orderedCount / s.views) * 100) : 0;
+                      return (
+                        <div key={s.service_slug} className="border border-[var(--line)] p-4" style={{ background: "var(--panel)" }}>
+                          <p className="font-display text-[11px] font-bold uppercase truncate">{s.service_name}</p>
+                          <div className="flex items-center justify-between mt-2 font-meta text-[10px]">
+                            <span className="text-[var(--muted)]">{s.views} views</span>
+                            <span className="font-bold" style={{ color: cvr > 5 ? "#22c55e" : cvr > 0 ? "#f59e0b" : "#ef4444" }}>
+                              {cvr}% CVR
+                            </span>
+                          </div>
+                          <div className="w-full h-1 bg-[var(--line)] mt-2 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full dept-bg" style={{ width: `${Math.min(100, cvr * 5)}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ─── VISITOR JOURNEY (FUNNEL) TAB ─── */}
+      {tab === "funnel" && (
+        <div className="space-y-8">
+          {!firebaseReady || (hasData === false) ? (
+            <AnalyticsEmptyState tab="Visitor Journey" />
+          ) : (
+            <>
+              <div>
+                <span className="idx">/conversion-funnel ({days}d)</span>
+                <p className="font-meta text-[10px] text-[var(--muted)] mt-1 mb-6">Full visitor journey from first touch to completed order</p>
+                <div className="space-y-2">
+                  {funnelSteps.map((step, i) => {
+                    const v = funnelValues[i];
+                    const prevV = i > 0 ? funnelValues[i - 1] : null;
+                    const dropPct = prevV && prevV > 0 ? Math.round(((prevV - v) / prevV) * 100) : null;
+                    return (
+                      <div key={step.key} className="relative">
+                        {i > 0 && dropPct !== null && (
+                          <div className="flex items-center gap-2 mb-1 ml-40">
+                            <div className="h-px w-4 bg-[var(--line)]" />
+                            <span className="font-meta text-[9px] text-[var(--muted)]">
+                              {dropPct > 0 ? `↓ ${dropPct}% drop-off` : "→ maintained"}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg shrink-0 w-8 text-center">{step.icon}</span>
+                          <span className="font-meta text-[10px] w-32 shrink-0 text-[var(--muted)]">{step.label}</span>
+                          <div className="flex-1 h-8 border border-[var(--line)] overflow-hidden" style={{ background: "var(--bg)" }}>
+                            <div
+                              className="h-full transition-all duration-700"
+                              style={{
+                                width: `${funnelMax ? Math.round((v / funnelMax) * 100) : 0}%`,
+                                background: step.color,
+                                opacity: 0.85,
+                              }}
+                            />
+                          </div>
+                          <span className="font-display text-sm font-bold w-12 text-right shrink-0">{v.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Funnel KPI cards */}
+              <div className="grid sm:grid-cols-3 gap-3">
+                {(() => {
+                  const sv = funnelCounts["service_view"] ?? 0;
+                  const fs = funnelCounts["form_start"] ?? 0;
+                  const ls = funnelCounts["lead_submit"] ?? 0;
+                  const cc = funnelCounts["checkout_complete"] ?? 0;
+                  const formCvr = sv > 0 ? ((fs / sv) * 100).toFixed(1) : "0.0";
+                  const leadCvr = fs > 0 ? ((ls / fs) * 100).toFixed(1) : "0.0";
+                  const orderCvr = ls > 0 ? ((cc / ls) * 100).toFixed(1) : "0.0";
+                  return (
+                    <>
+                      <Stat label="VIEW → FORM CVR" value={`${formCvr}%`} sub="Service views that start a form" />
+                      <Stat label="FORM → LEAD CVR" value={`${leadCvr}%`} sub="Form starts that submit" />
+                      <Stat label="LEAD → ORDER CVR" value={`${orderCvr}%`} sub="Leads that place an order" />
+                    </>
+                  );
+                })()}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ─── CAMPAIGNS TAB ─── */}
+      {tab === "campaigns" && (
+        <div className="space-y-8">
+          {!firebaseReady || (hasData === false) ? (
+            <AnalyticsEmptyState tab="Campaigns" />
+          ) : campaigns.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-[var(--line)] rounded-2xl" style={{ background: "var(--panel)" }}>
+              <span className="text-4xl mb-4">📣</span>
+              <p className="font-display text-sm font-bold uppercase">No UTM Campaign Data</p>
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-2 max-w-sm">
+                Add UTM parameters to your marketing links to track campaigns here.
+                Example: <code className="text-[9px] bg-[var(--bg)] px-1 py-0.5 rounded">?utm_source=instagram&utm_medium=social&utm_campaign=aug2026</code>
+              </p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <span className="idx">/utm-campaigns ({days}d)</span>
+                <div className="mt-4 border border-[var(--line)] overflow-hidden rounded-2xl" style={{ background: "var(--panel)" }}>
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-[var(--line)]">
+                        {["Campaign", "Source", "Medium", "Sessions"].map((h) => (
+                          <th key={h} className="px-4 py-3 font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {campaigns.map((c, i) => (
+                        <tr key={`${c.campaign}-${i}`} className={`border-b border-[var(--line)] last:border-0 ${i % 2 === 0 ? "" : "bg-[var(--bg)]"}`}>
+                          <td className="px-4 py-2.5 font-display text-[11px] font-bold">{c.campaign}</td>
+                          <td className="px-4 py-2.5 font-meta text-[10px] dept-accent">{c.source}</td>
+                          <td className="px-4 py-2.5 font-meta text-[10px] text-[var(--muted)]">{c.medium}</td>
+                          <td className="px-4 py-2.5 font-meta text-[10px] font-bold">{c.sessions}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <span className="idx">/campaign-performance</span>
+                <div className="flex flex-col gap-2.5 mt-4">
+                  {campaigns.slice(0, 8).map((c) => (
+                    <Bar
+                      key={`${c.campaign}|${c.source}`}
+                      label={`${c.campaign} (${c.source})`}
+                      value={c.sessions}
+                      max={Math.max(1, ...campaigns.map((x) => x.sessions))}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ─── AI INSIGHTS TAB ─── */}
+      {tab === "ai" && (
+        <div className="space-y-8">
+          {/* AI Summary placeholder — will activate when Gemini key is configured */}
+          <div className="border border-[var(--line)] p-8 rounded-2xl text-center" style={{ background: "var(--panel)" }}>
+            <span className="text-4xl">✨</span>
+            <p className="font-display text-sm font-bold uppercase mt-4">AI Analytics Insights</p>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-2 max-w-md mx-auto">
+              Powered by Gemini. Automatically summarize your last 7 days, detect traffic anomalies, and get natural language answers about your visitors.
+            </p>
+            <div className="mt-6 p-4 border border-amber-500/30 bg-amber-500/5 rounded-xl text-left max-w-md mx-auto">
+              <p className="font-meta text-[10px] text-amber-600 font-bold uppercase">Configuration Required</p>
+              <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
+                Add <code className="bg-[var(--bg)] px-1 rounded">VITE_GEMINI_API_KEY</code> to your <code>.env.local</code> to unlock AI insights. This key is admin-only and never exposed to visitors.
+              </p>
+            </div>
+          </div>
+
+          {/* Insight cards — static for now, AI-generated when key is available */}
+          <div>
+            <span className="idx">/smart-insights</span>
+            <div className="grid sm:grid-cols-2 gap-4 mt-4">
+              {[
+                {
+                  icon: "🔥",
+                  title: "Top Conversion Opportunity",
+                  body: `Your most viewed service${serviceInterest[0] ? ` (${serviceInterest[0].service_name})` : ""} has visitors showing high intent. Consider adding a prominent CTA or special offer to this page.`,
+                  tone: "#ef4444",
+                },
+                {
+                  icon: "🌱",
+                  title: "Traffic Source to Grow",
+                  body: trafficSources.length > 0
+                    ? `"${trafficSources[0].source}" drives your most sessions. Double down on this channel for the highest ROI on new traffic.`
+                    : "Add UTM tracking to your social posts to identify your best-performing traffic sources.",
+                  tone: "#22c55e",
+                },
+                {
+                  icon: "⚡",
+                  title: "Funnel Improvement",
+                  body: "Most visitor drop-off happens between service views and form submissions. A time-limited offer or social proof near the CTA could reduce this gap.",
+                  tone: "#f59e0b",
+                },
+                {
+                  icon: "📈",
+                  title: "Lead Quality Signal",
+                  body: leads.filter((l) => l.first_touch_source).length > 0
+                    ? `${leads.filter((l) => l.first_touch_source).length} of your leads have full UTM attribution. Review their source breakdown to prioritize your best-converting channels.`
+                    : "Enable first-party tracking to start capturing UTM attribution on every lead submission for smarter channel spend.",
+                  tone: "var(--dept)",
+                },
+              ].map((insight) => (
+                <div key={insight.title} className="border border-[var(--line)] p-5" style={{ background: "var(--panel)" }}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-xl">{insight.icon}</span>
+                    <p className="font-display text-[12px] font-bold uppercase" style={{ color: insight.tone }}>{insight.title}</p>
+                  </div>
+                  <p className="font-meta text-[11px] text-[var(--muted)] leading-relaxed">{insight.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Natural language query interface — placeholder */}
+          <div>
+            <span className="idx">/natural-language-query</span>
+            <div className="mt-4 border border-[var(--line)] p-6 rounded-2xl" style={{ background: "var(--panel)" }}>
+              <p className="font-meta text-[10px] text-[var(--muted)] mb-3">Ask a question about your analytics (requires Gemini API key):</p>
+              <div className="flex gap-3">
+                <input
+                  className={inputCls}
+                  placeholder="e.g. Which service had the most interest last week?"
+                  disabled
+                />
+                <button disabled className="btn btn-dept opacity-40 shrink-0">Ask ✨</button>
+              </div>
+              <p className="font-meta text-[9px] text-[var(--muted)] mt-2">Configure VITE_GEMINI_API_KEY to enable</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 /* ================= HOMEPAGE CMS (PRD §85) ================= */
 

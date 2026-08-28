@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { initTracking, trackEvent } from "./analytics";
 
 const SITE = "https://socialkon10.com";
 
@@ -95,6 +96,7 @@ export const faqLd = (faqs: { q: string; a: string }[]) => ({
 /**
  * Analytics bootstrap (PRD §60) — loads GA4 and/or Meta Pixel only when
  * IDs are configured via env. No IDs, no third-party scripts.
+ * Also initializes the first-party tracking SDK.
  */
 export function initAnalytics() {
   const gaId = import.meta.env.VITE_GA_ID as string | undefined;
@@ -125,18 +127,14 @@ export function initAnalytics() {
       w.fbq("track", "PageView");
     }
   }
+
+  // Initialize first-party tracking SDK (non-blocking)
+  initTracking();
 }
 
-/** Analytics event helper — fires to GA4 / Meta Pixel / dataLayer when configured. */
+/** Analytics event helper — delegates to the unified analytics SDK.
+ *  Fires to GA4, Meta Pixel, dataLayer, and Firestore when configured.
+ *  Retained for backward-compatibility with all existing track() call sites. */
 export function track(event: string, params?: Record<string, unknown>) {
-  if (typeof window !== "undefined" && (window as any).gtag) {
-    (window as any).gtag("event", event, params);
-  }
-  if (typeof window !== "undefined" && (window as any).fbq) {
-    (window as any).fbq("trackCustom", event, params);
-  }
-  if (typeof window !== "undefined" && (window as any).dataLayer) {
-    (window as any).dataLayer.push({ event, ...params });
-  }
-  if (import.meta.env.DEV) console.info("[track]", event, params ?? "");
+  trackEvent(event, params ?? {});
 }

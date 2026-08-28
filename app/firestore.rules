@@ -245,6 +245,29 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // First-Party Website Intelligence & Analytics Engine (PRD §1-5)
+    // Public/anonymous creation for event streaming; admin-only reads & management
+    match /analytics_sessions/{sessionId} {
+      allow create, update: if true;
+      allow read, delete: if isAdmin();
+    }
+    match /analytics_events/{eventId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+    match /analytics_page_views/{viewId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+    match /analytics_service_interest/{interestId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+    match /analytics_conversions/{convId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
     // Fallback block
     match /{document=**} {
       allow read, write: if false;
