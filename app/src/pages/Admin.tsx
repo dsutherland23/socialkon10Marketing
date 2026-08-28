@@ -593,7 +593,6 @@ function Orders() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
-  const [resetAccountingOpen, setResetAccountingOpen] = useState(false);
   const [mobileCockpitOpen, setMobileCockpitOpen] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ACTIVE");
   const [search, setSearch] = useState("");
@@ -891,24 +890,13 @@ function Orders() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search client, ID, email, item…"
-            className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-56"
-          />
-          <button
-            type="button"
-            onClick={() => setResetAccountingOpen(true)}
-            className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
-            title="Zero out accounting ledger and reset revenue metrics ($0.00)"
-          >
-            <span>⚠️</span>
-            <span>Zero Out Accounting</span>
-          </button>
-        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search client, ID, email, item…"
+          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+        />
       </div>
 
       {/* Closed-business report — visible in the History archive */}
@@ -1355,17 +1343,6 @@ function Orders() {
           )}
         </div>
       )}
-
-      <ResetAccountingModal
-        orders={orders}
-        isOpen={resetAccountingOpen}
-        onClose={() => setResetAccountingOpen(false)}
-        onResetComplete={() => {
-          setSelectedId("");
-          clearSelection();
-          reload();
-        }}
-      />
     </div>
   );
 }
@@ -3265,7 +3242,6 @@ function Analytics() {
   const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
-  const [resetAccountingOpen, setResetAccountingOpen] = useState(false);
 
   useEffect(() => {
     const unsubOrders = subscribeAllOrders(setOrders);
@@ -3293,34 +3269,12 @@ function Analytics() {
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div>
-          <span className="idx">/financial-ledger</span>
-          <h3 className="font-display text-lg font-bold uppercase mt-1">Financial & Studio Analytics</h3>
-        </div>
-        <button
-          type="button"
-          onClick={() => setResetAccountingOpen(true)}
-          className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
-          title="Zero out accounting ledger and reset revenue metrics ($0.00)"
-        >
-          <span>⚠️</span>
-          <span>Zero Out Accounting ($0.00)</span>
-        </button>
-      </div>
-
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-10">
         <Stat label="REVENUE COLLECTED" value={money(revenue)} sub={`${orders.length} orders`} />
         <Stat label="OUTSTANDING BALANCES" value={money(outstanding)} sub="deposits → final approval" />
         <Stat label="AVERAGE ORDER VALUE" value={money(aov)} />
         <Stat label="LEADS" value={String(leads.length)} sub={`${leads.filter((l) => l.status === "converted").length} converted`} />
       </div>
-
-      <ResetAccountingModal
-        orders={orders}
-        isOpen={resetAccountingOpen}
-        onClose={() => setResetAccountingOpen(false)}
-      />
       <div className="grid lg:grid-cols-3 gap-8">
         <div>
           <span className="idx">/pipeline</span>
