@@ -1161,11 +1161,9 @@ export async function getGeographicDistribution(days = 30): Promise<GeoDistribut
     cities: Set<string>;
   }>();
 
-  // If no sessions, provide default studio region
+  // If no sessions, return empty array (strict live data only)
   if (filtered.length === 0) {
-    return [
-      { country_code: "JM", country_name: "Jamaica", flag: "🇯🇲", sessions: 1, share_pct: 100, conversions: 0, cvr: 0, top_cities: ["Kingston"] }
-    ];
+    return [];
   }
 
   filtered.forEach((s) => {

@@ -48,31 +48,66 @@ export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: 
     flag: "🇯🇲",
   };
 
-  // Generate interactive map points based on available countries and real session data
+  // Generate interactive map points ONLY for countries with live traffic or session activity
   const mapPoints: MapPoint[] = useMemo(() => {
-    return Object.entries(COUNTRY_GEO_COORDS).map(([code, meta]) => {
-      const record = dataMap.get(code);
-      return {
-        lat: meta.lat,
-        lng: meta.lng,
-        label: record?.country_name || meta.name,
-        code,
-        sessions: record?.sessions ?? 0,
-        live: liveCountByCountry[code] || 0,
-        flag: record?.flag || meta.flag,
-      };
-    });
-  }, [dataMap, liveCountByCountry]);
+    const points: MapPoint[] = [];
 
-  // Generate telemetry traffic arcs connecting top active visitors to the agency hub
+    // Add agency central studio hub
+    const jmRecord = dataMap.get("JM");
+    points.push({
+      ...HUB_POINT,
+      sessions: jmRecord?.sessions ?? 0,
+      live: liveCountByCountry["JM"] || 0,
+    });
+
+    // Add countries with verified recorded sessions (> 0)
+    data.forEach((item) => {
+      if (item.country_code === "JM" || item.sessions <= 0) return;
+      const coords = COUNTRY_GEO_COORDS[item.country_code];
+      if (coords) {
+        points.push({
+          lat: coords.lat,
+          lng: coords.lng,
+          label: item.country_name || coords.name,
+          code: item.country_code,
+          sessions: item.sessions,
+          live: liveCountByCountry[item.country_code] || 0,
+          flag: item.flag || coords.flag,
+        });
+      }
+    });
+
+    // Add countries with currently active live visitors
+    Object.entries(liveCountByCountry).forEach(([code, liveCount]) => {
+      if (code === "JM" || liveCount <= 0) return;
+      if (!points.some((p) => p.code === code)) {
+        const coords = COUNTRY_GEO_COORDS[code];
+        if (coords) {
+          const record = dataMap.get(code);
+          points.push({
+            lat: coords.lat,
+            lng: coords.lng,
+            label: record?.country_name || coords.name,
+            code,
+            sessions: record?.sessions ?? 0,
+            live: liveCount,
+            flag: record?.flag || coords.flag,
+          });
+        }
+      }
+    });
+
+    return points;
+  }, [data, dataMap, liveCountByCountry, HUB_POINT]);
+
+  // Generate telemetry traffic arcs connecting ONLY verified live visitors / active sessions to the agency hub
   const mapDots: MapDot[] = useMemo(() => {
     const dots: MapDot[] = [];
     const activeCountries = data
-      .filter((d) => d.country_code !== "JM" && COUNTRY_GEO_COORDS[d.country_code])
+      .filter((d) => d.country_code !== "JM" && (d.sessions > 0 || (liveCountByCountry[d.country_code] || 0) > 0) && COUNTRY_GEO_COORDS[d.country_code])
       .sort((a, b) => b.sessions - a.sessions);
 
-    // If active traffic is detected, connect traffic streams to the hub
-    activeCountries.slice(0, 8).forEach((item) => {
+    activeCountries.slice(0, 10).forEach((item) => {
       const coords = COUNTRY_GEO_COORDS[item.country_code];
       if (coords) {
         dots.push({
@@ -82,34 +117,16 @@ export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: 
             label: item.country_name,
             code: item.country_code,
             flag: item.flag,
+            sessions: item.sessions,
+            live: liveCountByCountry[item.country_code] || 0,
           },
           end: HUB_POINT,
         });
       }
     });
 
-    // Fallback default demonstration streams if telemetry is booting up
-    if (dots.length === 0) {
-      const defaults = ["US", "GB", "CA", "TT", "DE", "BB"];
-      defaults.forEach((code) => {
-        const coords = COUNTRY_GEO_COORDS[code];
-        if (coords) {
-          dots.push({
-            start: {
-              lat: coords.lat,
-              lng: coords.lng,
-              label: coords.name,
-              code,
-              flag: coords.flag,
-            },
-            end: HUB_POINT,
-          });
-        }
-      });
-    }
-
     return dots;
-  }, [data, HUB_POINT]);
+  }, [data, liveCountByCountry, HUB_POINT]);
 
   const activeRecord = hoveredCode ? dataMap.get(hoveredCode) : selectedCode ? dataMap.get(selectedCode) : null;
 
@@ -150,6 +167,13 @@ export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: 
             setHoveredCode(pt?.code || null);
           }}
         />
+
+        {mapDots.length === 0 && (
+          <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-[var(--panel)]/90 border border-[var(--line)] backdrop-blur-sm flex items-center gap-1.5 font-meta text-[8.5px] text-[var(--muted)] pointer-events-none">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Live Telemetry Engine Active · Tracking Real Visitor Nodes Only</span>
+          </div>
+        )}
       </div>
 
       {/* Interactive Detail Overlay */}

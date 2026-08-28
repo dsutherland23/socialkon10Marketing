@@ -3998,10 +3998,18 @@ function Analytics() {
                 <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
                   <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider block">DOMINANT MARKET</span>
                   <p className="font-display text-base font-bold mt-1 flex items-center gap-1.5">
-                    <span>{geoData[0]?.flag || "🇯🇲"}</span>
-                    <span>{geoData[0]?.country_name || "Jamaica"}</span>
+                    {geoData[0] ? (
+                      <>
+                        <span>{geoData[0].flag}</span>
+                        <span>{geoData[0].country_name}</span>
+                      </>
+                    ) : (
+                      <span className="text-[var(--muted)] font-normal text-sm">No traffic recorded yet</span>
+                    )}
                   </p>
-                  <span className="font-meta text-[9px] text-[var(--muted)] mt-0.5 block">{geoData[0]?.share_pct || 100}% of all visitors</span>
+                  <span className="font-meta text-[9px] text-[var(--muted)] mt-0.5 block">
+                    {geoData[0] ? `${geoData[0].share_pct}% of all visitors` : "0% total share"}
+                  </span>
                 </div>
 
                 <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
@@ -4015,7 +4023,7 @@ function Analytics() {
                 <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
                   <span className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider block">TOP REGIONAL CVR</span>
                   <p className="font-display text-base font-bold mt-1 font-mono text-emerald-500">
-                    {Math.max(0, ...geoData.map((g) => g.cvr))}% CVR
+                    {geoData.length > 0 ? `${Math.max(0, ...geoData.map((g) => g.cvr))}% CVR` : "0% CVR"}
                   </p>
                   <span className="font-meta text-[9px] text-[var(--muted)] mt-0.5 block">Highest converting region</span>
                 </div>
