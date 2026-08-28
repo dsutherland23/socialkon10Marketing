@@ -95,7 +95,15 @@ export function Configurator({ s, onAdd, onOrder }: {
                 <legend className="idx">/{group.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")} — choose your variation</legend>
                 <span className="font-meta text-[9px] text-[var(--muted)]">{group.options.length} options</span>
               </div>
-              <div className={`grid gap-2.5 ${group.options.length <= 2 ? "sm:grid-cols-2" : group.options.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label={group.name}>
+              <div
+                className={`grid gap-3 ${
+                  group.options.length <= 2
+                    ? "grid-cols-1 sm:grid-cols-2"
+                    : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+                }`}
+                role="group"
+                aria-label={group.name}
+              >
                 {group.options.map((opt) => {
                   const active = currentOptId === opt.id;
                   return (
@@ -104,28 +112,57 @@ export function Configurator({ s, onAdd, onOrder }: {
                       type="button"
                       onClick={() => selectVariant(group.id, opt.id, opt.price)}
                       aria-pressed={active}
-                      className={`text-left border p-4 transition-all rounded-2xl relative flex flex-col justify-between ${
+                      className={`text-left border p-4 sm:p-4.5 transition-all rounded-2xl relative flex flex-col justify-between overflow-hidden ${
                         active
-                          ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-xs"
-                          : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                          ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-2 ring-[var(--dept)]/40 shadow-sm"
+                          : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)] hover:shadow-xs"
                       }`}
                     >
-                      <div>
+                      <div className="w-full min-w-0">
+                        {/* Header: Title + Radio */}
                         <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            {opt.icon && <span className="text-base shrink-0">{opt.icon}</span>}
-                            <span className="font-display text-xs sm:text-sm font-bold uppercase leading-tight">{opt.name}</span>
+                          <div className="flex items-start gap-2 min-w-0 flex-1">
+                            {opt.icon && <span className="text-base shrink-0 mt-0.5">{opt.icon}</span>}
+                            <span className="font-display text-xs sm:text-sm font-bold uppercase tracking-tight leading-snug break-words">
+                              {opt.name}
+                            </span>
                           </div>
-                          <span className="font-display-wide text-sm font-bold dept-accent shrink-0">{money(opt.price)}</span>
+                          <span
+                            className={`w-4 h-4 rounded-full border shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                              active
+                                ? "border-[var(--dept)] bg-[var(--dept)]"
+                                : "border-[var(--line-strong)] bg-transparent"
+                            }`}
+                          >
+                            {active && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </span>
                         </div>
+
+                        {/* Dedicated Price Block (Never overlaps with title) */}
+                        <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
+                          <span className="font-display-wide text-base sm:text-lg font-bold dept-accent tracking-tight">
+                            {money(opt.price)}
+                          </span>
+                          {opt.isDefault && (
+                            <span className="font-meta text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-[var(--dept)]/10 text-[var(--dept)] border border-[var(--dept)]/25 font-semibold">
+                              Standard
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Description */}
                         {opt.blurb && (
-                          <p className="text-[11px] text-[var(--muted)] mt-2 leading-relaxed">{opt.blurb}</p>
+                          <p className="text-[11px] text-[var(--muted)] mt-2 leading-relaxed break-words">
+                            {opt.blurb}
+                          </p>
                         )}
                       </div>
+
+                      {/* Footer Badges */}
                       {(opt.turnaround || opt.revisions !== undefined) && (
-                        <div className="mt-3 pt-2.5 border-t border-[var(--line)]/60 flex items-center justify-between font-meta text-[8.5px] text-[var(--muted)]">
-                          {opt.turnaround && <span>⏱️ {opt.turnaround}</span>}
-                          {opt.revisions !== undefined && <span>🔄 {opt.revisions} revisions</span>}
+                        <div className="mt-3.5 pt-2.5 border-t border-[var(--line)]/60 flex flex-wrap items-center justify-between gap-1.5 font-meta text-[8.5px] text-[var(--muted)]">
+                          {opt.turnaround && <span className="inline-flex items-center gap-1">⏱️ {opt.turnaround}</span>}
+                          {opt.revisions !== undefined && <span className="inline-flex items-center gap-1">🔄 {opt.revisions} revisions</span>}
                         </div>
                       )}
                     </button>
@@ -136,11 +173,19 @@ export function Configurator({ s, onAdd, onOrder }: {
           );
         })}
 
-        {/* package tier (journey A — choose your package) */}
+        {/* package tier (journey A — choose your tier) */}
         {tiers.length > 0 && (
           <fieldset>
             <legend className="idx">/package — choose your tier</legend>
-            <div className="mt-4 grid sm:grid-cols-3 gap-2" role="group" aria-label="Package tier">
+            <div
+              className={`mt-4 grid gap-3 ${
+                tiers.length <= 2
+                  ? "grid-cols-1 sm:grid-cols-2"
+                  : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+              }`}
+              role="group"
+              aria-label="Package tier"
+            >
               {tiers.map((t) => {
                 const active = tierId === t.id;
                 return (
@@ -148,20 +193,46 @@ export function Configurator({ s, onAdd, onOrder }: {
                     key={t.id}
                     onClick={() => { setTierId(t.id); track("design_tier_select", { service: s.slug, tier: t.id, price: t.price }); }}
                     aria-pressed={active}
-                    className="text-left border px-4 py-4 transition-colors rounded-2xl"
-                    style={active
-                      ? { borderColor: "var(--dept)", background: "var(--dept-soft)" }
-                      : { borderColor: "var(--line)", background: "var(--panel)" }}
+                    className={`text-left border p-4 sm:p-4.5 transition-all rounded-2xl relative flex flex-col justify-between overflow-hidden ${
+                      active
+                        ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-2 ring-[var(--dept)]/40 shadow-sm"
+                        : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)] hover:shadow-xs"
+                    }`}
                   >
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="font-display text-sm font-bold uppercase">{t.name}</span>
-                      <span className="font-display-wide text-base font-bold dept-accent">{money(t.price)}</span>
-                    </span>
-                    <span className="block text-[11px] text-[var(--muted)] mt-1.5 leading-snug">{t.blurb}</span>
+                    <div className="w-full min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-display text-xs sm:text-sm font-bold uppercase tracking-tight leading-snug break-words">
+                          {t.name}
+                        </span>
+                        <span
+                          className={`w-4 h-4 rounded-full border shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                            active
+                              ? "border-[var(--dept)] bg-[var(--dept)]"
+                              : "border-[var(--line-strong)] bg-transparent"
+                          }`}
+                        >
+                          {active && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </span>
+                      </div>
+
+                      <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
+                        <span className="font-display-wide text-base sm:text-lg font-bold dept-accent tracking-tight">
+                          {money(t.price)}
+                        </span>
+                      </div>
+
+                      {t.blurb && (
+                        <p className="text-[11px] text-[var(--muted)] mt-2 leading-relaxed break-words">
+                          {t.blurb}
+                        </p>
+                      )}
+                    </div>
+
                     {(t.turnaround || t.revisions !== undefined) && (
-                      <span className="block font-meta text-[8px] text-[var(--muted)] mt-2">
-                        {[t.turnaround, t.revisions !== undefined ? `${t.revisions} revisions` : null].filter(Boolean).join(" · ")}
-                      </span>
+                      <div className="mt-3.5 pt-2.5 border-t border-[var(--line)]/60 flex flex-wrap items-center justify-between gap-1.5 font-meta text-[8.5px] text-[var(--muted)]">
+                        {t.turnaround && <span className="inline-flex items-center gap-1">⏱️ {t.turnaround}</span>}
+                        {t.revisions !== undefined && <span className="inline-flex items-center gap-1">🔄 {t.revisions} revisions</span>}
+                      </div>
                     )}
                   </button>
                 );

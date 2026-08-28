@@ -243,11 +243,6 @@ export const DESIGN_SERVICES: DesignService[] = [
           { id: "motion-animated", name: "Print/Digital + Animated Motion Reel", blurb: "Static flyer plus a 15s synced motion video for Reels & Stories.", price: 120, icon: "🎬", turnaround: "2–4 days", revisions: 3 },
         ],
       },
-    ],
-    tiers: [
-      { id: "basic", name: "Basic", blurb: "1 concept, 1 revision, digital sizes only.", price: 45, revisions: 1, turnaround: "2–3 days" },
-      { id: "standard", name: "Standard", blurb: "2 concepts, 2 revisions, print + digital files.", price: 65 },
-      { id: "premium", name: "Premium", blurb: "3 concepts, 3 revisions, animated version + source file.", price: 120, revisions: 3, turnaround: "2–4 days" },
     ] }),
   svc({ slug: "event-poster", name: "Event Poster", category: "events", price: 85, short: "Large-format impact for walls and windows.", sizes: [{ sizeId: "p-tabloid" }, { sizeId: "p-18x24", isDefault: true }, { sizeId: "p-24x36", adjType: "fixed", adj: 25 }, { sizeId: "a3" }], recommended: ["event-flyer", "step-and-repeat"] }),
   svc({ slug: "concert-flyer", name: "Concert / Club Night Flyer", category: "events", price: 75, short: "High-energy creative for nightlife and shows.", sizes: digitalSizes(), popular: true, recommended: ["artist-announcement", "lineup-flyer", "ticket-sale-graphic"],
@@ -317,11 +312,6 @@ export const DESIGN_SERVICES: DesignService[] = [
           { id: "team-suite", name: "Multi-Person Team Suite (3 Names)", blurb: "Front/back template with individualized contact files for 3 team members.", price: 160, icon: "👥", revisions: 3 },
         ],
       },
-    ],
-    tiers: [
-      { id: "basic", name: "Basic", blurb: "1 concept, front only, 1 revision.", price: 65, revisions: 1 },
-      { id: "standard", name: "Standard", blurb: "2 concepts, double-sided, 2 revisions, print-ready.", price: 95 },
-      { id: "premium", name: "Premium", blurb: "3 concepts, double-sided, 3 revisions, source file included.", price: 150, revisions: 3 },
     ] }),
   svc({ slug: "letterhead-design", name: "Letterhead", category: "business", price: 60, short: "Branded stationery for official correspondence.", sizes: [{ sizeId: "p-letter", isDefault: true }, { sizeId: "a4" }] }),
   svc({ slug: "invoice-template", name: "Invoice / Receipt Template", category: "business", price: 70, short: "Branded, reusable billing templates." }),
@@ -349,11 +339,6 @@ export const DESIGN_SERVICES: DesignService[] = [
           { id: "booklet", name: "Multi-Page Dining Booklet Menu (8+ Pages)", blurb: "Multi-page bound dining menu with photography and cocktail sections.", price: 260, icon: "📖", turnaround: "5–7 days", revisions: 3 },
         ],
       },
-    ],
-    tiers: [
-      { id: "basic", name: "Basic", blurb: "Single-page menu, 1 concept, 2 revisions.", price: 90 },
-      { id: "standard", name: "Standard", blurb: "Multi-page or double-sided, 2 concepts, 2 revisions.", price: 150 },
-      { id: "premium", name: "Premium", blurb: "Full menu system + table tent + source files, 3 revisions.", price: 240, revisions: 3, turnaround: "5–7 days" },
     ] }),
   svc({ slug: "price-list", name: "Price List / Service Menu", category: "business", price: 75, short: "Clear, on-brand pricing documents.", sizes: [...printSizes(), ...digitalSizes()] }),
   svc({ slug: "recruitment-flyer", name: "Recruitment / Announcement Flyer", category: "business", price: 60, short: "Hiring and company news, designed properly.", sizes: [...printSizes(), ...digitalSizes()] }),
@@ -370,11 +355,6 @@ export const DESIGN_SERVICES: DesignService[] = [
           { id: "metallic-3d", name: "3D Metallic / Luxury Edition", blurb: "Gold/silver foil textures, 3D photoreal shading & luxury product mockups.", price: 495, icon: "✨", turnaround: "7–10 days", revisions: 3 },
         ],
       },
-    ],
-    tiers: [
-      { id: "basic", name: "Basic", blurb: "1 concept, 1 revision round, web files.", price: 250, revisions: 1, turnaround: "4–6 days" },
-      { id: "standard", name: "Standard", blurb: "3 concepts, 2 rounds, full file kit.", price: 350 },
-      { id: "professional", name: "Professional", blurb: "5 concepts, 3 rounds, source files + mini style guide.", price: 550, revisions: 3, turnaround: "7–10 days" },
     ] }),
   svc({ slug: "logo-redesign", name: "Logo Redesign", category: "branding", price: 280, short: "A careful evolution of what you already have.", turnaround: "5–7 days", optionIds: ["extra-concept", "extra-revision", "source-file"],
     variations: [

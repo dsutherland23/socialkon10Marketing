@@ -1539,6 +1539,7 @@ function ServicesManager() {
   const [bulkPct, setBulkPct] = useState("10");
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("ALL");
+  const [varEditorMode, setVarEditorMode] = useState<"visual" | "json">("visual");
 
   const reload = () => listManaged("designServices").then(setManaged);
   useEffect(() => { reload(); }, []);
@@ -1795,108 +1796,361 @@ function ServicesManager() {
           </label>
 
           {/* Design Variations & Individual Pricing */}
-          <div className="lg:col-span-3 border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)]">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="lg:col-span-3 border border-[var(--line)] p-4 sm:p-5 rounded-2xl bg-[var(--bg)] shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
               <div>
-                <span className={labelCls}>DESIGN VARIATIONS &amp; INDIVIDUAL PRICING (JSON)</span>
-                <span className="block font-meta text-[8.5px] text-[var(--muted)]">
-                  Define multi-option variant groups (Folding formats, Print Sides, Color Schemes, Page counts) with individual prices.
+                <span className={labelCls}>DESIGN VARIATIONS &amp; INDIVIDUAL PRICING</span>
+                <span className="block font-meta text-[8.5px] text-[var(--muted)] mt-0.5">
+                  Define multi-option variant groups (e.g. Folding formats, Print Sides, Color Schemes, Page counts) with individual prices and specs.
                 </span>
               </div>
-              <div className="flex flex-wrap gap-1.5 font-meta text-[8.5px]">
-                <span className="text-[var(--muted)] self-center mr-1">1-Click Presets:</span>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setDraft({
-                    ...draft,
-                    variations: JSON.stringify([
-                      {
-                        id: "folding",
-                        name: "Folding & Panel Structure",
-                        options: [
-                          { id: "flat", name: "Flat Flyer / Insert (2 Sides)", price: 95, icon: "📄", blurb: "Two-sided flat sell sheet." },
-                          { id: "bi-fold", name: "Bi-Fold / Half Fold (4 Panels)", price: 160, icon: "📖", blurb: "4-panel booklet presentation." },
-                          { id: "tri-fold", name: "Tri-Fold / Letter Fold (6 Panels)", price: 220, isDefault: true, icon: "🗂️", blurb: "Standard 3-panel roll or letter fold." },
-                          { id: "z-fold", name: "Z-Fold (6 Panels Accordion)", price: 240, icon: "⚡", blurb: "Accordion fold opening sequentially." },
-                          { id: "gate-fold", name: "Gate Fold / Double Parallel (8 Panels)", price: 290, icon: "🚪", blurb: "Executive inward-opening gatefold." }
-                        ]
-                      }
-                    ], null, 2)
-                  })}
-                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
+                  onClick={() => setVarEditorMode((m) => (m === "visual" ? "json" : "visual"))}
+                  className="font-meta text-[9px] px-2.5 py-1 rounded-lg border border-[var(--line-strong)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors font-bold"
                 >
-                  + Folding
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft({
-                    ...draft,
-                    variations: JSON.stringify([
-                      {
-                        id: "sides",
-                        name: "Print Sides",
-                        options: [
-                          { id: "single", name: "Single-Sided (Front Only)", price: 65, icon: "📄", blurb: "Front-only layout." },
-                          { id: "double", name: "Double-Sided (Front & Back)", price: 95, isDefault: true, icon: "📑", blurb: "Front branding + back details & QR code." },
-                          { id: "team-suite", name: "Multi-Person Team Suite (3 Names)", price: 160, icon: "👥", blurb: "Individualized print files for 3 team members." }
-                        ]
-                      }
-                    ], null, 2)
-                  })}
-                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
-                >
-                  + Sides
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft({
-                    ...draft,
-                    variations: JSON.stringify([
-                      {
-                        id: "color_mode",
-                        name: "Color & Style Edition",
-                        options: [
-                          { id: "bw", name: "Black & White / Monochrome Vector", price: 250, icon: "⚫", blurb: "Clean single-color monochrome mark." },
-                          { id: "full-color", name: "Full Color Dynamic Vector Suite", price: 350, isDefault: true, icon: "🎨", blurb: "Full brand palette & dark/light lockups." },
-                          { id: "metallic-3d", name: "3D Metallic / Luxury Edition", price: 495, icon: "✨", blurb: "Gold/silver embossed 3D photoreal textures." }
-                        ]
-                      }
-                    ], null, 2)
-                  })}
-                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
-                >
-                  + Color Modes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft({
-                    ...draft,
-                    variations: JSON.stringify([
-                      {
-                        id: "page_structure",
-                        name: "Page & Booklet Structure",
-                        options: [
-                          { id: "2-page", name: "Single Sheet 2-Page Card", price: 90, icon: "📄", blurb: "Front photo + back order of service." },
-                          { id: "4-page", name: "Bi-Fold 4-Page Program", price: 140, isDefault: true, icon: "📖", blurb: "Cover, obituary, order of service & tributes." },
-                          { id: "8-page", name: "8-Page Memorial Booklet", price: 220, icon: "📚", blurb: "Photo collage spreads and reflections." },
-                          { id: "12-page", name: "12-Page Deluxe Keepsake Book", price: 320, icon: "🕊️", blurb: "Comprehensive life celebration keepsake." }
-                        ]
-                      }
-                    ], null, 2)
-                  })}
-                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
-                >
-                  + Page Scope
+                  {varEditorMode === "visual" ? "Switch to JSON Mode 📝" : "Switch to Visual Form 🎨"}
                 </button>
               </div>
             </div>
-            <textarea
-              rows={4}
-              className={`${inputCls} font-mono text-xs`}
-              placeholder='[{"id":"folding","name":"Folding Style","options":[{"id":"tri-fold","name":"Tri-Fold (6 Panels)","price":220,"icon":"🗂️","blurb":"Standard 3-panel roll or letter fold"}]}]'
-              value={draft.variations}
-              onChange={(e) => setDraft({ ...draft, variations: e.target.value })}
-            />
+
+            {/* 1-Click Presets Bar */}
+            <div className="flex flex-wrap items-center gap-1.5 font-meta text-[8.5px] pb-3 border-b border-[var(--line)]/60 mb-3">
+              <span className="text-[var(--muted)] font-bold mr-1">1-Click Presets:</span>
+              <button
+                type="button"
+                onClick={() => setDraft({
+                  ...draft,
+                  variations: JSON.stringify([
+                    {
+                      id: "folding",
+                      name: "Folding & Panel Structure",
+                      options: [
+                        { id: "flat", name: "Flat Flyer / Insert (2 Sides)", price: 95, icon: "📄", blurb: "Two-sided flat sell sheet." },
+                        { id: "bi-fold", name: "Bi-Fold / Half Fold (4 Panels)", price: 160, icon: "📖", blurb: "4-panel booklet presentation." },
+                        { id: "tri-fold", name: "Tri-Fold / Letter Fold (6 Panels)", price: 220, isDefault: true, icon: "🗂️", blurb: "Standard 3-panel roll or letter fold." },
+                        { id: "z-fold", name: "Z-Fold (6 Panels Accordion)", price: 240, icon: "⚡", blurb: "Accordion fold opening sequentially." },
+                        { id: "gate-fold", name: "Gate Fold / Double Parallel (8 Panels)", price: 290, icon: "🚪", blurb: "Executive inward-opening gatefold." }
+                      ]
+                    }
+                  ], null, 2)
+                })}
+                className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors font-medium"
+              >
+                + Folding
+              </button>
+              <button
+                type="button"
+                onClick={() => setDraft({
+                  ...draft,
+                  variations: JSON.stringify([
+                    {
+                      id: "sides",
+                      name: "Print Sides",
+                      options: [
+                        { id: "single", name: "Single-Sided (Front Only)", price: 65, icon: "📄", blurb: "Front-only layout." },
+                        { id: "double", name: "Double-Sided (Front & Back)", price: 95, isDefault: true, icon: "📑", blurb: "Front branding + back details & QR code." },
+                        { id: "team-suite", name: "Multi-Person Team Suite (3 Names)", price: 160, icon: "👥", blurb: "Individualized print files for 3 team members." }
+                      ]
+                    }
+                  ], null, 2)
+                })}
+                className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors font-medium"
+              >
+                + Sides
+              </button>
+              <button
+                type="button"
+                onClick={() => setDraft({
+                  ...draft,
+                  variations: JSON.stringify([
+                    {
+                      id: "color_mode",
+                      name: "Color & Style Edition",
+                      options: [
+                        { id: "bw", name: "Black & White / Monochrome Vector", price: 250, icon: "⚫", blurb: "Clean single-color monochrome mark." },
+                        { id: "full-color", name: "Full Color Dynamic Vector Suite", price: 350, isDefault: true, icon: "🎨", blurb: "Full brand palette & dark/light lockups." },
+                        { id: "metallic-3d", name: "3D Metallic / Luxury Edition", price: 495, icon: "✨", blurb: "Gold/silver embossed 3D photoreal textures." }
+                      ]
+                    }
+                  ], null, 2)
+                })}
+                className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors font-medium"
+              >
+                + Color Modes
+              </button>
+              <button
+                type="button"
+                onClick={() => setDraft({
+                  ...draft,
+                  variations: JSON.stringify([
+                    {
+                      id: "page_structure",
+                      name: "Page & Booklet Structure",
+                      options: [
+                        { id: "2-page", name: "Single Sheet 2-Page Card", price: 90, icon: "📄", blurb: "Front photo + back order of service." },
+                        { id: "4-page", name: "Bi-Fold 4-Page Program", price: 140, isDefault: true, icon: "📖", blurb: "Cover, obituary, order of service & tributes." },
+                        { id: "8-page", name: "8-Page Memorial Booklet", price: 220, icon: "📚", blurb: "Photo collage spreads and reflections." },
+                        { id: "12-page", name: "12-Page Deluxe Keepsake Book", price: 320, icon: "🕊️", blurb: "Comprehensive life celebration keepsake." }
+                      ]
+                    }
+                  ], null, 2)
+                })}
+                className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors font-medium"
+              >
+                + Page Scope
+              </button>
+              {draft.variations && (
+                <button
+                  type="button"
+                  onClick={() => setDraft({ ...draft, variations: "" })}
+                  className="px-2 py-1 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 ml-auto transition-colors"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
+
+            {/* Visual Variation Form Mode */}
+            {varEditorMode === "visual" ? (
+              <div className="space-y-4">
+                {(() => {
+                  let groups: Array<{ id: string; name: string; options: Array<{ id: string; name: string; price: number; icon?: string; blurb?: string; turnaround?: string; revisions?: number; isDefault?: boolean }> }> = [];
+                  try {
+                    if (draft.variations.trim()) {
+                      groups = JSON.parse(draft.variations);
+                      if (!Array.isArray(groups)) groups = [];
+                    }
+                  } catch {
+                    groups = [];
+                  }
+
+                  const updateGroups = (newGroups: typeof groups) => {
+                    setDraft({ ...draft, variations: newGroups.length > 0 ? JSON.stringify(newGroups, null, 2) : "" });
+                  };
+
+                  if (groups.length === 0) {
+                    return (
+                      <div className="text-center py-6 border border-dashed border-[var(--line)] rounded-xl">
+                        <p className="font-meta text-[11px] text-[var(--muted)]">No variations defined yet for this service.</p>
+                        <p className="font-meta text-[9px] text-[var(--muted)] mt-1">Click a 1-click preset above, or add a custom variation group below.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateGroups([
+                              {
+                                id: "variation_group",
+                                name: "Design Variations",
+                                options: [
+                                  { id: "opt-1", name: "Standard Edition", price: Number(draft.price) || 65, icon: "🎨", isDefault: true }
+                                ]
+                              }
+                            ]);
+                          }}
+                          className="btn btn-ghost !py-1.5 !px-3 font-meta text-[9px] rounded-lg mt-3"
+                        >
+                          + Add New Variation Group
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {groups.map((grp, gi) => (
+                        <div key={gi} className="border border-[var(--line-strong)] rounded-xl p-3 sm:p-4 bg-[var(--panel)] space-y-3">
+                          <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] pb-2">
+                            <div className="flex items-center gap-2 flex-1">
+                              <span className="font-meta text-[9px] font-bold text-[var(--dept)] uppercase">Group #{gi + 1}</span>
+                              <input
+                                className={`${inputCls} !py-1 !px-2 text-xs font-bold w-full max-w-xs`}
+                                placeholder="Group Name (e.g. Folding Style)"
+                                value={grp.name}
+                                onChange={(e) => {
+                                  const next = [...groups];
+                                  next[gi].name = e.target.value;
+                                  next[gi].id = e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+                                  updateGroups(next);
+                                }}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = groups.filter((_, idx) => idx !== gi);
+                                updateGroups(next);
+                              }}
+                              className="font-meta text-[9px] text-red-500 hover:underline"
+                            >
+                              Remove Group ✕
+                            </button>
+                          </div>
+
+                          {/* Options Table */}
+                          <div className="space-y-2">
+                            {grp.options.map((opt, oi) => (
+                              <div key={oi} className="grid grid-cols-12 gap-2 items-start p-2.5 rounded-lg border border-[var(--line)] bg-[var(--bg)] text-xs">
+                                <div className="col-span-2 sm:col-span-1">
+                                  <label className="font-meta text-[7.5px] text-[var(--muted)] block">ICON</label>
+                                  <input
+                                    className={`${inputCls} !py-1 !px-1 text-center text-sm mt-0.5`}
+                                    value={opt.icon || ""}
+                                    placeholder="🎨"
+                                    onChange={(e) => {
+                                      const next = [...groups];
+                                      next[gi].options[oi].icon = e.target.value;
+                                      updateGroups(next);
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-6 sm:col-span-4">
+                                  <label className="font-meta text-[7.5px] text-[var(--muted)] block">OPTION NAME *</label>
+                                  <input
+                                    className={`${inputCls} !py-1 !px-2 text-xs font-semibold mt-0.5`}
+                                    value={opt.name}
+                                    placeholder="Option Title"
+                                    onChange={(e) => {
+                                      const next = [...groups];
+                                      next[gi].options[oi].name = e.target.value;
+                                      if (!next[gi].options[oi].id || next[gi].options[oi].id.startsWith("opt-")) {
+                                        next[gi].options[oi].id = e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+                                      }
+                                      updateGroups(next);
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-4 sm:col-span-2">
+                                  <label className="font-meta text-[7.5px] text-[var(--muted)] block">PRICE USD ($) *</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    className={`${inputCls} !py-1 !px-2 text-xs font-mono font-bold dept-accent mt-0.5`}
+                                    value={opt.price}
+                                    onChange={(e) => {
+                                      const next = [...groups];
+                                      next[gi].options[oi].price = Number(e.target.value) || 0;
+                                      updateGroups(next);
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-4 sm:col-span-2">
+                                  <label className="font-meta text-[7.5px] text-[var(--muted)] block">TURNAROUND</label>
+                                  <input
+                                    className={`${inputCls} !py-1 !px-2 text-[10px] mt-0.5`}
+                                    value={opt.turnaround || ""}
+                                    placeholder="3–5 days"
+                                    onChange={(e) => {
+                                      const next = [...groups];
+                                      next[gi].options[oi].turnaround = e.target.value || undefined;
+                                      updateGroups(next);
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-4 sm:col-span-2">
+                                  <label className="font-meta text-[7.5px] text-[var(--muted)] block">REVISIONS</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    className={`${inputCls} !py-1 !px-2 text-[10px] mt-0.5`}
+                                    value={opt.revisions ?? ""}
+                                    placeholder="2"
+                                    onChange={(e) => {
+                                      const next = [...groups];
+                                      next[gi].options[oi].revisions = e.target.value !== "" ? Number(e.target.value) : undefined;
+                                      updateGroups(next);
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-4 sm:col-span-1 flex items-center justify-end gap-2 pt-4">
+                                  <button
+                                    type="button"
+                                    title="Delete Option"
+                                    onClick={() => {
+                                      const next = [...groups];
+                                      next[gi].options = next[gi].options.filter((_, idx) => idx !== oi);
+                                      updateGroups(next);
+                                    }}
+                                    className="text-red-500 hover:text-red-700 font-bold text-sm"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                <div className="col-span-12 mt-1">
+                                  <input
+                                    className={`${inputCls} !py-1 !px-2 text-[10px] text-[var(--muted)]`}
+                                    value={opt.blurb || ""}
+                                    placeholder="Short description or blurb for this variation..."
+                                    onChange={(e) => {
+                                      const next = [...groups];
+                                      next[gi].options[oi].blurb = e.target.value || undefined;
+                                      updateGroups(next);
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = [...groups];
+                              next[gi].options.push({
+                                id: `opt-${next[gi].options.length + 1}`,
+                                name: "New Variant Option",
+                                price: Number(draft.price) || 65,
+                                icon: "✨",
+                                blurb: "Specification description.",
+                              });
+                              updateGroups(next);
+                            }}
+                            className="font-meta text-[9px] text-[var(--dept)] hover:underline font-bold"
+                          >
+                            + Add Option to {grp.name || "Group"}
+                          </button>
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [
+                            ...groups,
+                            {
+                              id: `group_${groups.length + 1}`,
+                              name: "Additional Variation Group",
+                              options: [
+                                { id: "opt-a", name: "Option A", price: Number(draft.price) || 65, icon: "📄" },
+                                { id: "opt-b", name: "Option B", price: (Number(draft.price) || 65) + 30, icon: "📑" }
+                              ]
+                            }
+                          ];
+                          updateGroups(next);
+                        }}
+                        className="btn btn-ghost !py-1.5 !px-3 font-meta text-[9px] rounded-lg"
+                      >
+                        + Add Another Variation Group
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              /* Raw JSON Mode */
+              <div className="space-y-2">
+                <textarea
+                  rows={5}
+                  className={`${inputCls} font-mono text-xs`}
+                  placeholder='[{"id":"folding","name":"Folding Style","options":[{"id":"tri-fold","name":"Tri-Fold (6 Panels)","price":220,"icon":"🗂️","blurb":"Standard 3-panel roll or letter fold"}]}]'
+                  value={draft.variations}
+                  onChange={(e) => setDraft({ ...draft, variations: e.target.value })}
+                />
+                <span className="block font-meta text-[8px] text-[var(--muted)]">
+                  Edit JSON directly or switch back to Visual Form Mode above.
+                </span>
+              </div>
+            )}
           </div>
           <label className={labelCls}>TURNAROUND<input className={`${inputCls} mt-1`} value={draft.turnaround} onChange={(e) => setDraft({ ...draft, turnaround: e.target.value })} /></label>
           <label className={labelCls}>MIN QTY<input type="number" min="1" className={`${inputCls} mt-1`} value={draft.minQty} onChange={(e) => setDraft({ ...draft, minQty: e.target.value })} /></label>
