@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { GeoDistributionRecord } from "../../lib/analytics";
+import { WorldMap, type MapDot, type MapPoint } from "../ui/world-map";
 
 interface GeoWorldMapProps {
   data: GeoDistributionRecord[];
@@ -7,243 +8,182 @@ interface GeoWorldMapProps {
   onSelectCountry?: (code: string) => void;
 }
 
-// Normalized coordinate hotspots for key countries and regions
-const REGION_COORDINATES: Record<string, { x: number; y: number; name: string }> = {
-  JM: { x: 265, y: 190, name: "Jamaica" },
-  US: { x: 200, y: 140, name: "United States" },
-  CA: { x: 190, y: 90, name: "Canada" },
-  GB: { x: 470, y: 110, name: "United Kingdom" },
-  FR: { x: 485, y: 130, name: "France" },
-  DE: { x: 505, y: 120, name: "Germany" },
-  NL: { x: 495, y: 115, name: "Netherlands" },
-  ES: { x: 475, y: 155, name: "Spain" },
-  TT: { x: 290, y: 215, name: "Trinidad & Tobago" },
-  BB: { x: 300, y: 205, name: "Barbados" },
-  BS: { x: 260, y: 170, name: "Bahamas" },
-  TC: { x: 275, y: 180, name: "Turks & Caicos" },
-  KY: { x: 250, y: 190, name: "Cayman Islands" },
-  JP: { x: 810, y: 150, name: "Japan" },
-  SG: { x: 740, y: 240, name: "Singapore" },
-  AE: { x: 590, y: 180, name: "United Arab Emirates" },
-  AU: { x: 830, y: 310, name: "Australia" },
+// Precise Lat/Lng geographic coordinates and metadata for countries
+export const COUNTRY_GEO_COORDS: Record<string, { lat: number; lng: number; name: string; flag: string }> = {
+  JM: { lat: 18.0179, lng: -76.8099, name: "Jamaica", flag: "🇯🇲" },
+  US: { lat: 37.0902, lng: -95.7129, name: "United States", flag: "🇺🇸" },
+  CA: { lat: 56.1304, lng: -106.3468, name: "Canada", flag: "🇨🇦" },
+  GB: { lat: 55.3781, lng: -3.4360, name: "United Kingdom", flag: "🇬🇧" },
+  TT: { lat: 10.6918, lng: -61.2225, name: "Trinidad & Tobago", flag: "🇹🇹" },
+  BB: { lat: 13.1939, lng: -59.5432, name: "Barbados", flag: "🇧🇧" },
+  BS: { lat: 25.0343, lng: -77.3963, name: "Bahamas", flag: "🇧🇸" },
+  KY: { lat: 19.3133, lng: -81.2546, name: "Cayman Islands", flag: "🇰🇾" },
+  TC: { lat: 21.6940, lng: -71.7979, name: "Turks & Caicos", flag: "🇹🇨" },
+  DE: { lat: 51.1657, lng: 10.4515, name: "Germany", flag: "🇩🇪" },
+  FR: { lat: 46.2276, lng: 2.2137, name: "France", flag: "🇫🇷" },
+  NL: { lat: 52.1326, lng: 5.2913, name: "Netherlands", flag: "🇳🇱" },
+  ES: { lat: 40.4637, lng: -3.7492, name: "Spain", flag: "🇪🇸" },
+  AE: { lat: 23.4241, lng: 53.8478, name: "United Arab Emirates", flag: "🇦🇪" },
+  AU: { lat: -25.2744, lng: 133.7751, name: "Australia", flag: "🇦🇺" },
+  JP: { lat: 36.2048, lng: 138.2529, name: "Japan", flag: "🇯🇵" },
+  SG: { lat: 1.3521, lng: 103.8198, name: "Singapore", flag: "🇸🇬" },
+  BR: { lat: -14.2350, lng: -51.9253, name: "Brazil", flag: "🇧🇷" },
+  IN: { lat: 20.5937, lng: 78.9629, name: "India", flag: "🇮🇳" },
+  NG: { lat: 9.0820, lng: 8.6753, name: "Nigeria", flag: "🇳🇬" },
+  ZA: { lat: -30.5595, lng: 22.9375, name: "South Africa", flag: "🇿🇦" },
 };
 
 export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: GeoWorldMapProps) {
-  const [hovered, setHovered] = useState<GeoDistributionRecord | null>(null);
+  const [hoveredCode, setHoveredCode] = useState<string | null>(null);
+  const [selectedCode, setSelectedCode] = useState<string | null>(null);
 
-  const maxSessions = Math.max(1, ...data.map((d) => d.sessions));
-  const dataMap = new Map(data.map((d) => [d.country_code, d]));
+  const dataMap = useMemo(() => new Map(data.map((d) => [d.country_code, d])), [data]);
 
-  const handleMouseEnter = (code: string) => {
-    const item = dataMap.get(code) || {
-      country_code: code,
-      country_name: REGION_COORDINATES[code]?.name || code,
-      flag: "🌐",
-      sessions: 0,
-      share_pct: 0,
-      conversions: 0,
-      cvr: 0,
-      top_cities: [],
-    };
-    setHovered(item);
+  // Agency primary hub
+  const HUB_POINT: MapPoint = {
+    lat: COUNTRY_GEO_COORDS.JM.lat,
+    lng: COUNTRY_GEO_COORDS.JM.lng,
+    label: "Kingston Creative Studio",
+    code: "JM",
+    flag: "🇯🇲",
   };
+
+  // Generate interactive map points based on available countries and real session data
+  const mapPoints: MapPoint[] = useMemo(() => {
+    return Object.entries(COUNTRY_GEO_COORDS).map(([code, meta]) => {
+      const record = dataMap.get(code);
+      return {
+        lat: meta.lat,
+        lng: meta.lng,
+        label: record?.country_name || meta.name,
+        code,
+        sessions: record?.sessions ?? 0,
+        live: liveCountByCountry[code] || 0,
+        flag: record?.flag || meta.flag,
+      };
+    });
+  }, [dataMap, liveCountByCountry]);
+
+  // Generate telemetry traffic arcs connecting top active visitors to the agency hub
+  const mapDots: MapDot[] = useMemo(() => {
+    const dots: MapDot[] = [];
+    const activeCountries = data
+      .filter((d) => d.country_code !== "JM" && COUNTRY_GEO_COORDS[d.country_code])
+      .sort((a, b) => b.sessions - a.sessions);
+
+    // If active traffic is detected, connect traffic streams to the hub
+    activeCountries.slice(0, 8).forEach((item) => {
+      const coords = COUNTRY_GEO_COORDS[item.country_code];
+      if (coords) {
+        dots.push({
+          start: {
+            lat: coords.lat,
+            lng: coords.lng,
+            label: item.country_name,
+            code: item.country_code,
+            flag: item.flag,
+          },
+          end: HUB_POINT,
+        });
+      }
+    });
+
+    // Fallback default demonstration streams if telemetry is booting up
+    if (dots.length === 0) {
+      const defaults = ["US", "GB", "CA", "TT", "DE", "BB"];
+      defaults.forEach((code) => {
+        const coords = COUNTRY_GEO_COORDS[code];
+        if (coords) {
+          dots.push({
+            start: {
+              lat: coords.lat,
+              lng: coords.lng,
+              label: coords.name,
+              code,
+              flag: coords.flag,
+            },
+            end: HUB_POINT,
+          });
+        }
+      });
+    }
+
+    return dots;
+  }, [data, HUB_POINT]);
+
+  const activeRecord = hoveredCode ? dataMap.get(hoveredCode) : selectedCode ? dataMap.get(selectedCode) : null;
 
   return (
     <div className="relative w-full border border-[var(--line)] rounded-2xl overflow-hidden p-4 sm:p-6" style={{ background: "var(--panel)" }}>
+      {/* Header & Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
-          <span className="idx">/geographic-traffic-telemetry</span>
+          <span className="idx">/geographic-telemetry-engine</span>
           <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
-            Real-time visual map of visitor density and regional clusters.
+            Dotted-grid global telemetry with animated bezier routes &amp; active visitor beacons.
           </p>
         </div>
         <div className="flex items-center gap-3 text-[9px] font-meta text-[var(--muted)]">
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--dept)]" /> High Traffic
+            <span className="w-2.5 h-2.5 rounded-full bg-[var(--dept)] shadow-xs" /> Telemetry Streams
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" /> Live Now
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" /> Live Beacons
           </span>
         </div>
       </div>
 
-      {/* SVG World Map Canvas */}
-      <div className="relative w-full aspect-[2/1] min-h-[260px] flex items-center justify-center">
-        <svg
-          viewBox="0 0 960 480"
-          className="w-full h-full stroke-[var(--line-strong)] fill-[var(--bg)] transition-colors select-none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <defs>
-            <radialGradient id="mapGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="var(--dept)" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="transparent" stopOpacity="0" />
-            </radialGradient>
-            <filter id="glow">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-              <feMerge>
-                <feMergeNode in="coloredBlur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          {/* Background Grid Lines */}
-          <g opacity="0.15" stroke="var(--ink)" strokeWidth="0.5" strokeDasharray="3 3">
-            <line x1="0" y1="120" x2="960" y2="120" />
-            <line x1="0" y1="240" x2="960" y2="240" />
-            <line x1="0" y1="360" x2="960" y2="360" />
-            <line x1="240" y1="0" x2="240" y2="480" />
-            <line x1="480" y1="0" x2="480" y2="480" />
-            <line x1="720" y1="0" x2="720" y2="480" />
-          </g>
-
-          {/* Continents Simplified Vector Paths */}
-          {/* North America */}
-          <path
-            d="M120,60 L240,50 L280,100 L240,140 L260,180 L200,200 L160,160 L100,120 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-            className="hover:fill-[var(--line)] transition-colors"
-          />
-          {/* Central America & Caribbean Basin */}
-          <path
-            d="M200,200 L260,200 L280,240 L240,260 L210,230 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-          />
-          {/* South America */}
-          <path
-            d="M260,240 L340,260 L360,340 L300,420 L260,360 L240,280 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-          />
-          {/* Europe */}
-          <path
-            d="M440,70 L540,60 L560,120 L500,160 L450,140 L430,100 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-          />
-          {/* Africa */}
-          <path
-            d="M440,160 L540,160 L580,240 L540,360 L480,380 L440,260 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-          />
-          {/* Asia */}
-          <path
-            d="M550,60 L800,50 L860,140 L780,220 L660,200 L570,140 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-          />
-          {/* Australia & Oceania */}
-          <path
-            d="M780,280 L880,270 L900,340 L820,380 L760,340 Z"
-            fill="var(--bg)"
-            stroke="var(--line)"
-            strokeWidth="1.2"
-          />
-
-          {/* Interactive Country & Region Hotspots */}
-          {Object.entries(REGION_COORDINATES).map(([code, coord]) => {
-            const countryData = dataMap.get(code);
-            const sessions = countryData?.sessions ?? 0;
-            const live = liveCountByCountry[code] || 0;
-            const intensity = sessions > 0 ? Math.max(0.3, sessions / maxSessions) : 0.1;
-            const radius = sessions > 0 ? Math.min(18, 6 + (sessions / maxSessions) * 12) : 4;
-
-            return (
-              <g
-                key={code}
-                className="cursor-pointer group"
-                onClick={() => onSelectCountry?.(code)}
-                onMouseEnter={() => handleMouseEnter(code)}
-                onMouseLeave={() => setHovered(null)}
-              >
-                {/* Outer Activity Heat Aura */}
-                {sessions > 0 && (
-                  <circle
-                    cx={coord.x}
-                    cy={coord.y}
-                    r={radius * 1.8}
-                    fill="var(--dept)"
-                    opacity={intensity * 0.4}
-                    className="animate-pulse"
-                  />
-                )}
-
-                {/* Primary Region Node */}
-                <circle
-                  cx={coord.x}
-                  cy={coord.y}
-                  r={radius}
-                  fill={sessions > 0 ? "var(--dept)" : "var(--line-strong)"}
-                  stroke="var(--panel)"
-                  strokeWidth="2"
-                  className="transition-transform group-hover:scale-125"
-                />
-
-                {/* Live Visitor Pulsating Beacon */}
-                {live > 0 && (
-                  <circle
-                    cx={coord.x}
-                    cy={coord.y}
-                    r={radius + 4}
-                    fill="none"
-                    stroke="#22c55e"
-                    strokeWidth="2"
-                    className="animate-ping"
-                  />
-                )}
-
-                {/* Country Code Label */}
-                <text
-                  x={coord.x}
-                  y={coord.y - radius - 4}
-                  textAnchor="middle"
-                  className="text-[8px] font-mono font-bold fill-[var(--ink)] opacity-75 group-hover:opacity-100 transition-opacity"
-                >
-                  {code}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
+      {/* World Map Dotted Component */}
+      <div className="relative w-full min-h-[260px] bg-[var(--bg)]/40 rounded-xl border border-[var(--line)]/50 p-2">
+        <WorldMap
+          dots={mapDots}
+          points={mapPoints}
+          lineColor="var(--dept, #0ea5e9)"
+          activePointCode={selectedCode || hoveredCode}
+          onSelectPoint={(pt) => {
+            if (pt.code) {
+              setSelectedCode(pt.code);
+              onSelectCountry?.(pt.code);
+            }
+          }}
+          onHoverPoint={(pt) => {
+            setHoveredCode(pt?.code || null);
+          }}
+        />
       </div>
 
-      {/* Floating Hover Card */}
-      {hovered && (
+      {/* Interactive Detail Overlay */}
+      {activeRecord && (
         <div
-          className="absolute z-20 pointer-events-none p-3 rounded-xl border border-[var(--line-strong)] shadow-xl text-left font-meta text-[10px] space-y-1 animate-fade-in"
+          className="absolute z-20 pointer-events-none p-3.5 rounded-xl border border-[var(--line-strong)] shadow-2xl text-left font-meta text-[10px] space-y-1.5 animate-fade-in backdrop-blur-md"
           style={{
             background: "var(--panel)",
             color: "var(--ink)",
-            bottom: "20px",
-            right: "20px",
-            minWidth: "170px",
+            bottom: "24px",
+            right: "24px",
+            minWidth: "190px",
           }}
         >
-          <div className="flex items-center gap-1.5 font-display text-xs font-bold uppercase">
-            <span>{hovered.flag}</span>
-            <span>{hovered.country_name}</span>
+          <div className="flex items-center justify-between font-display text-xs font-bold uppercase">
+            <span className="flex items-center gap-1.5">
+              <span className="text-base">{activeRecord.flag}</span>
+              <span>{activeRecord.country_name}</span>
+            </span>
+            <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-[var(--dept-soft)] text-[var(--dept)] border border-[var(--dept)]/30">
+              {activeRecord.country_code}
+            </span>
           </div>
-          <div className="flex items-center justify-between text-[9px] pt-1 border-t border-[var(--line)]">
-            <span className="text-[var(--muted)]">Sessions:</span>
-            <span className="font-bold dept-accent">{hovered.sessions.toLocaleString()} ({hovered.share_pct}%)</span>
+          <div className="flex items-center justify-between text-[9px] pt-1.5 border-t border-[var(--line)]">
+            <span className="text-[var(--muted)]">Total Sessions:</span>
+            <span className="font-bold dept-accent">{activeRecord.sessions.toLocaleString()} ({activeRecord.share_pct}%)</span>
           </div>
           <div className="flex items-center justify-between text-[9px]">
             <span className="text-[var(--muted)]">Conversion Rate:</span>
-            <span className="font-bold font-mono text-emerald-500">{hovered.cvr}% CVR</span>
+            <span className="font-bold font-mono text-emerald-500">{activeRecord.cvr}% CVR</span>
           </div>
-          {hovered.top_cities.length > 0 && (
+          {activeRecord.top_cities && activeRecord.top_cities.length > 0 && (
             <div className="text-[8.5px] text-[var(--muted)] pt-1">
-              Top Cities: <span className="text-[var(--ink)] font-semibold">{hovered.top_cities.join(", ")}</span>
+              Top Regions: <span className="text-[var(--ink)] font-semibold">{activeRecord.top_cities.join(", ")}</span>
             </div>
           )}
         </div>
