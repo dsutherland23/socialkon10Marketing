@@ -5,6 +5,7 @@ import { packageValue, priceLabel } from "../lib/design";
 import { useDesignCatalog, useDesignPackage } from "../lib/design-shop";
 import { useDepartment } from "../lib/dept";
 import { useSEO, track } from "../lib/seo";
+import { trackPricingView } from "../lib/analytics";
 import { useAuth } from "../lib/auth";
 import { attachFiles, createOrder } from "../lib/backend";
 import { activeProviders } from "../lib/payments";
@@ -151,6 +152,10 @@ export default function CustomPackage() {
   const [orderId, setOrderId] = useState<string | null>(null);
   const [mode, setMode] = useState<"quote" | "purchase">("quote");
   const briefRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    trackPricingView("custom_package");
+  }, []);
 
   /* playful empty-package continue button state */
   const [dodge, setDodge] = useState({ x: 0, y: 0 });

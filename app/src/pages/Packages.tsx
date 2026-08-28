@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { DEPARTMENTS, EVENT_TIERS, SOCIAL_TIERS, formatMoney, type DeptId } from "../lib/data";
 import { useContent } from "../lib/content";
 import { useDepartment } from "../lib/dept";
 import { useShop } from "../lib/shop";
 import { useSEO, track } from "../lib/seo";
+import { trackPricingView } from "../lib/analytics";
 import { Reveal } from "../lib/motion";
 import { FinalCta, SectionHead, ServiceCard } from "../components/blocks";
 import { DeliverablesPopover } from "../components/DeliverablesPopover";
@@ -210,6 +211,10 @@ export default function Packages() {
   });
 
   const services = allServices.filter((s) => s.dept === tab);
+
+  useEffect(() => {
+    trackPricingView("packages");
+  }, []);
 
   return (
     <>

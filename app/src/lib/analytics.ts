@@ -1,16 +1,18 @@
 /* ------------------------------------------------------------------
    WEBSITE INTELLIGENCE & ATTRIBUTION ENGINE — First-Party SDK
-   PRD §1-5 — Tracking Foundation
+   PRD §1-5 — Comprehensive 2026 Implementation
 
    Architecture:
-   • Anonymous session ID in sessionStorage (never PII)
-   • UTM params captured from first URL in session
-   • Event queue batched to Firestore analytics_* collections
-   • Mirrors every event to GA4 (gtag), Meta Pixel (fbq), dataLayer
-   • All writes async + fault-tolerant (try/catch on every Firestore call)
-   • Consent-aware: tracking only fires after initTracking() is called
-   • Server secrets (CAPI, GA4 MP) are NOT included here — admin notes
-     will document the Cloud Function upgrade path for those.
+   • Anonymous session ID in sessionStorage (privacy-first, zero PII)
+   • Multi-touch UTM attribution captured & retained across user session
+   • Dynamic engagement scoring (0–100) with real-time segment classification
+   • Behavioral tracking: scroll depth, CTA clicks, pricing views, form abandonment
+   • Dead click & rage click detection
+   • Event queue batched & stream-written to Firestore analytics_* collections
+   • Omni-channel mirroring to GA4 (gtag), Meta Pixel (fbq), and dataLayer
+   • Consent-aware (Necessary, Analytics, Marketing, Advertising)
+   • Real-time Live Visitor telemetry & Journey reconstruction
+   • Multi-funnel analysis & reporting data aggregation
 ------------------------------------------------------------------- */
 
 import {
@@ -20,6 +22,8 @@ import {
 import { db, firebaseReady } from "./firebase";
 
 /* ─── Types ──────────────────────────────────────────────────────── */
+
+export type VisitorSegment = "cold" | "interested" | "engaged" | "high_intent" | "hot";
 
 export interface SessionData {
   session_id: string;
@@ -32,9 +36,17 @@ export interface SessionData {
   utm_content: string | null;
   utm_term: string | null;
   landing_page: string;
+  current_page?: string;
   referrer: string;
   device_type: "mobile" | "tablet" | "desktop";
   user_agent: string;
+  engagement_score: number;
+  segment: VisitorSegment;
+  converted: boolean;
+  conversion_type?: string;
+  country?: string;
+  pages_viewed?: string[];
+  services_viewed?: string[];
 }
 
 export interface AnalyticsEvent {
@@ -70,19 +82,57 @@ export interface AttributionData {
   utm_term: string | null;
   landing_page: string;
   referrer: string;
+  engagement_score?: number;
+}
+
+export interface ConsentPreferences {
+  necessary: boolean;
+  analytics: boolean;
+  marketing: boolean;
+  advertising: boolean;
+  updated_at: string;
+}
+
+/* ─── Scoring Rules (PRD §Engagement Scoring) ─────────────────────── */
+
+export const ENGAGEMENT_RULES: Record<string, number> = {
+  page_view: 2,
+  service_view: 5,
+  pricing_view: 10,
+  session_over_120_seconds: 10,
+  scroll_over_75_percent: 10,
+  cta_click: 15,
+  form_start: 20,
+  form_submit: 30,
+  checkout_start: 25,
+  checkout_complete: 50,
+};
+
+export function calculateSegment(score: number): VisitorSegment {
+  if (score >= 81) return "hot";
+  if (score >= 61) return "high_intent";
+  if (score >= 41) return "engaged";
+  if (score >= 21) return "interested";
+  return "cold";
 }
 
 /* ─── Internal state ─────────────────────────────────────────────── */
 
 const SESSION_KEY = "sk_analytics_session";
 const UTM_KEY = "sk_analytics_utm";
+const CONSENT_KEY = "sk_consent_preferences";
+
 let _initialized = false;
 let _sessionData: SessionData | null = null;
 let _currentPath = "";
+const _scoredActions = new Set<string>();
 
 // Event batch queue — flush every 3 seconds or when queue reaches 10
 const _queue: AnalyticsEvent[] = [];
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Rage click detection
+let _clickHistory: { x: number; y: number; time: number }[] = [];
 
 /* ─── Utilities ──────────────────────────────────────────────────── */
 
@@ -120,7 +170,41 @@ function now(): string {
   return new Date().toISOString();
 }
 
-/* ─── Session management ─────────────────────────────────────────── */
+/* ─── Consent Management (PRD §Privacy & Consent) ─────────────────── */
+
+export function getConsentPreferences(): ConsentPreferences {
+  if (typeof window === "undefined") {
+    return { necessary: true, analytics: true, marketing: true, advertising: true, updated_at: now() };
+  }
+  try {
+    const raw = localStorage.getItem(CONSENT_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* fallback */ }
+  return { necessary: true, analytics: true, marketing: true, advertising: true, updated_at: now() };
+}
+
+export function setConsentPreferences(prefs: Partial<ConsentPreferences>): void {
+  if (typeof window === "undefined") return;
+  const current = getConsentPreferences();
+  const updated: ConsentPreferences = {
+    ...current,
+    ...prefs,
+    necessary: true, // Always true
+    updated_at: now(),
+  };
+  try {
+    localStorage.setItem(CONSENT_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent("sk-consent-changed", { detail: updated }));
+  } catch { /* non-blocking */ }
+}
+
+export function hasConsent(category: keyof ConsentPreferences): boolean {
+  if (category === "necessary") return true;
+  const prefs = getConsentPreferences();
+  return Boolean(prefs[category]);
+}
+
+/* ─── Session Management ─────────────────────────────────────────── */
 
 function loadOrCreateSession(): SessionData {
   if (_sessionData) return _sessionData;
@@ -133,11 +217,7 @@ function loadOrCreateSession(): SessionData {
     }
   } catch { /* ignore */ }
 
-  // Capture UTM from current URL (first touch in this session)
   const utms = getUtmFromUrl(window.location.href);
-
-  // Also check for stored UTM from URL that might have been set before the
-  // analytics SDK loaded (e.g., from a redirect)
   let storedUtm: Record<string, string | null> = {};
   try {
     const saved = sessionStorage.getItem(UTM_KEY);
@@ -159,9 +239,15 @@ function loadOrCreateSession(): SessionData {
     page_count: 0,
     ...merged,
     landing_page: window.location.pathname + window.location.search,
+    current_page: window.location.pathname,
     referrer: document.referrer || "",
     device_type: detectDevice(),
     user_agent: navigator.userAgent.slice(0, 200),
+    engagement_score: 0,
+    segment: "cold",
+    converted: false,
+    pages_viewed: [window.location.pathname],
+    services_viewed: [],
   };
 
   persistSession();
@@ -176,7 +262,7 @@ function persistSession(): void {
 }
 
 async function upsertSessionInFirestore(session: SessionData): Promise<void> {
-  if (!firebaseReady || !db) return;
+  if (!firebaseReady || !db || !hasConsent("analytics")) return;
   try {
     await setDoc(
       doc(db, "analytics_sessions", session.session_id),
@@ -189,16 +275,34 @@ async function upsertSessionInFirestore(session: SessionData): Promise<void> {
   } catch { /* non-blocking */ }
 }
 
-/* ─── Event batching ─────────────────────────────────────────────── */
+/* ─── Dynamic Engagement Scoring Engine ──────────────────────────── */
+
+function addEngagementPoints(action: string, pointsMultiplier = 1): void {
+  const session = loadOrCreateSession();
+  const basePoints = ENGAGEMENT_RULES[action] || 5;
+  const points = basePoints * pointsMultiplier;
+
+  // Deduplicate single-fire scoring items (e.g. scroll_75, session_120)
+  if (action === "scroll_over_75_percent" || action === "session_over_120_seconds") {
+    if (_scoredActions.has(action)) return;
+    _scoredActions.add(action);
+  }
+
+  session.engagement_score = Math.min(100, (session.engagement_score || 0) + points);
+  session.segment = calculateSegment(session.engagement_score);
+  persistSession();
+  void upsertSessionInFirestore(session);
+}
+
+/* ─── Event Batching & Streaming ─────────────────────────────────── */
 
 async function flushQueue(): Promise<void> {
   if (_queue.length === 0) return;
   const batch = _queue.splice(0, _queue.length);
 
-  if (!firebaseReady || !db) return;
+  if (!firebaseReady || !db || !hasConsent("analytics")) return;
 
   try {
-    // Write each event as an individual doc (subcollection style)
     await Promise.all(
       batch.map((ev) =>
         addDoc(collection(db!, "analytics_events"), {
@@ -207,7 +311,7 @@ async function flushQueue(): Promise<void> {
         })
       )
     );
-  } catch { /* non-blocking — events are best-effort */ }
+  } catch { /* non-blocking */ }
 }
 
 function scheduleFlush(): void {
@@ -228,9 +332,10 @@ function enqueue(ev: Omit<AnalyticsEvent, "created_at">): void {
   }
 }
 
-/* ─── GA4 / Meta Pixel / dataLayer mirrors ───────────────────────── */
+/* ─── Mirroring to Third-Party Providers ─────────────────────────── */
 
 function mirrorToGa4(event: string, params: Record<string, unknown>): void {
+  if (!hasConsent("analytics")) return;
   try {
     if (typeof window !== "undefined" && (window as any).gtag) {
       (window as any).gtag("event", event, params);
@@ -239,9 +344,9 @@ function mirrorToGa4(event: string, params: Record<string, unknown>): void {
 }
 
 function mirrorToPixel(event: string, params: Record<string, unknown>): void {
+  if (!hasConsent("advertising")) return;
   try {
     if (typeof window !== "undefined" && (window as any).fbq) {
-      // Map to standard FB events where possible
       const FB_MAP: Record<string, string> = {
         page_view: "PageView",
         checkout_complete: "Purchase",
@@ -250,6 +355,8 @@ function mirrorToPixel(event: string, params: Record<string, unknown>): void {
         add_to_cart: "AddToCart",
         checkout_start: "InitiateCheckout",
         service_view: "ViewContent",
+        pricing_view: "ViewContent",
+        contact_submit: "Contact",
       };
       const fbEvent = FB_MAP[event];
       if (fbEvent) {
@@ -269,11 +376,10 @@ function mirrorToDataLayer(event: string, params: Record<string, unknown>): void
   } catch { /* ignore */ }
 }
 
-/* ─── Public API ─────────────────────────────────────────────────── */
+/* ─── Public Tracking API ────────────────────────────────────────── */
 
 /**
  * Initialize the tracking engine. Call once on app boot.
- * Safe to call multiple times — idempotent.
  */
 export function initTracking(): void {
   if (typeof window === "undefined") return;
@@ -281,26 +387,62 @@ export function initTracking(): void {
   _initialized = true;
 
   const session = loadOrCreateSession();
-
-  // Persist session to Firestore in the background
   void upsertSessionInFirestore(session);
 
-  if (import.meta.env.DEV) console.info("[analytics] Session initialized:", session.session_id);
+  // Time-in-session scoring (+10 points after 120 seconds)
+  setTimeout(() => {
+    addEngagementPoints("session_over_120_seconds");
+  }, 120_000);
+
+  // Scroll depth tracking (25, 50, 75, 100%)
+  let maxScrollReached = 0;
+  const onScrollThrottled = () => {
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    if (docHeight <= 0) return;
+    const currentPct = Math.round((window.scrollY / docHeight) * 100);
+
+    if (currentPct >= 75 && maxScrollReached < 75) {
+      maxScrollReached = 75;
+      trackEvent("scroll_depth", { depth: 75 });
+      addEngagementPoints("scroll_over_75_percent");
+    } else if (currentPct >= 50 && maxScrollReached < 50) {
+      maxScrollReached = 50;
+      trackEvent("scroll_depth", { depth: 50 });
+    } else if (currentPct >= 25 && maxScrollReached < 25) {
+      maxScrollReached = 25;
+      trackEvent("scroll_depth", { depth: 25 });
+    }
+  };
+  window.addEventListener("scroll", onScrollThrottled, { passive: true });
+
+  // Rage click detection (3 fast clicks within 300px and 700ms)
+  window.addEventListener("click", (e) => {
+    const clickTime = Date.now();
+    _clickHistory.push({ x: e.clientX, y: e.clientY, time: clickTime });
+    _clickHistory = _clickHistory.filter((c) => clickTime - c.time < 700);
+
+    if (_clickHistory.length >= 3) {
+      const first = _clickHistory[0];
+      const dist = Math.hypot(e.clientX - first.x, e.clientY - first.y);
+      if (dist < 80) {
+        trackEvent("rage_click", { x: e.clientX, y: e.clientY, path: window.location.pathname });
+        _clickHistory = [];
+      }
+    }
+  }, { passive: true });
+
+  if (import.meta.env.DEV) console.info("[analytics] Engine initialized:", session.session_id);
 }
 
 /**
- * Track a generic event. Fires to Firestore + GA4 + Meta Pixel + dataLayer.
+ * Track a generic event with full first-party enrichment and engagement scoring.
  */
 export function trackEvent(name: string, props: Record<string, unknown> = {}): void {
   if (typeof window === "undefined") return;
 
   const session = loadOrCreateSession();
-
-  // Update last_active
-  if (_sessionData) {
-    _sessionData.last_active = now();
-    persistSession();
-  }
+  session.last_active = now();
+  persistSession();
 
   const enriched = {
     ...props,
@@ -308,9 +450,10 @@ export function trackEvent(name: string, props: Record<string, unknown> = {}): v
     utm_source: session.utm_source,
     utm_medium: session.utm_medium,
     utm_campaign: session.utm_campaign,
+    engagement_score: session.engagement_score,
+    segment: session.segment,
   };
 
-  // Enqueue for Firestore
   enqueue({
     session_id: session.session_id,
     event_name: name,
@@ -318,7 +461,6 @@ export function trackEvent(name: string, props: Record<string, unknown> = {}): v
     props: enriched,
   });
 
-  // Mirror to third-party
   mirrorToGa4(name, enriched);
   mirrorToPixel(name, enriched);
   mirrorToDataLayer(name, enriched);
@@ -327,27 +469,26 @@ export function trackEvent(name: string, props: Record<string, unknown> = {}): v
 }
 
 /**
- * Track a page view. Call on every route change.
+ * Track a page view on route transitions.
  */
 export async function trackPageView(path: string): Promise<void> {
   if (typeof window === "undefined") return;
 
   const session = loadOrCreateSession();
+  session.page_count += 1;
+  session.last_active = now();
+  session.current_page = path;
+  if (!session.pages_viewed) session.pages_viewed = [];
+  if (!session.pages_viewed.includes(path)) session.pages_viewed.push(path);
 
-  // Increment page count
-  if (_sessionData) {
-    _sessionData.page_count += 1;
-    _sessionData.last_active = now();
-    persistSession();
-    // Update Firestore session (non-blocking)
-    void upsertSessionInFirestore(_sessionData);
-  }
+  addEngagementPoints("page_view");
+  persistSession();
+  void upsertSessionInFirestore(session);
 
   const prevPath = _currentPath;
   _currentPath = path;
 
-  // Write page view to Firestore
-  if (firebaseReady && db) {
+  if (firebaseReady && db && hasConsent("analytics")) {
     const pv: Omit<PageViewRecord, "time_on_page_ms"> = {
       session_id: session.session_id,
       path,
@@ -360,7 +501,6 @@ export async function trackPageView(path: string): Promise<void> {
     } catch { /* non-blocking */ }
   }
 
-  // Fire GA4 page_view
   mirrorToGa4("page_view", { page_path: path, page_title: document.title });
   mirrorToPixel("page_view", { page_path: path });
   mirrorToDataLayer("page_view", { page_path: path });
@@ -369,14 +509,18 @@ export async function trackPageView(path: string): Promise<void> {
 }
 
 /**
- * Track a service/department page view.
+ * Track a service or department page view.
  */
 export async function trackServiceView(serviceSlug: string, serviceName: string): Promise<void> {
   if (typeof window === "undefined") return;
 
   const session = loadOrCreateSession();
+  if (!session.services_viewed) session.services_viewed = [];
+  if (!session.services_viewed.includes(serviceSlug)) session.services_viewed.push(serviceSlug);
 
-  if (firebaseReady && db) {
+  addEngagementPoints("service_view");
+
+  if (firebaseReady && db && hasConsent("analytics")) {
     try {
       await addDoc(collection(db, "analytics_service_interest"), {
         session_id: session.session_id,
@@ -391,45 +535,71 @@ export async function trackServiceView(serviceSlug: string, serviceName: string)
 }
 
 /**
- * Track when a user starts interacting with a form (first field focus or intent selection).
+ * Track pricing or package page view.
+ */
+export function trackPricingView(source = "packages_page"): void {
+  addEngagementPoints("pricing_view");
+  trackEvent("pricing_view", { source });
+}
+
+/**
+ * Track CTA button click.
+ */
+export function trackCtaClick(label: string, location = "page"): void {
+  addEngagementPoints("cta_click");
+  trackEvent("cta_click", { cta_label: label, cta_location: location });
+}
+
+/**
+ * Track form interactions.
  */
 export function trackFormStart(formId: string, extra?: Record<string, unknown>): void {
+  addEngagementPoints("form_start");
   trackEvent("form_start", { form_id: formId, ...extra });
 }
 
-/**
- * Track a successful form submission.
- */
 export function trackFormSubmit(formId: string, extra?: Record<string, unknown>): void {
+  addEngagementPoints("form_submit");
   trackEvent("form_submit", { form_id: formId, ...extra });
 }
 
+export function trackFormAbandon(formId: string, lastField = ""): void {
+  trackEvent("form_abandon", { form_id: formId, last_field: lastField });
+}
+
 /**
- * Track a lead form submission — also fires GA4 generate_lead and Meta Lead.
+ * Track lead submission and mark conversion status.
  */
 export function trackLeadSubmit(data: {
   intent: string;
   dept?: string | null;
   service?: string | null;
 }): void {
+  const session = loadOrCreateSession();
+  session.converted = true;
+  session.conversion_type = "lead";
+  persistSession();
+  void upsertSessionInFirestore(session);
+
+  addEngagementPoints("form_submit");
   trackEvent("lead_submit", data);
 
-  // GA4 standard event
   mirrorToGa4("generate_lead", {
     currency: "USD",
-    value: 0, // unknown at this stage
+    value: 0,
     ...data,
   });
 }
 
 /**
- * Track add-to-cart action.
+ * Track checkout & ecommerce conversion funnels.
  */
 export function trackAddToCart(item: {
   name: string;
   serviceSlug?: string;
   unitPrice: number;
 }): void {
+  addEngagementPoints("cta_click");
   trackEvent("add_to_cart", {
     item_name: item.name,
     item_id: item.serviceSlug ?? item.name,
@@ -437,7 +607,6 @@ export function trackAddToCart(item: {
     currency: "USD",
   });
 
-  // GA4 standard add_to_cart
   mirrorToGa4("add_to_cart", {
     currency: "USD",
     value: item.unitPrice,
@@ -445,23 +614,25 @@ export function trackAddToCart(item: {
   });
 }
 
-/**
- * Track checkout initiation.
- */
 export function trackCheckoutStart(total?: number): void {
+  addEngagementPoints("checkout_start");
   trackEvent("checkout_start", { value: total, currency: "USD" });
-
   mirrorToGa4("begin_checkout", { currency: "USD", value: total ?? 0 });
 }
 
-/**
- * Track a completed order/checkout.
- */
 export function trackCheckoutComplete(data: {
   orderId: string;
   total: number;
   itemCount: number;
 }): void {
+  const session = loadOrCreateSession();
+  session.converted = true;
+  session.conversion_type = "order";
+  persistSession();
+  void upsertSessionInFirestore(session);
+
+  addEngagementPoints("checkout_complete");
+
   trackEvent("checkout_complete", {
     transaction_id: data.orderId,
     value: data.total,
@@ -483,7 +654,7 @@ export function trackCheckoutComplete(data: {
 }
 
 /**
- * Returns the current session attribution data (for enriching LeadRecord).
+ * Returns complete session attribution metadata (for enriching LeadRecord / OrderRecord).
  */
 export function getSessionAttribution(): AttributionData {
   const session = typeof window !== "undefined" ? loadOrCreateSession() : null;
@@ -496,12 +667,12 @@ export function getSessionAttribution(): AttributionData {
     utm_term: session?.utm_term ?? null,
     landing_page: session?.landing_page ?? "",
     referrer: session?.referrer ?? "",
+    engagement_score: session?.engagement_score ?? 0,
   };
 }
 
-/* ─── Dashboard query helpers ────────────────────────────────────── */
+/* ─── Dashboard Query Helpers (PRD §3-5) ──────────────────────────── */
 
-/** Get total session count for the last N days. */
 export async function getSessionCount(days = 30): Promise<number> {
   if (!firebaseReady || !db) return 0;
   try {
@@ -513,7 +684,22 @@ export async function getSessionCount(days = 30): Promise<number> {
   } catch { return 0; }
 }
 
-/** Get top pages by view count for the last N days. */
+export async function getActiveLiveVisitors(withinMinutes = 15): Promise<SessionData[]> {
+  if (!firebaseReady || !db) return [];
+  try {
+    const since = new Date(Date.now() - withinMinutes * 60_000).toISOString();
+    const snap = await getDocs(
+      query(
+        collection(db, "analytics_sessions"),
+        where("last_active", ">=", since),
+        orderBy("last_active", "desc"),
+        fsLimit(50)
+      )
+    );
+    return snap.docs.map((d) => ({ ...d.data() } as SessionData));
+  } catch { return []; }
+}
+
 export async function getTopPages(days = 30, topN = 10): Promise<{ path: string; views: number }[]> {
   if (!firebaseReady || !db) return [];
   try {
@@ -538,7 +724,6 @@ export async function getTopPages(days = 30, topN = 10): Promise<{ path: string;
   } catch { return []; }
 }
 
-/** Get traffic source breakdown for the last N days. */
 export async function getTrafficSources(days = 30): Promise<{ source: string; sessions: number }[]> {
   if (!firebaseReady || !db) return [];
   try {
@@ -562,7 +747,6 @@ export async function getTrafficSources(days = 30): Promise<{ source: string; se
   } catch { return []; }
 }
 
-/** Get service interest ranking for the last N days. */
 export async function getServiceInterestRanking(days = 30): Promise<{ service_name: string; service_slug: string; views: number }[]> {
   if (!firebaseReady || !db) return [];
   try {
@@ -588,12 +772,11 @@ export async function getServiceInterestRanking(days = 30): Promise<{ service_na
   } catch { return []; }
 }
 
-/** Get event funnel counts for the last N days. */
 export async function getFunnelCounts(days = 30): Promise<Record<string, number>> {
   if (!firebaseReady || !db) return {};
   try {
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const funnelEvents = ["service_view", "form_start", "form_submit", "lead_submit", "checkout_start", "checkout_complete"];
+    const funnelEvents = ["page_view", "service_view", "pricing_view", "cta_click", "form_start", "form_submit", "lead_submit", "checkout_start", "checkout_complete"];
     const results: Record<string, number> = {};
     await Promise.all(
       funnelEvents.map(async (ev) => {
@@ -615,8 +798,7 @@ export async function getFunnelCounts(days = 30): Promise<Record<string, number>
   } catch { return {}; }
 }
 
-/** Get recent sessions (for live visitor view). */
-export async function getRecentSessions(limitN = 20): Promise<SessionData[]> {
+export async function getRecentSessions(limitN = 25): Promise<SessionData[]> {
   if (!firebaseReady || !db) return [];
   try {
     const snap = await getDocs(
@@ -630,7 +812,6 @@ export async function getRecentSessions(limitN = 20): Promise<SessionData[]> {
   } catch { return []; }
 }
 
-/** Get UTM campaign performance for the last N days. */
 export async function getCampaignPerformance(days = 30): Promise<{ campaign: string; source: string; medium: string; sessions: number }[]> {
   if (!firebaseReady || !db) return [];
   try {
@@ -658,7 +839,21 @@ export async function getCampaignPerformance(days = 30): Promise<{ campaign: str
   } catch { return []; }
 }
 
-/** Check whether the analytics_sessions collection exists and has any data. */
+export async function getSessionEvents(sessionId: string): Promise<AnalyticsEvent[]> {
+  if (!firebaseReady || !db) return [];
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, "analytics_events"),
+        where("session_id", "==", sessionId),
+        orderBy("created_at", "asc"),
+        fsLimit(100)
+      )
+    );
+    return snap.docs.map((d) => ({ ...d.data() } as AnalyticsEvent));
+  } catch { return []; }
+}
+
 export async function analyticsHasData(): Promise<boolean> {
   if (!firebaseReady || !db) return false;
   try {

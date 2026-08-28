@@ -20,6 +20,7 @@ import MicroEggs from "./components/MicroEggs";
 import MoreHandEggs from "./components/MoreHandEggs";
 import StampEgg from "./components/StampEgg";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ConsentBanner } from "./components/ConsentBanner";
 import Home from "./pages/Home";
 import DepartmentPage from "./pages/Department";
 import Work from "./pages/Work";
@@ -176,6 +177,7 @@ function Shell() {
       <MicroEggs />
       <MoreHandEggs />
       <StampEgg />
+      <ConsentBanner />
       <Toaster position="bottom-right" toastOptions={{ style: { background: "var(--panel)", color: "var(--ink)", border: "1px solid var(--line-strong)", borderRadius: 0, fontSize: 13 } }} />
     </>
   );
