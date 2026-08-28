@@ -10,28 +10,123 @@ interface GeoWorldMapProps {
 
 // Precise Lat/Lng geographic coordinates and metadata for countries
 export const COUNTRY_GEO_COORDS: Record<string, { lat: number; lng: number; name: string; flag: string }> = {
+  // Caribbean & Atlantic
   JM: { lat: 18.0179, lng: -76.8099, name: "Jamaica", flag: "🇯🇲" },
-  US: { lat: 37.0902, lng: -95.7129, name: "United States", flag: "🇺🇸" },
-  CA: { lat: 56.1304, lng: -106.3468, name: "Canada", flag: "🇨🇦" },
-  GB: { lat: 55.3781, lng: -3.4360, name: "United Kingdom", flag: "🇬🇧" },
   TT: { lat: 10.6918, lng: -61.2225, name: "Trinidad & Tobago", flag: "🇹🇹" },
   BB: { lat: 13.1939, lng: -59.5432, name: "Barbados", flag: "🇧🇧" },
   BS: { lat: 25.0343, lng: -77.3963, name: "Bahamas", flag: "🇧🇸" },
   KY: { lat: 19.3133, lng: -81.2546, name: "Cayman Islands", flag: "🇰🇾" },
   TC: { lat: 21.6940, lng: -71.7979, name: "Turks & Caicos", flag: "🇹🇨" },
+  GY: { lat: 4.8604, lng: -58.9302, name: "Guyana", flag: "🇬🇾" },
+  BZ: { lat: 17.1899, lng: -88.4976, name: "Belize", flag: "🇧🇿" },
+  AG: { lat: 17.0608, lng: -61.7964, name: "Antigua & Barbuda", flag: "🇦🇬" },
+  LC: { lat: 13.9094, lng: -60.9789, name: "St. Lucia", flag: "🇱🇨" },
+  GD: { lat: 12.1165, lng: -61.6790, name: "Grenada", flag: "🇬🇩" },
+  KN: { lat: 17.3578, lng: -62.7830, name: "St. Kitts & Nevis", flag: "🇰🇳" },
+  VC: { lat: 13.2528, lng: -61.1971, name: "St. Vincent & Grenadines", flag: "🇻🇨" },
+  BM: { lat: 32.3078, lng: -64.7505, name: "Bermuda", flag: "🇧🇲" },
+  PR: { lat: 18.2208, lng: -66.5901, name: "Puerto Rico", flag: "🇵🇷" },
+  DO: { lat: 18.7357, lng: -70.1627, name: "Dominican Republic", flag: "🇩🇴" },
+  HT: { lat: 18.9712, lng: -72.2852, name: "Haiti", flag: "🇭🇹" },
+  CW: { lat: 12.1696, lng: -68.9900, name: "Curaçao", flag: "🇨🇼" },
+  AW: { lat: 12.5211, lng: -69.9683, name: "Aruba", flag: "🇦🇼" },
+  SR: { lat: 3.9193, lng: -56.0278, name: "Suriname", flag: "🇸🇷" },
+
+  // North America
+  US: { lat: 37.0902, lng: -95.7129, name: "United States", flag: "🇺🇸" },
+  CA: { lat: 56.1304, lng: -106.3468, name: "Canada", flag: "🇨🇦" },
+  MX: { lat: 23.6345, lng: -102.5528, name: "Mexico", flag: "🇲🇽" },
+
+  // Central & South America
+  CO: { lat: 4.5709, lng: -74.2973, name: "Colombia", flag: "🇨🇴" },
+  BR: { lat: -14.2350, lng: -51.9253, name: "Brazil", flag: "🇧🇷" },
+  AR: { lat: -38.4161, lng: -63.6167, name: "Argentina", flag: "🇦🇷" },
+  CL: { lat: -35.6751, lng: -71.5430, name: "Chile", flag: "🇨🇱" },
+  PE: { lat: -9.1900, lng: -75.0152, name: "Peru", flag: "🇵🇪" },
+  EC: { lat: -1.8312, lng: -78.1834, name: "Ecuador", flag: "🇪🇨" },
+  PA: { lat: 8.5379, lng: -80.7821, name: "Panama", flag: "🇵🇦" },
+  CR: { lat: 9.7489, lng: -83.7534, name: "Costa Rica", flag: "🇨🇷" },
+  GT: { lat: 15.7835, lng: -90.2308, name: "Guatemala", flag: "🇬🇹" },
+  VE: { lat: 6.4238, lng: -66.5897, name: "Venezuela", flag: "🇻🇪" },
+
+  // Europe
+  GB: { lat: 55.3781, lng: -3.4360, name: "United Kingdom", flag: "🇬🇧" },
+  IE: { lat: 53.1424, lng: -7.6921, name: "Ireland", flag: "🇮🇪" },
   DE: { lat: 51.1657, lng: 10.4515, name: "Germany", flag: "🇩🇪" },
   FR: { lat: 46.2276, lng: 2.2137, name: "France", flag: "🇫🇷" },
   NL: { lat: 52.1326, lng: 5.2913, name: "Netherlands", flag: "🇳🇱" },
   ES: { lat: 40.4637, lng: -3.7492, name: "Spain", flag: "🇪🇸" },
-  AE: { lat: 23.4241, lng: 53.8478, name: "United Arab Emirates", flag: "🇦🇪" },
-  AU: { lat: -25.2744, lng: 133.7751, name: "Australia", flag: "🇦🇺" },
-  JP: { lat: 36.2048, lng: 138.2529, name: "Japan", flag: "🇯🇵" },
-  SG: { lat: 1.3521, lng: 103.8198, name: "Singapore", flag: "🇸🇬" },
-  BR: { lat: -14.2350, lng: -51.9253, name: "Brazil", flag: "🇧🇷" },
-  IN: { lat: 20.5937, lng: 78.9629, name: "India", flag: "🇮🇳" },
+  IT: { lat: 41.8719, lng: 12.5674, name: "Italy", flag: "🇮🇹" },
+  CH: { lat: 46.8182, lng: 8.2275, name: "Switzerland", flag: "🇨🇭" },
+  BE: { lat: 50.5039, lng: 4.4699, name: "Belgium", flag: "🇧🇪" },
+  AT: { lat: 47.5162, lng: 14.5501, name: "Austria", flag: "🇦🇹" },
+  SE: { lat: 60.1282, lng: 18.6435, name: "Sweden", flag: "🇸🇪" },
+  NO: { lat: 60.4720, lng: 8.4689, name: "Norway", flag: "🇳🇴" },
+  DK: { lat: 56.2639, lng: 9.5018, name: "Denmark", flag: "🇩🇰" },
+  FI: { lat: 61.9241, lng: 25.7482, name: "Finland", flag: "🇫🇮" },
+  PL: { lat: 51.9194, lng: 19.1451, name: "Poland", flag: "🇵🇱" },
+  PT: { lat: 39.3999, lng: -8.2245, name: "Portugal", flag: "🇵🇹" },
+  GR: { lat: 39.0742, lng: 21.8243, name: "Greece", flag: "🇬🇷" },
+  CZ: { lat: 49.8175, lng: 15.4730, name: "Czech Republic", flag: "🇨🇿" },
+  HU: { lat: 47.1625, lng: 19.5033, name: "Hungary", flag: "🇭🇺" },
+  RO: { lat: 45.9432, lng: 24.9668, name: "Romania", flag: "🇷🇴" },
+  TR: { lat: 38.9637, lng: 35.2433, name: "Turkey", flag: "🇹🇷" },
+  UA: { lat: 48.3794, lng: 31.1656, name: "Ukraine", flag: "🇺🇦" },
+
+  // Africa
   NG: { lat: 9.0820, lng: 8.6753, name: "Nigeria", flag: "🇳🇬" },
   ZA: { lat: -30.5595, lng: 22.9375, name: "South Africa", flag: "🇿🇦" },
+  GH: { lat: 7.9465, lng: -1.0232, name: "Ghana", flag: "🇬🇭" },
+  KE: { lat: -0.0236, lng: 37.9062, name: "Kenya", flag: "🇰🇪" },
+  EG: { lat: 26.8206, lng: 30.8025, name: "Egypt", flag: "🇪🇬" },
+  MA: { lat: 31.7917, lng: -7.0926, name: "Morocco", flag: "🇲🇦" },
+  UG: { lat: 1.3733, lng: 32.2903, name: "Uganda", flag: "🇺🇬" },
+  TZ: { lat: -6.3690, lng: 34.8888, name: "Tanzania", flag: "🇹🇿" },
+  ET: { lat: 9.1450, lng: 40.4897, name: "Ethiopia", flag: "🇪🇹" },
+  ZW: { lat: -19.0154, lng: 29.1549, name: "Zimbabwe", flag: "🇿🇼" },
+  RW: { lat: -1.9403, lng: 29.8739, name: "Rwanda", flag: "🇷🇼" },
+  SN: { lat: 14.4974, lng: -14.4524, name: "Senegal", flag: "🇸🇳" },
+  CI: { lat: 7.5400, lng: -5.5471, name: "Ivory Coast", flag: "🇨🇮" },
+
+  // Asia & Middle East
+  IN: { lat: 20.5937, lng: 78.9629, name: "India", flag: "🇮🇳" },
+  AE: { lat: 23.4241, lng: 53.8478, name: "United Arab Emirates", flag: "🇦🇪" },
+  SA: { lat: 23.8859, lng: 45.0792, name: "Saudi Arabia", flag: "🇸🇦" },
+  QA: { lat: 25.3548, lng: 51.1839, name: "Qatar", flag: "🇶🇦" },
+  KW: { lat: 29.3117, lng: 47.4818, name: "Kuwait", flag: "🇰🇼" },
+  BH: { lat: 26.0667, lng: 50.5577, name: "Bahrain", flag: "🇧🇭" },
+  IL: { lat: 31.0461, lng: 34.8516, name: "Israel", flag: "🇮🇱" },
+  PK: { lat: 30.3753, lng: 69.3451, name: "Pakistan", flag: "🇵🇰" },
+  BD: { lat: 23.6850, lng: 90.3563, name: "Bangladesh", flag: "🇧🇩" },
+  LK: { lat: 7.8731, lng: 80.7718, name: "Sri Lanka", flag: "🇱🇰" },
+  SG: { lat: 1.3521, lng: 103.8198, name: "Singapore", flag: "🇸🇬" },
+  JP: { lat: 36.2048, lng: 138.2529, name: "Japan", flag: "🇯🇵" },
+  KR: { lat: 35.9078, lng: 127.7669, name: "South Korea", flag: "🇰🇷" },
+  CN: { lat: 35.8617, lng: 104.1954, name: "China", flag: "🇨🇳" },
+  HK: { lat: 22.3193, lng: 114.1694, name: "Hong Kong", flag: "🇭🇰" },
+  TW: { lat: 23.6978, lng: 120.9605, name: "Taiwan", flag: "🇹🇼" },
+  PH: { lat: 12.8797, lng: 121.7740, name: "Philippines", flag: "🇵🇭" },
+  MY: { lat: 4.2105, lng: 101.9758, name: "Malaysia", flag: "🇲🇾" },
+  ID: { lat: -0.7893, lng: 113.9213, name: "Indonesia", flag: "🇮🇩" },
+  TH: { lat: 15.8700, lng: 100.9925, name: "Thailand", flag: "🇹🇭" },
+  VN: { lat: 14.0583, lng: 108.2772, name: "Vietnam", flag: "🇻🇳" },
+
+  // Oceania
+  AU: { lat: -25.2744, lng: 133.7751, name: "Australia", flag: "🇦🇺" },
+  NZ: { lat: -40.9006, lng: 174.8860, name: "New Zealand", flag: "🇳🇿" },
+  FJ: { lat: -17.7134, lng: 178.0650, name: "Fiji", flag: "🇫🇯" },
 };
+
+export function getCountryCoords(code: string): { lat: number; lng: number; name: string; flag: string } {
+  if (COUNTRY_GEO_COORDS[code]) return COUNTRY_GEO_COORDS[code];
+  // Deterministic fallback coordinate so NO country is ever discarded
+  return {
+    lat: 15.0,
+    lng: 10.0,
+    name: code,
+    flag: "🌐",
+  };
+}
 
 // Agency primary hub — module-level constant (never changes, prevents useMemo churn)
 const HUB_POINT: MapPoint = {
@@ -60,11 +155,10 @@ export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: 
       live: liveCountByCountry["JM"] || 0,
     });
 
-    // Add countries with verified recorded sessions (> 0)
-    data.forEach((item) => {
-      if (item.country_code === "JM" || item.sessions <= 0) return;
-      const coords = COUNTRY_GEO_COORDS[item.country_code];
-      if (coords) {
+      // Add countries with verified recorded sessions (> 0)
+      data.forEach((item) => {
+        if (item.country_code === "JM" || item.sessions <= 0) return;
+        const coords = getCountryCoords(item.country_code);
         points.push({
           lat: coords.lat,
           lng: coords.lng,
@@ -74,15 +168,13 @@ export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: 
           live: liveCountByCountry[item.country_code] || 0,
           flag: item.flag || coords.flag,
         });
-      }
-    });
+      });
 
-    // Add countries with currently active live visitors
-    Object.entries(liveCountByCountry).forEach(([code, liveCount]) => {
-      if (code === "JM" || liveCount <= 0) return;
-      if (!points.some((p) => p.code === code)) {
-        const coords = COUNTRY_GEO_COORDS[code];
-        if (coords) {
+      // Add countries with currently active live visitors
+      Object.entries(liveCountByCountry).forEach(([code, liveCount]) => {
+        if (code === "JM" || liveCount <= 0) return;
+        if (!points.some((p) => p.code === code)) {
+          const coords = getCountryCoords(code);
           const record = dataMap.get(code);
           points.push({
             lat: coords.lat,
@@ -94,8 +186,7 @@ export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: 
             flag: record?.flag || coords.flag,
           });
         }
-      }
-    });
+      });
 
     return points;
   }, [data, dataMap, liveCountByCountry, HUB_POINT]);

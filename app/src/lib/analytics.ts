@@ -238,6 +238,105 @@ function detectOs(): string {
  * Resolves visitor geographic country & city via client timezone and locale.
  * Privacy-first: zero IP tracking or invasive fingerprinting.
  */
+export const COUNTRY_REGISTRY: Record<string, { name: string; flag: string }> = {
+  JM: { name: "Jamaica", flag: "🇯🇲" },
+  US: { name: "United States", flag: "🇺🇸" },
+  CA: { name: "Canada", flag: "🇨🇦" },
+  GB: { name: "United Kingdom", flag: "🇬🇧" },
+  IE: { name: "Ireland", flag: "🇮🇪" },
+  TT: { name: "Trinidad & Tobago", flag: "🇹🇹" },
+  BB: { name: "Barbados", flag: "🇧🇧" },
+  BS: { name: "Bahamas", flag: "🇧🇸" },
+  KY: { name: "Cayman Islands", flag: "🇰🇾" },
+  TC: { name: "Turks & Caicos", flag: "🇹🇨" },
+  GY: { name: "Guyana", flag: "🇬🇾" },
+  BZ: { name: "Belize", flag: "🇧🇿" },
+  AG: { name: "Antigua & Barbuda", flag: "🇦🇬" },
+  LC: { name: "St. Lucia", flag: "🇱🇨" },
+  GD: { name: "Grenada", flag: "🇬🇩" },
+  KN: { name: "St. Kitts & Nevis", flag: "🇰🇳" },
+  VC: { name: "St. Vincent & Grenadines", flag: "🇻🇨" },
+  BM: { name: "Bermuda", flag: "🇧🇲" },
+  PR: { name: "Puerto Rico", flag: "🇵🇷" },
+  DO: { name: "Dominican Republic", flag: "🇩🇴" },
+  HT: { name: "Haiti", flag: "🇭🇹" },
+  CW: { name: "Curaçao", flag: "🇨🇼" },
+  AW: { name: "Aruba", flag: "🇦🇼" },
+  SR: { name: "Suriname", flag: "🇸🇷" },
+  MX: { name: "Mexico", flag: "🇲🇽" },
+  BR: { name: "Brazil", flag: "🇧🇷" },
+  CO: { name: "Colombia", flag: "🇨🇴" },
+  AR: { name: "Argentina", flag: "🇦🇷" },
+  CL: { name: "Chile", flag: "🇨🇱" },
+  PE: { name: "Peru", flag: "🇵🇪" },
+  EC: { name: "Ecuador", flag: "🇪🇨" },
+  PA: { name: "Panama", flag: "🇵🇦" },
+  CR: { name: "Costa Rica", flag: "🇨🇷" },
+  GT: { name: "Guatemala", flag: "🇬🇹" },
+  VE: { name: "Venezuela", flag: "🇻🇪" },
+  DE: { name: "Germany", flag: "🇩🇪" },
+  FR: { name: "France", flag: "🇫🇷" },
+  NL: { name: "Netherlands", flag: "🇳🇱" },
+  ES: { name: "Spain", flag: "🇪🇸" },
+  IT: { name: "Italy", flag: "🇮🇹" },
+  CH: { name: "Switzerland", flag: "🇨🇭" },
+  BE: { name: "Belgium", flag: "🇧🇪" },
+  AT: { name: "Austria", flag: "🇦🇹" },
+  SE: { name: "Sweden", flag: "🇸🇪" },
+  NO: { name: "Norway", flag: "🇳🇴" },
+  DK: { name: "Denmark", flag: "🇩🇰" },
+  FI: { name: "Finland", flag: "🇫🇮" },
+  PL: { name: "Poland", flag: "🇵🇱" },
+  PT: { name: "Portugal", flag: "🇵🇹" },
+  GR: { name: "Greece", flag: "🇬🇷" },
+  CZ: { name: "Czech Republic", flag: "🇨🇿" },
+  HU: { name: "Hungary", flag: "🇭🇺" },
+  RO: { name: "Romania", flag: "🇷🇴" },
+  TR: { name: "Turkey", flag: "🇹🇷" },
+  UA: { name: "Ukraine", flag: "🇺🇦" },
+  AE: { name: "United Arab Emirates", flag: "🇦🇪" },
+  SA: { name: "Saudi Arabia", flag: "🇸🇦" },
+  QA: { name: "Qatar", flag: "🇶🇦" },
+  KW: { name: "Kuwait", flag: "🇰🇼" },
+  BH: { name: "Bahrain", flag: "🇧🇭" },
+  IL: { name: "Israel", flag: "🇮🇱" },
+  IN: { name: "India", flag: "🇮🇳" },
+  PK: { name: "Pakistan", flag: "🇵🇰" },
+  BD: { name: "Bangladesh", flag: "🇧🇩" },
+  LK: { name: "Sri Lanka", flag: "🇱🇰" },
+  NG: { name: "Nigeria", flag: "🇳🇬" },
+  ZA: { name: "South Africa", flag: "🇿🇦" },
+  GH: { name: "Ghana", flag: "🇬🇭" },
+  KE: { name: "Kenya", flag: "🇰🇪" },
+  EG: { name: "Egypt", flag: "🇪🇬" },
+  MA: { name: "Morocco", flag: "🇲🇦" },
+  UG: { name: "Uganda", flag: "🇺🇬" },
+  TZ: { name: "Tanzania", flag: "🇹🇿" },
+  ET: { name: "Ethiopia", flag: "🇪🇹" },
+  ZW: { name: "Zimbabwe", flag: "🇿🇼" },
+  RW: { name: "Rwanda", flag: "🇷🇼" },
+  SN: { name: "Senegal", flag: "🇸🇳" },
+  CI: { name: "Ivory Coast", flag: "🇨🇮" },
+  JP: { name: "Japan", flag: "🇯🇵" },
+  KR: { name: "South Korea", flag: "🇰🇷" },
+  CN: { name: "China", flag: "🇨🇳" },
+  HK: { name: "Hong Kong", flag: "🇭🇰" },
+  TW: { name: "Taiwan", flag: "🇹🇼" },
+  SG: { name: "Singapore", flag: "🇸🇬" },
+  MY: { name: "Malaysia", flag: "🇲🇾" },
+  ID: { name: "Indonesia", flag: "🇮🇩" },
+  PH: { name: "Philippines", flag: "🇵🇭" },
+  TH: { name: "Thailand", flag: "🇹🇭" },
+  VN: { name: "Vietnam", flag: "🇻🇳" },
+  AU: { name: "Australia", flag: "🇦🇺" },
+  NZ: { name: "New Zealand", flag: "🇳🇿" },
+  FJ: { name: "Fiji", flag: "🇫🇯" },
+};
+
+/**
+ * Resolves visitor geographic country & city via client timezone and locale.
+ * Privacy-first: zero invasive fingerprinting.
+ */
 function resolveClientGeo(): { code: string; name: string; flag: string; city: string } {
   if (typeof window === "undefined") {
     return { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" };
@@ -245,48 +344,239 @@ function resolveClientGeo(): { code: string; name: string; flag: string; city: s
 
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-    const TZ_MAP: Record<string, { code: string; name: string; flag: string; city: string }> = {
+    
+    // Comprehensive IANA Timezone mapping
+    const EXACT_TZ: Record<string, { code: string; name: string; flag: string; city: string }> = {
+      // Caribbean & Atlantic
       "America/Jamaica": { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" },
-      "America/New_York": { code: "US", name: "United States", flag: "🇺🇸", city: "New York" },
-      "America/Chicago": { code: "US", name: "United States", flag: "🇺🇸", city: "Chicago" },
-      "America/Los_Angeles": { code: "US", name: "United States", flag: "🇺🇸", city: "Los Angeles" },
-      "America/Denver": { code: "US", name: "United States", flag: "🇺🇸", city: "Denver" },
-      "America/Phoenix": { code: "US", name: "United States", flag: "🇺🇸", city: "Phoenix" },
-      "America/Toronto": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Toronto" },
-      "America/Vancouver": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Vancouver" },
-      "America/Montreal": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Montreal" },
-      "Europe/London": { code: "GB", name: "United Kingdom", flag: "🇬🇧", city: "London" },
-      "Europe/Paris": { code: "FR", name: "France", flag: "🇫🇷", city: "Paris" },
-      "Europe/Berlin": { code: "DE", name: "Germany", flag: "🇩🇪", city: "Berlin" },
-      "Europe/Amsterdam": { code: "NL", name: "Netherlands", flag: "🇳🇱", city: "Amsterdam" },
-      "Europe/Madrid": { code: "ES", name: "Spain", flag: "🇪🇸", city: "Madrid" },
       "America/Port_of_Spain": { code: "TT", name: "Trinidad & Tobago", flag: "🇹🇹", city: "Port of Spain" },
       "America/Barbados": { code: "BB", name: "Barbados", flag: "🇧🇧", city: "Bridgetown" },
       "America/Nassau": { code: "BS", name: "Bahamas", flag: "🇧🇸", city: "Nassau" },
       "America/Grand_Turk": { code: "TC", name: "Turks & Caicos", flag: "🇹🇨", city: "Grand Turk" },
       "America/Cayman": { code: "KY", name: "Cayman Islands", flag: "🇰🇾", city: "George Town" },
-      "Asia/Tokyo": { code: "JP", name: "Japan", flag: "🇯🇵", city: "Tokyo" },
-      "Asia/Singapore": { code: "SG", name: "Singapore", flag: "🇸🇬", city: "Singapore" },
+      "America/Guyana": { code: "GY", name: "Guyana", flag: "🇬🇾", city: "Georgetown" },
+      "America/Belize": { code: "BZ", name: "Belize", flag: "🇧🇿", city: "Belize City" },
+      "America/Antigua": { code: "AG", name: "Antigua & Barbuda", flag: "🇦🇬", city: "St. John's" },
+      "America/St_Lucia": { code: "LC", name: "St. Lucia", flag: "🇱🇨", city: "Castries" },
+      "America/Grenada": { code: "GD", name: "Grenada", flag: "🇬🇩", city: "St. George's" },
+      "America/St_Kitts": { code: "KN", name: "St. Kitts & Nevis", flag: "🇰🇳", city: "Basseterre" },
+      "America/St_Vincent": { code: "VC", name: "St. Vincent & Grenadines", flag: "🇻🇨", city: "Kingstown" },
+      "Atlantic/Bermuda": { code: "BM", name: "Bermuda", flag: "🇧🇲", city: "Hamilton" },
+      "America/Puerto_Rico": { code: "PR", name: "Puerto Rico", flag: "🇵🇷", city: "San Juan" },
+      "America/Santo_Domingo": { code: "DO", name: "Dominican Republic", flag: "🇩🇴", city: "Santo Domingo" },
+      "America/Port-au-Prince": { code: "HT", name: "Haiti", flag: "🇭🇹", city: "Port-au-Prince" },
+      "America/Curacao": { code: "CW", name: "Curaçao", flag: "🇨🇼", city: "Willemstad" },
+      "America/Aruba": { code: "AW", name: "Aruba", flag: "🇦🇼", city: "Oranjestad" },
+      "America/Paramaribo": { code: "SR", name: "Suriname", flag: "🇸🇷", city: "Paramaribo" },
+
+      // North America
+      "America/New_York": { code: "US", name: "United States", flag: "🇺🇸", city: "New York" },
+      "America/Detroit": { code: "US", name: "United States", flag: "🇺🇸", city: "Detroit" },
+      "America/Chicago": { code: "US", name: "United States", flag: "🇺🇸", city: "Chicago" },
+      "America/Los_Angeles": { code: "US", name: "United States", flag: "🇺🇸", city: "Los Angeles" },
+      "America/Denver": { code: "US", name: "United States", flag: "🇺🇸", city: "Denver" },
+      "America/Phoenix": { code: "US", name: "United States", flag: "🇺🇸", city: "Phoenix" },
+      "America/Indiana/Indianapolis": { code: "US", name: "United States", flag: "🇺🇸", city: "Indianapolis" },
+      "America/Boise": { code: "US", name: "United States", flag: "🇺🇸", city: "Boise" },
+      "America/Anchorage": { code: "US", name: "United States", flag: "🇺🇸", city: "Anchorage" },
+      "Pacific/Honolulu": { code: "US", name: "United States", flag: "🇺🇸", city: "Honolulu" },
+      "America/Toronto": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Toronto" },
+      "America/Vancouver": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Vancouver" },
+      "America/Montreal": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Montreal" },
+      "America/Edmonton": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Edmonton" },
+      "America/Calgary": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Calgary" },
+      "America/Winnipeg": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Winnipeg" },
+      "America/Halifax": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Halifax" },
+      "America/St_Johns": { code: "CA", name: "Canada", flag: "🇨🇦", city: "St. John's" },
+      "America/Regina": { code: "CA", name: "Canada", flag: "🇨🇦", city: "Regina" },
+      "America/Mexico_City": { code: "MX", name: "Mexico", flag: "🇲🇽", city: "Mexico City" },
+      "America/Cancun": { code: "MX", name: "Mexico", flag: "🇲🇽", city: "Cancun" },
+      "America/Monterrey": { code: "MX", name: "Mexico", flag: "🇲🇽", city: "Monterrey" },
+      "America/Tijuana": { code: "MX", name: "Mexico", flag: "🇲🇽", city: "Tijuana" },
+
+      // Central & South America
+      "America/Bogota": { code: "CO", name: "Colombia", flag: "🇨🇴", city: "Bogota" },
+      "America/Sao_Paulo": { code: "BR", name: "Brazil", flag: "🇧🇷", city: "Sao Paulo" },
+      "America/Rio_Branco": { code: "BR", name: "Brazil", flag: "🇧🇷", city: "Rio Branco" },
+      "America/Fortaleza": { code: "BR", name: "Brazil", flag: "🇧🇷", city: "Fortaleza" },
+      "America/Manaus": { code: "BR", name: "Brazil", flag: "🇧🇷", city: "Manaus" },
+      "America/Recife": { code: "BR", name: "Brazil", flag: "🇧🇷", city: "Recife" },
+      "America/Belem": { code: "BR", name: "Brazil", flag: "🇧🇷", city: "Belem" },
+      "America/Buenos_Aires": { code: "AR", name: "Argentina", flag: "🇦🇷", city: "Buenos Aires" },
+      "America/Cordoba": { code: "AR", name: "Argentina", flag: "🇦🇷", city: "Cordoba" },
+      "America/Santiago": { code: "CL", name: "Chile", flag: "🇨🇱", city: "Santiago" },
+      "America/Lima": { code: "PE", name: "Peru", flag: "🇵🇪", city: "Lima" },
+      "America/Guayaquil": { code: "EC", name: "Ecuador", flag: "🇪🇨", city: "Guayaquil" },
+      "America/Panama": { code: "PA", name: "Panama", flag: "🇵🇦", city: "Panama City" },
+      "America/Costa_Rica": { code: "CR", name: "Costa Rica", flag: "🇨🇷", city: "San Jose" },
+      "America/Guatemala": { code: "GT", name: "Guatemala", flag: "🇬🇹", city: "Guatemala City" },
+      "America/Caracas": { code: "VE", name: "Venezuela", flag: "🇻🇪", city: "Caracas" },
+
+      // Europe
+      "Europe/London": { code: "GB", name: "United Kingdom", flag: "🇬🇧", city: "London" },
+      "Europe/Belfast": { code: "GB", name: "United Kingdom", flag: "🇬🇧", city: "Belfast" },
+      "Europe/Dublin": { code: "IE", name: "Ireland", flag: "🇮🇪", city: "Dublin" },
+      "Europe/Paris": { code: "FR", name: "France", flag: "🇫🇷", city: "Paris" },
+      "Europe/Berlin": { code: "DE", name: "Germany", flag: "🇩🇪", city: "Berlin" },
+      "Europe/Amsterdam": { code: "NL", name: "Netherlands", flag: "🇳🇱", city: "Amsterdam" },
+      "Europe/Brussels": { code: "BE", name: "Belgium", flag: "🇧🇪", city: "Brussels" },
+      "Europe/Madrid": { code: "ES", name: "Spain", flag: "🇪🇸", city: "Madrid" },
+      "Europe/Rome": { code: "IT", name: "Italy", flag: "🇮🇹", city: "Rome" },
+      "Europe/Zurich": { code: "CH", name: "Switzerland", flag: "🇨🇭", city: "Zurich" },
+      "Europe/Vienna": { code: "AT", name: "Austria", flag: "🇦🇹", city: "Vienna" },
+      "Europe/Stockholm": { code: "SE", name: "Sweden", flag: "🇸🇪", city: "Stockholm" },
+      "Europe/Oslo": { code: "NO", name: "Norway", flag: "🇳🇴", city: "Oslo" },
+      "Europe/Copenhagen": { code: "DK", name: "Denmark", flag: "🇩🇰", city: "Copenhagen" },
+      "Europe/Helsinki": { code: "FI", name: "Finland", flag: "🇫🇮", city: "Helsinki" },
+      "Europe/Warsaw": { code: "PL", name: "Poland", flag: "🇵🇱", city: "Warsaw" },
+      "Europe/Lisbon": { code: "PT", name: "Portugal", flag: "🇵🇹", city: "Lisbon" },
+      "Europe/Athens": { code: "GR", name: "Greece", flag: "🇬🇷", city: "Athens" },
+      "Europe/Prague": { code: "CZ", name: "Czech Republic", flag: "🇨🇿", city: "Prague" },
+      "Europe/Budapest": { code: "HU", name: "Hungary", flag: "🇭🇺", city: "Budapest" },
+      "Europe/Bucharest": { code: "RO", name: "Romania", flag: "🇷🇴", city: "Bucharest" },
+      "Europe/Kiev": { code: "UA", name: "Ukraine", flag: "🇺🇦", city: "Kyiv" },
+      "Europe/Kyiv": { code: "UA", name: "Ukraine", flag: "🇺🇦", city: "Kyiv" },
+      "Europe/Istanbul": { code: "TR", name: "Turkey", flag: "🇹🇷", city: "Istanbul" },
+
+      // Africa
+      "Africa/Lagos": { code: "NG", name: "Nigeria", flag: "🇳🇬", city: "Lagos" },
+      "Africa/Johannesburg": { code: "ZA", name: "South Africa", flag: "🇿🇦", city: "Johannesburg" },
+      "Africa/Accra": { code: "GH", name: "Ghana", flag: "🇬🇭", city: "Accra" },
+      "Africa/Nairobi": { code: "KE", name: "Kenya", flag: "🇰🇪", city: "Nairobi" },
+      "Africa/Cairo": { code: "EG", name: "Egypt", flag: "🇪🇬", city: "Cairo" },
+      "Africa/Casablanca": { code: "MA", name: "Morocco", flag: "🇲🇦", city: "Casablanca" },
+      "Africa/Kampala": { code: "UG", name: "Uganda", flag: "🇺🇬", city: "Kampala" },
+      "Africa/Dar_es_Salaam": { code: "TZ", name: "Tanzania", flag: "🇹🇿", city: "Dar es Salaam" },
+      "Africa/Addis_Ababa": { code: "ET", name: "Ethiopia", flag: "🇪🇹", city: "Addis Ababa" },
+      "Africa/Harare": { code: "ZW", name: "Zimbabwe", flag: "🇿🇼", city: "Harare" },
+      "Africa/Kigali": { code: "RW", name: "Rwanda", flag: "🇷🇼", city: "Kigali" },
+      "Africa/Dakar": { code: "SN", name: "Senegal", flag: "🇸🇳", city: "Dakar" },
+      "Africa/Abidjan": { code: "CI", name: "Ivory Coast", flag: "🇨🇮", city: "Abidjan" },
+
+      // Asia & Middle East
+      "Asia/Kolkata": { code: "IN", name: "India", flag: "🇮🇳", city: "New Delhi" },
+      "Asia/Calcutta": { code: "IN", name: "India", flag: "🇮🇳", city: "Kolkata" },
       "Asia/Dubai": { code: "AE", name: "United Arab Emirates", flag: "🇦🇪", city: "Dubai" },
+      "Asia/Riyadh": { code: "SA", name: "Saudi Arabia", flag: "🇸🇦", city: "Riyadh" },
+      "Asia/Qatar": { code: "QA", name: "Qatar", flag: "🇶🇦", city: "Doha" },
+      "Asia/Singapore": { code: "SG", name: "Singapore", flag: "🇸🇬", city: "Singapore" },
+      "Asia/Tokyo": { code: "JP", name: "Japan", flag: "🇯🇵", city: "Tokyo" },
+      "Asia/Seoul": { code: "KR", name: "South Korea", flag: "🇰🇷", city: "Seoul" },
+      "Asia/Shanghai": { code: "CN", name: "China", flag: "🇨🇳", city: "Shanghai" },
+      "Asia/Hong_Kong": { code: "HK", name: "Hong Kong", flag: "🇭🇰", city: "Hong Kong" },
+      "Asia/Taipei": { code: "TW", name: "Taiwan", flag: "🇹🇼", city: "Taipei" },
+      "Asia/Manila": { code: "PH", name: "Philippines", flag: "🇵🇭", city: "Manila" },
+      "Asia/Kuala_Lumpur": { code: "MY", name: "Malaysia", flag: "🇲🇾", city: "Kuala Lumpur" },
+      "Asia/Jakarta": { code: "ID", name: "Indonesia", flag: "🇮🇩", city: "Jakarta" },
+      "Asia/Bangkok": { code: "TH", name: "Thailand", flag: "🇹🇭", city: "Bangkok" },
+      "Asia/Ho_Chi_Minh": { code: "VN", name: "Vietnam", flag: "🇻🇳", city: "Ho Chi Minh City" },
+      "Asia/Karachi": { code: "PK", name: "Pakistan", flag: "🇵🇰", city: "Karachi" },
+      "Asia/Dhaka": { code: "BD", name: "Bangladesh", flag: "🇧🇩", city: "Dhaka" },
+      "Asia/Colombo": { code: "LK", name: "Sri Lanka", flag: "🇱🇰", city: "Colombo" },
+
+      // Oceania
       "Australia/Sydney": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Sydney" },
       "Australia/Melbourne": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Melbourne" },
+      "Australia/Brisbane": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Brisbane" },
+      "Australia/Perth": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Perth" },
+      "Australia/Adelaide": { code: "AU", name: "Australia", flag: "🇦🇺", city: "Adelaide" },
+      "Pacific/Auckland": { code: "NZ", name: "New Zealand", flag: "🇳🇿", city: "Auckland" },
+      "Pacific/Fiji": { code: "FJ", name: "Fiji", flag: "🇫🇯", city: "Suva" },
     };
 
-    if (TZ_MAP[tz]) return TZ_MAP[tz];
+    if (EXACT_TZ[tz]) return EXACT_TZ[tz];
+
+    // Fallback based on navigator.language country subtag (e.g. "en-GB", "es-CO", "pt-BR")
+    const navLangs = [navigator.language, ...(navigator.languages || [])].filter(Boolean);
+    for (const lang of navLangs) {
+      const parts = lang.split(/[-_]/);
+      if (parts.length > 1) {
+        const countryCode = parts[parts.length - 1].toUpperCase();
+        if (COUNTRY_REGISTRY[countryCode]) {
+          return {
+            code: countryCode,
+            name: COUNTRY_REGISTRY[countryCode].name,
+            flag: COUNTRY_REGISTRY[countryCode].flag,
+            city: tz ? tz.split("/").pop()?.replace(/_/g, " ") || countryCode : countryCode,
+          };
+        }
+      }
+    }
 
     // Generic timezone prefix matching
     if (tz.startsWith("America/")) {
-      return { code: "US", name: "United States", flag: "🇺🇸", city: tz.replace("America/", "").replace("_", " ") };
+      return { code: "US", name: "United States", flag: "🇺🇸", city: tz.replace("America/", "").replace(/_/g, " ") };
     }
     if (tz.startsWith("Europe/")) {
-      return { code: "GB", name: "Europe", flag: "🇪🇺", city: tz.replace("Europe/", "").replace("_", " ") };
+      return { code: "GB", name: "United Kingdom", flag: "🇬🇧", city: tz.replace("Europe/", "").replace(/_/g, " ") };
     }
     if (tz.startsWith("Asia/")) {
-      return { code: "JP", name: "Asia", flag: "🌏", city: tz.replace("Asia/", "").replace("_", " ") };
+      return { code: "JP", name: "Japan", flag: "🇯🇵", city: tz.replace("Asia/", "").replace(/_/g, " ") };
+    }
+    if (tz.startsWith("Africa/")) {
+      return { code: "NG", name: "Nigeria", flag: "🇳🇬", city: tz.replace("Africa/", "").replace(/_/g, " ") };
+    }
+    if (tz.startsWith("Australia/") || tz.startsWith("Pacific/")) {
+      return { code: "AU", name: "Australia", flag: "🇦🇺", city: tz.split("/").pop()?.replace(/_/g, " ") || "Sydney" };
     }
   } catch { /* fallback */ }
 
   return { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" };
+}
+
+/**
+ * Asynchronously enriches the current session with precise IP geolocation
+ * without blocking UI or page performance (2026 standard).
+ */
+async function enrichSessionWithIpGeo(): Promise<void> {
+  if (typeof window === "undefined" || !_sessionData) return;
+
+  try {
+    // Free, zero-auth, high-availability IP country resolver
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+
+    const res = await fetch("https://api.country.is", { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const data = await res.json();
+      const countryCode = (data.country || "").toUpperCase();
+      if (countryCode && COUNTRY_REGISTRY[countryCode]) {
+        const reg = COUNTRY_REGISTRY[countryCode];
+        // Only update if country changed or city wasn't set
+        if (_sessionData.country_code !== countryCode) {
+          _sessionData.country_code = countryCode;
+          _sessionData.country_name = reg.name;
+          _sessionData.country_flag = reg.flag;
+          persistSession();
+          void upsertSessionInFirestore(_sessionData);
+          notifyAnalyticsUpdated();
+        }
+      }
+    }
+  } catch {
+    // Non-blocking fallback to ipapi if primary timed out
+    try {
+      const res2 = await fetch("https://ipapi.co/json/");
+      if (res2.ok) {
+        const data2 = await res2.json();
+        const code = (data2.country_code || "").toUpperCase();
+        if (code && (COUNTRY_REGISTRY[code] || data2.country_name)) {
+          const name = COUNTRY_REGISTRY[code]?.name || data2.country_name;
+          const flag = COUNTRY_REGISTRY[code]?.flag || "🌐";
+          const city = data2.city || _sessionData.city;
+          _sessionData.country_code = code;
+          _sessionData.country_name = name;
+          _sessionData.country_flag = flag;
+          if (city) _sessionData.city = city;
+          persistSession();
+          void upsertSessionInFirestore(_sessionData);
+          notifyAnalyticsUpdated();
+        }
+      }
+    } catch { /* ignore */ }
+  }
 }
 
 function getUtmFromUrl(url: string): Record<string, string | null> {
@@ -593,6 +883,7 @@ export function initTracking(): void {
 
   const session = loadOrCreateSession();
   void upsertSessionInFirestore(session);
+  void enrichSessionWithIpGeo();
 
   setTimeout(() => {
     addEngagementPoints("session_over_120_seconds");

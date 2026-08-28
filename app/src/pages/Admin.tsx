@@ -3655,9 +3655,12 @@ function Analytics() {
     refreshAnalytics();
     const handleUpdate = () => refreshAnalytics();
     window.addEventListener("sk-analytics-updated", handleUpdate);
-    // Heartbeat auto-poll for live visitors every 10 seconds
+    // Heartbeat auto-poll for live telemetry & visitor updates every 10 seconds
     const interval = setInterval(() => {
       void getActiveLiveVisitors(15).then(setLiveVisitors);
+      void getGeographicDistribution(days).then(setGeoData);
+      void getRecentSessions(25).then(setRecentSessions);
+      void getSessionCount(days).then(setSessionCount);
     }, 10_000);
     return () => {
       window.removeEventListener("sk-analytics-updated", handleUpdate);

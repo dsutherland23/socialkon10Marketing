@@ -12,12 +12,12 @@ import { getStorage, type FirebaseStorage } from "firebase/storage";
 ------------------------------------------------------------------- */
 
 const config = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBYowiNHys6jg9kBnsjLTCNuhPnC8VUgEM",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0882288265.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0882288265",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0882288265.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "379204519277",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:379204519277:web:85b164c491cf6cfa114664",
 };
 
 export const firebaseReady: boolean = Boolean(config.apiKey && config.projectId && config.appId);
