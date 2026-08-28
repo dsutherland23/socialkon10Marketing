@@ -2062,7 +2062,22 @@ function ServicesManager() {
                                     }}
                                   />
                                 </div>
-                                <div className="col-span-4 sm:col-span-1 flex items-center justify-end gap-2 pt-4">
+                                <div className="col-span-4 sm:col-span-1 flex flex-col items-center justify-start gap-1 pt-4">
+                                  {/* isDefault toggle */}
+                                  <label className="flex flex-col items-center gap-0.5 cursor-pointer" title="Set as default pre-selected option">
+                                    <input
+                                      type="checkbox"
+                                      className="accent-[var(--dept)]"
+                                      checked={!!opt.isDefault}
+                                      onChange={(e) => {
+                                        const next = [...groups];
+                                        // Unset isDefault on all other options in the group first
+                                        next[gi].options = next[gi].options.map((o, idx) => ({ ...o, isDefault: idx === oi ? e.target.checked : false }));
+                                        updateGroups(next);
+                                      }}
+                                    />
+                                    <span className="font-meta text-[7px] text-[var(--muted)] font-bold">DEFAULT</span>
+                                  </label>
                                   <button
                                     type="button"
                                     title="Delete Option"
@@ -2071,16 +2086,17 @@ function ServicesManager() {
                                       next[gi].options = next[gi].options.filter((_, idx) => idx !== oi);
                                       updateGroups(next);
                                     }}
-                                    className="text-red-500 hover:text-red-700 font-bold text-sm"
+                                    className="text-red-500 hover:text-red-700 font-bold text-sm mt-1"
                                   >
                                     ✕
                                   </button>
                                 </div>
                                 <div className="col-span-12 mt-1">
-                                  <input
-                                    className={`${inputCls} !py-1 !px-2 text-[10px] text-[var(--muted)]`}
+                                  <textarea
+                                    rows={2}
+                                    className={`${inputCls} !py-1.5 !px-2 text-[10px] text-[var(--muted)] resize-none`}
                                     value={opt.blurb || ""}
-                                    placeholder="Short description or blurb for this variation..."
+                                    placeholder="Short description or blurb for this variation option..."
                                     onChange={(e) => {
                                       const next = [...groups];
                                       next[gi].options[oi].blurb = e.target.value || undefined;
@@ -2262,11 +2278,30 @@ function ServicesManager() {
                 <td className="p-3 font-meta text-[10px]">{s.pricingType}</td>
                 <td className="p-3 font-meta text-[10px]">{s.turnaround}</td>
                 <td className="p-3 font-meta text-[9px]">
-                  {[s.featured && "FEAT", s.popular && "POP", (s.variations?.length ?? 0) > 0 && `VARIANTS (${(s.variations ?? []).reduce((acc, g) => acc + g.options.length, 0)})`, isQuoteOnly(s) ? "QUOTE-ONLY" : s.packageEligible !== false && "PKG", (s.tiers?.length ?? 0) > 0 && "TIERS", s.active === false && "OFF"].filter(Boolean).join(" · ")}
+                  {(() => {
+                    const flags: string[] = [];
+                    if (s.featured) flags.push("FEAT");
+                    if (s.popular) flags.push("POP");
+                    if ((s.variations?.length ?? 0) > 0) {
+                      const allVarPrices = (s.variations ?? []).flatMap((g) => g.options.map((o) => o.price));
+                      const minV = Math.min(...allVarPrices), maxV = Math.max(...allVarPrices);
+                      const count = (s.variations ?? []).reduce((acc, g) => acc + g.options.length, 0);
+                      flags.push(`VARIANTS (${count}) ${minV === maxV ? money(minV) : `${money(minV)}–${money(maxV)}`}`);
+                    }
+                    if ((s.tiers?.length ?? 0) > 0) {
+                      const tierPrices = (s.tiers ?? []).map((t) => t.price);
+                      flags.push(`TIERS (${tierPrices.length}) ${money(Math.min(...tierPrices))}–${money(Math.max(...tierPrices))}`);
+                    }
+                    if (isQuoteOnly(s)) flags.push("QUOTE-ONLY");
+                    else if (s.packageEligible !== false) flags.push("PKG");
+                    if (s.active === false) flags.push("OFF");
+                    return flags.join(" · ");
+                  })()}
                 </td>
                 <td className="p-3">
                   <span className="flex gap-3 font-meta text-[10px]">
                     <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors font-bold" onClick={() => startEdit(s.slug)}>Edit</button>
+                    <a className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors" href={`/design-services/${s.slug}`} target="_blank" rel="noopener noreferrer">View →</a>
                     <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => duplicate(s.slug)}>Dupe</button>
                     <button className="text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
                       onClick={() => saveOverride(s.slug, { active: s.active === false }, s.active === false ? "service_updated" : "service_deleted")}>

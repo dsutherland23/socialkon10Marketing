@@ -360,8 +360,10 @@ export function Configurator({ s, onAdd, onOrder }: {
             </div>
             {line.variantLabel && (
               <div className="flex justify-between font-meta text-[10px]">
-                <dt className="text-[var(--muted)]">Variation</dt>
-                <dd className="dept-accent font-bold text-right">{line.variantLabel}</dd>
+                <dt className="text-[var(--muted)]">
+                  {line.selectedVariants?.map((v) => v.groupName).join(" / ") ?? "Variation"}
+                </dt>
+                <dd className="dept-accent font-bold text-right">{line.variantLabel} — {money(line.unitBase - line.sizeAdj)}</dd>
               </div>
             )}
             {line.sizeAdj !== 0 && <div className="flex justify-between"><dt className="text-[var(--muted)]">Size — {line.sizeLabel}</dt><dd>+{money(line.sizeAdj)}</dd></div>}
@@ -418,7 +420,9 @@ export function Configurator({ s, onAdd, onOrder }: {
       {/* mobile sticky order bar (journey A) / quote bar (journey B) */}
       <div className="fixed bottom-0 inset-x-0 z-40 lg:hidden border-t border-[var(--line-strong)] px-5 py-3.5 flex items-center justify-between gap-3" style={{ background: "var(--bg)" }}>
         <span>
-          <span className="block font-meta text-[8px] text-[var(--muted)]">{line.tier ? `${line.tier.name} tier` : s.name}</span>
+          <span className="block font-meta text-[8px] text-[var(--muted)] truncate max-w-[200px]">
+            {line.variantLabel ?? (line.tier ? `${line.tier.name} tier` : s.name)}
+          </span>
           <span className="font-display-wide text-lg font-bold">{line.isQuote ? "Custom quote" : money(line.lineTotal)}</span>
         </span>
         {line.isQuote ? (
@@ -492,8 +496,8 @@ export default function DesignServicePage() {
 
     addToShop({
       serviceSlug: s.slug,
-      name: `${s.name}${line.variantLabel ? ` (${line.variantLabel})` : ""}${line.tier ? ` · ${line.tier.name}` : ""}${line.size ? ` · ${line.size.name}` : ""}`,
-      unitPrice: line.unitBase || s.price,
+      name: `${s.name}${line.variantLabel ? ` · ${line.variantLabel}` : ""}${line.tier ? ` · ${line.tier.name}` : ""}${line.size ? ` · ${line.size.name}` : ""}`,
+      unitPrice: line.unitBase,
       tierLabel: line.tier?.name,
       variantLabel: line.variantLabel,
       addons: selectedOptions,

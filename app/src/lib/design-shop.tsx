@@ -189,7 +189,13 @@ export function DesignPackageProvider({ children }: { children: ReactNode }) {
     const s = services.find((x) => x.slug === slug);
     const def = s?.sizes.find((x) => x.isDefault) ?? s?.sizes[0];
     const defTier = s?.tiers && s.tiers.length > 0 ? s.tiers[0].id : undefined;
-    return { sizeId: def?.sizeId, tierId: defTier, optionIds: [], qty: s?.minQty ?? 1 };
+    // Pre-select the default option for each variation group so pricing is correct from the start
+    const selectedVariants: Record<string, string> = {};
+    (s?.variations ?? []).forEach((g) => {
+      const defOpt = g.options.find((o) => o.isDefault) ?? g.options[0];
+      if (defOpt) selectedVariants[g.id] = defOpt.id;
+    });
+    return { sizeId: def?.sizeId, tierId: defTier, optionIds: [], qty: s?.minQty ?? 1, selectedVariants };
   };
 
   const add: PackageState["add"] = (slug, sel) => {
