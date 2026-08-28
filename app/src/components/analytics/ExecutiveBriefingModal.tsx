@@ -37,8 +37,8 @@ export function ExecutiveBriefingModal({
   const totalCvr = sessionCount > 0 ? (((leadsCount + ordersCount) / sessionCount) * 100).toFixed(1) : "0.0";
   const hotVisitors = recentSessions.filter((s) => s.segment === "hot" || s.segment === "high_intent").length;
   const topChannel = trafficSources[0]?.source || "Direct";
-  const topCountry = geoData[0]?.country_name || "Jamaica";
-  const topService = serviceInterest[0]?.service_name || "Branding & Identity";
+  const topCountry = geoData[0]?.country_name || "No data yet";
+  const topService = serviceInterest[0]?.service_name || "No views recorded yet";
 
   const handlePrint = () => {
     window.print();
@@ -144,11 +144,15 @@ export function ExecutiveBriefingModal({
               </div>
               <div className="flex justify-between py-1.5 border-b border-[var(--line)]">
                 <span className="text-[var(--muted)]">Primary Device Form</span>
-                <span className="font-bold capitalize">{techData.devices[0]?.label || "Desktop"} ({techData.devices[0]?.pct || 60}%)</span>
+                <span className="font-bold capitalize">
+                  {techData.devices[0] ? `${techData.devices[0].label} (${techData.devices[0].pct}%)` : "—"}
+                </span>
               </div>
               <div className="flex justify-between py-1.5">
                 <span className="text-[var(--muted)]">Top Browser</span>
-                <span className="font-bold">{techData.browsers[0]?.label || "Chrome"} ({techData.browsers[0]?.pct || 70}%)</span>
+                <span className="font-bold">
+                  {techData.browsers[0] ? `${techData.browsers[0].label} (${techData.browsers[0].pct}%)` : "—"}
+                </span>
               </div>
             </div>
           </div>

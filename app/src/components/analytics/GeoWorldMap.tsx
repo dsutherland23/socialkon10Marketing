@@ -33,20 +33,20 @@ export const COUNTRY_GEO_COORDS: Record<string, { lat: number; lng: number; name
   ZA: { lat: -30.5595, lng: 22.9375, name: "South Africa", flag: "🇿🇦" },
 };
 
+// Agency primary hub — module-level constant (never changes, prevents useMemo churn)
+const HUB_POINT: MapPoint = {
+  lat: COUNTRY_GEO_COORDS.JM.lat,
+  lng: COUNTRY_GEO_COORDS.JM.lng,
+  label: "Kingston Creative Studio",
+  code: "JM",
+  flag: "🇯🇲",
+};
+
 export function GeoWorldMap({ data, liveCountByCountry = {}, onSelectCountry }: GeoWorldMapProps) {
   const [hoveredCode, setHoveredCode] = useState<string | null>(null);
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
 
   const dataMap = useMemo(() => new Map(data.map((d) => [d.country_code, d])), [data]);
-
-  // Agency primary hub
-  const HUB_POINT: MapPoint = {
-    lat: COUNTRY_GEO_COORDS.JM.lat,
-    lng: COUNTRY_GEO_COORDS.JM.lng,
-    label: "Kingston Creative Studio",
-    code: "JM",
-    flag: "🇯🇲",
-  };
 
   // Generate interactive map points ONLY for countries with live traffic or session activity
   const mapPoints: MapPoint[] = useMemo(() => {
