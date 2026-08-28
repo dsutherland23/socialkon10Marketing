@@ -1198,7 +1198,20 @@ function Orders() {
                               <p className="font-bold font-display uppercase">
                                 {it.name} {it.rush ? <span className="text-amber-500 font-meta text-[9px]">(Rush)</span> : ""}
                               </p>
-                              {it.tierLabel && <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">{it.tierLabel} Tier</p>}
+                              {Boolean((it as any).variantLabel || it.tierLabel) && (
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                  {(it as any).variantLabel && (
+                                    <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full bg-[var(--dept)]/10 text-[var(--dept)] border border-[var(--dept)]/30 font-semibold">
+                                      {(it as any).variantLabel}
+                                    </span>
+                                  )}
+                                  {it.tierLabel && (
+                                    <span className="font-meta text-[8.5px] text-[var(--muted)]">
+                                      {it.tierLabel} Tier
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               {it.addons.length > 0 && (
                                 <p className="font-meta text-[9px] dept-accent mt-0.5">
                                   Add-ons: {it.addons.map((a) => a.name).join(" · ")}

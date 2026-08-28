@@ -1511,7 +1511,7 @@ function DiscountsManager() {
 
 interface ServiceDraft {
   slug: string; name: string; category: string; short: string; price: string;
-  pricingType: string; purchaseMode: string; tiers: string;
+  pricingType: string; purchaseMode: string; tiers: string; variations: string;
   minQty: string; maxQty: string; turnaround: string; revisions: string;
   sizeIds: string; defaultSize: string; optionIds: string; recommended: string;
   allowCustomSize: boolean; customLimits: string;
@@ -1520,7 +1520,7 @@ interface ServiceDraft {
 
 const blankDraft: ServiceDraft = {
   slug: "", name: "", category: "social-media", short: "", price: "65",
-  pricingType: "fixed", purchaseMode: "", tiers: "",
+  pricingType: "fixed", purchaseMode: "", tiers: "", variations: "",
   minQty: "1", maxQty: "50", turnaround: "3–5 days", revisions: "2",
   sizeIds: "", defaultSize: "", optionIds: "", recommended: "",
   allowCustomSize: false, customLimits: "",
@@ -1578,7 +1578,8 @@ function ServicesManager() {
       slug: s.slug, name: s.name, category: s.category, short: s.short, price: String(s.price),
       pricingType: s.pricingType,
       purchaseMode: s.purchaseMode ?? "",
-      tiers: s.tiers?.length ? JSON.stringify(s.tiers) : "",
+      tiers: s.tiers?.length ? JSON.stringify(s.tiers, null, 2) : "",
+      variations: s.variations?.length ? JSON.stringify(s.variations, null, 2) : "",
       minQty: String(s.minQty), maxQty: String(s.maxQty),
       turnaround: s.turnaround, revisions: String(s.revisions),
       sizeIds: s.sizes.map((x) => x.sizeId).join(", "),
@@ -1608,12 +1609,23 @@ function ServicesManager() {
         tiers = parsed;
       } catch { toast.error("Tiers must be valid JSON."); return; }
     }
+    let variations: unknown;
+    if (draft.variations.trim()) {
+      try {
+        const parsed = JSON.parse(draft.variations);
+        if (!Array.isArray(parsed) || parsed.some((g) => !g?.name || !Array.isArray(g?.options))) {
+          toast.error('Variations must be a JSON array of groups like [{"id":"folding","name":"Folding Style","options":[{"id":"tri-fold","name":"Tri-Fold (6 Panels)","price":220}]}]'); return;
+        }
+        variations = parsed;
+      } catch { toast.error("Variations must be valid JSON."); return; }
+    }
     const sizeIds = draft.sizeIds.split(",").map((x) => x.trim()).filter(Boolean);
     const data: Record<string, unknown> = {
       slug: draft.slug.trim(), name: draft.name.trim(), category: draft.category,
       short: draft.short.trim(), price: Number(draft.price) || 0, pricingType: draft.pricingType,
       purchaseMode: draft.purchaseMode || null,
       tiers: tiers ?? null,
+      variations: variations ?? null,
       minQty: Number(draft.minQty) || 1, maxQty: Number(draft.maxQty) || 50,
       turnaround: draft.turnaround, revisions: Number(draft.revisions) || 0,
       sizes: sizeIds.map((id) => ({ sizeId: id, isDefault: id === draft.defaultSize || undefined })),
@@ -1781,6 +1793,111 @@ function ServicesManager() {
               value={draft.tiers} onChange={(e) => setDraft({ ...draft, tiers: e.target.value })} />
             <span className="block font-meta text-[8px] normal-case tracking-normal mt-1">Each tier: id, name, price (USD), blurb; optional turnaround + revisions. Leave empty to sell at base price only.</span>
           </label>
+
+          {/* Design Variations & Individual Pricing */}
+          <div className="lg:col-span-3 border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div>
+                <span className={labelCls}>DESIGN VARIATIONS &amp; INDIVIDUAL PRICING (JSON)</span>
+                <span className="block font-meta text-[8.5px] text-[var(--muted)]">
+                  Define multi-option variant groups (Folding formats, Print Sides, Color Schemes, Page counts) with individual prices.
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 font-meta text-[8.5px]">
+                <span className="text-[var(--muted)] self-center mr-1">1-Click Presets:</span>
+                <button
+                  type="button"
+                  onClick={() => setDraft({
+                    ...draft,
+                    variations: JSON.stringify([
+                      {
+                        id: "folding",
+                        name: "Folding & Panel Structure",
+                        options: [
+                          { id: "flat", name: "Flat Flyer / Insert (2 Sides)", price: 95, icon: "📄", blurb: "Two-sided flat sell sheet." },
+                          { id: "bi-fold", name: "Bi-Fold / Half Fold (4 Panels)", price: 160, icon: "📖", blurb: "4-panel booklet presentation." },
+                          { id: "tri-fold", name: "Tri-Fold / Letter Fold (6 Panels)", price: 220, isDefault: true, icon: "🗂️", blurb: "Standard 3-panel roll or letter fold." },
+                          { id: "z-fold", name: "Z-Fold (6 Panels Accordion)", price: 240, icon: "⚡", blurb: "Accordion fold opening sequentially." },
+                          { id: "gate-fold", name: "Gate Fold / Double Parallel (8 Panels)", price: 290, icon: "🚪", blurb: "Executive inward-opening gatefold." }
+                        ]
+                      }
+                    ], null, 2)
+                  })}
+                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
+                >
+                  + Folding
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft({
+                    ...draft,
+                    variations: JSON.stringify([
+                      {
+                        id: "sides",
+                        name: "Print Sides",
+                        options: [
+                          { id: "single", name: "Single-Sided (Front Only)", price: 65, icon: "📄", blurb: "Front-only layout." },
+                          { id: "double", name: "Double-Sided (Front & Back)", price: 95, isDefault: true, icon: "📑", blurb: "Front branding + back details & QR code." },
+                          { id: "team-suite", name: "Multi-Person Team Suite (3 Names)", price: 160, icon: "👥", blurb: "Individualized print files for 3 team members." }
+                        ]
+                      }
+                    ], null, 2)
+                  })}
+                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
+                >
+                  + Sides
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft({
+                    ...draft,
+                    variations: JSON.stringify([
+                      {
+                        id: "color_mode",
+                        name: "Color & Style Edition",
+                        options: [
+                          { id: "bw", name: "Black & White / Monochrome Vector", price: 250, icon: "⚫", blurb: "Clean single-color monochrome mark." },
+                          { id: "full-color", name: "Full Color Dynamic Vector Suite", price: 350, isDefault: true, icon: "🎨", blurb: "Full brand palette & dark/light lockups." },
+                          { id: "metallic-3d", name: "3D Metallic / Luxury Edition", price: 495, icon: "✨", blurb: "Gold/silver embossed 3D photoreal textures." }
+                        ]
+                      }
+                    ], null, 2)
+                  })}
+                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
+                >
+                  + Color Modes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft({
+                    ...draft,
+                    variations: JSON.stringify([
+                      {
+                        id: "page_structure",
+                        name: "Page & Booklet Structure",
+                        options: [
+                          { id: "2-page", name: "Single Sheet 2-Page Card", price: 90, icon: "📄", blurb: "Front photo + back order of service." },
+                          { id: "4-page", name: "Bi-Fold 4-Page Program", price: 140, isDefault: true, icon: "📖", blurb: "Cover, obituary, order of service & tributes." },
+                          { id: "8-page", name: "8-Page Memorial Booklet", price: 220, icon: "📚", blurb: "Photo collage spreads and reflections." },
+                          { id: "12-page", name: "12-Page Deluxe Keepsake Book", price: 320, icon: "🕊️", blurb: "Comprehensive life celebration keepsake." }
+                        ]
+                      }
+                    ], null, 2)
+                  })}
+                  className="px-2 py-1 rounded-lg border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--panel)] transition-colors"
+                >
+                  + Page Scope
+                </button>
+              </div>
+            </div>
+            <textarea
+              rows={4}
+              className={`${inputCls} font-mono text-xs`}
+              placeholder='[{"id":"folding","name":"Folding Style","options":[{"id":"tri-fold","name":"Tri-Fold (6 Panels)","price":220,"icon":"🗂️","blurb":"Standard 3-panel roll or letter fold"}]}]'
+              value={draft.variations}
+              onChange={(e) => setDraft({ ...draft, variations: e.target.value })}
+            />
+          </div>
           <label className={labelCls}>TURNAROUND<input className={`${inputCls} mt-1`} value={draft.turnaround} onChange={(e) => setDraft({ ...draft, turnaround: e.target.value })} /></label>
           <label className={labelCls}>MIN QTY<input type="number" min="1" className={`${inputCls} mt-1`} value={draft.minQty} onChange={(e) => setDraft({ ...draft, minQty: e.target.value })} /></label>
           <label className={labelCls}>MAX QTY<input type="number" min="1" className={`${inputCls} mt-1`} value={draft.maxQty} onChange={(e) => setDraft({ ...draft, maxQty: e.target.value })} /></label>
@@ -1891,7 +2008,7 @@ function ServicesManager() {
                 <td className="p-3 font-meta text-[10px]">{s.pricingType}</td>
                 <td className="p-3 font-meta text-[10px]">{s.turnaround}</td>
                 <td className="p-3 font-meta text-[9px]">
-                  {[s.featured && "FEAT", s.popular && "POP", isQuoteOnly(s) ? "QUOTE-ONLY" : s.packageEligible !== false && "PKG", (s.tiers?.length ?? 0) > 0 && "TIERS", s.active === false && "OFF"].filter(Boolean).join(" · ")}
+                  {[s.featured && "FEAT", s.popular && "POP", (s.variations?.length ?? 0) > 0 && `VARIANTS (${(s.variations ?? []).reduce((acc, g) => acc + g.options.length, 0)})`, isQuoteOnly(s) ? "QUOTE-ONLY" : s.packageEligible !== false && "PKG", (s.tiers?.length ?? 0) > 0 && "TIERS", s.active === false && "OFF"].filter(Boolean).join(" · ")}
                 </td>
                 <td className="p-3">
                   <span className="flex gap-3 font-meta text-[10px]">

@@ -46,6 +46,25 @@ export interface ServiceSize {
   adj?: number;              // $ or %
 }
 
+/* First-class design variations (Folding styles, Sides, Color schemes, Page counts).
+   Each variation option has its own explicit individual price and turnaround. */
+export interface ServiceVariantOption {
+  id: string;
+  name: string;              // e.g. "Tri-Fold (6 Panels)", "Double-Sided", "Full Color Vector"
+  blurb?: string;            // e.g. "Standard 3-panel roll or letter fold"
+  price: number;             // USD — individual price for this specific variation
+  turnaround?: string;       // overrides service turnaround when set
+  revisions?: number;        // overrides revisions when set
+  isDefault?: boolean;
+  icon?: string;             // visual badge / emoji: "🗂️", "📑", "🎨", "📖", "✨"
+}
+
+export interface ServiceVariationGroup {
+  id: string;                // e.g. "folding", "sides", "color_mode", "page_structure"
+  name: string;              // e.g. "Folding Style", "Print Sides", "Color Mode", "Page Count"
+  options: ServiceVariantOption[];
+}
+
 /* Productized tiers — Basic / Premium / Professional style packages
    per service (hybrid e-commerce journey A). Price replaces the base. */
 export interface ServiceTier {
@@ -68,6 +87,7 @@ export interface DesignService {
   pricingType: PricingType;
   purchaseMode?: PurchaseMode; // explicit override; defaults derived from pricingType/price
   tiers?: ServiceTier[];     // optional productized packages for this service
+  variations?: ServiceVariationGroup[]; // first-class design variations with individual pricing
   minQty: number;
   maxQty: number;
   turnaround: string;
@@ -211,14 +231,37 @@ export const DESIGN_SERVICES: DesignService[] = [
   svc({ slug: "social-profile-graphics", name: "Social Media Profile Graphics", category: "social-media", price: 120, short: "Avatar, cover and highlight covers as one kit.", sizes: digitalSizes(), pricingType: "starting_at" }),
 
   /* events */
-  svc({ slug: "event-flyer", name: "Event Flyer", category: "events", price: 65, short: "The classic — digital or print-ready.", sizes: [...digitalSizes(), ...printSizes()], popular: true, featured: true, optionIds: [...stdOpts, "same-day", "animated-version", "extra-size"], recommended: ["instagram-story-design", "ticket-sale-graphic", "event-poster", "event-countdown-graphic"],
+  svc({ slug: "event-flyer", name: "Event Flyer", category: "events", price: 65, short: "The classic — digital, print-ready, double-sided or motion video.", sizes: [...digitalSizes(), ...printSizes()], popular: true, featured: true, optionIds: [...stdOpts, "same-day", "animated-version", "extra-size"], recommended: ["instagram-story-design", "ticket-sale-graphic", "event-poster", "event-countdown-graphic"],
+    variations: [
+      {
+        id: "sides_and_motion",
+        name: "Format & Sides",
+        options: [
+          { id: "digital-single", name: "Single-Sided Digital Flyer", blurb: "1080×1350/Square for Instagram, WhatsApp & web.", price: 55, icon: "📱", revisions: 1 },
+          { id: "print-single", name: "Single-Sided Print-Ready", blurb: "300 DPI CMYK PDF with 0.125\" bleed & crop marks.", price: 65, isDefault: true, icon: "🖨️", revisions: 2 },
+          { id: "double-sided", name: "Double-Sided (Front & Back)", blurb: "Front headline art + back venue/details/sponsors layout.", price: 90, icon: "📑", revisions: 2 },
+          { id: "motion-animated", name: "Print/Digital + Animated Motion Reel", blurb: "Static flyer plus a 15s synced motion video for Reels & Stories.", price: 120, icon: "🎬", turnaround: "2–4 days", revisions: 3 },
+        ],
+      },
+    ],
     tiers: [
       { id: "basic", name: "Basic", blurb: "1 concept, 1 revision, digital sizes only.", price: 45, revisions: 1, turnaround: "2–3 days" },
       { id: "standard", name: "Standard", blurb: "2 concepts, 2 revisions, print + digital files.", price: 65 },
       { id: "premium", name: "Premium", blurb: "3 concepts, 3 revisions, animated version + source file.", price: 120, revisions: 3, turnaround: "2–4 days" },
     ] }),
   svc({ slug: "event-poster", name: "Event Poster", category: "events", price: 85, short: "Large-format impact for walls and windows.", sizes: [{ sizeId: "p-tabloid" }, { sizeId: "p-18x24", isDefault: true }, { sizeId: "p-24x36", adjType: "fixed", adj: 25 }, { sizeId: "a3" }], recommended: ["event-flyer", "step-and-repeat"] }),
-  svc({ slug: "concert-flyer", name: "Concert / Club Night Flyer", category: "events", price: 75, short: "High-energy creative for nightlife and shows.", sizes: digitalSizes(), popular: true, recommended: ["artist-announcement", "lineup-flyer", "ticket-sale-graphic"] }),
+  svc({ slug: "concert-flyer", name: "Concert / Club Night Flyer", category: "events", price: 75, short: "High-energy creative for nightlife and shows.", sizes: digitalSizes(), popular: true, recommended: ["artist-announcement", "lineup-flyer", "ticket-sale-graphic"],
+    variations: [
+      {
+        id: "sides_and_motion",
+        name: "Format & Motion",
+        options: [
+          { id: "digital-single", name: "Digital Feed Flyer", blurb: "Static high-energy flyer for feeds & promos.", price: 65, icon: "📱" },
+          { id: "print-single", name: "Print + Digital Flyer", blurb: "Press-ready CMYK + web PNG/JPG.", price: 75, isDefault: true, icon: "🖨️" },
+          { id: "motion-pack", name: "Flyer + DJ Motion Reel Pack", blurb: "Static flyer + 15s video reel with DJ tags & audio sync.", price: 135, icon: "🔥", turnaround: "2–4 days", revisions: 3 },
+        ],
+      },
+    ] }),
   svc({ slug: "artist-announcement", name: "Artist / DJ Announcement", category: "events", price: 60, short: "Announcement creative for bookings and guests.", sizes: digitalSizes() }),
   svc({ slug: "lineup-flyer", name: "Lineup Flyer", category: "events", price: 80, short: "The full lineup, laid out to hype.", sizes: digitalSizes() }),
   svc({ slug: "ticket-sale-graphic", name: "Ticket Sale Graphic", category: "events", price: 55, short: "Early bird and ticket-drop promo.", sizes: digitalSizes(), recommended: ["event-countdown-graphic", "event-flyer"] }),
@@ -226,10 +269,55 @@ export const DESIGN_SERVICES: DesignService[] = [
   svc({ slug: "step-and-repeat", name: "Step & Repeat / Backdrop", category: "events", price: 180, short: "Red-carpet backdrops and media walls.", sizes: [], allowCustomSize: true, customLimits: { minW: 4, maxW: 40, minH: 4, maxH: 12, unit: "ft" }, pricingType: "starting_at" }),
 
   /* business */
-  svc({ slug: "business-flyer", name: "Business Flyer", category: "business", price: 65, short: "Promo and announcement flyers for business.", sizes: printSizes(), recommended: ["brochure-design", "social-media-post-design"] }),
-  svc({ slug: "brochure-design", name: "Brochure", category: "business", price: 220, short: "Bi-fold and tri-fold brochures that inform and sell.", sizes: printSizes(), pricingType: "starting_at", optionIds: ["double-sided", "print-ready", "source-file", "extra-revision", "rush"] }),
-  svc({ slug: "company-profile", name: "Company / Corporate Profile", category: "business", price: 450, short: "Multi-page profiles that win contracts.", pricingType: "starting_at", purchaseMode: "QUOTE_ONLY", turnaround: "7–10 days", revisions: 3, optionIds: ["print-ready", "source-file", "extra-revision"] }),
+  svc({ slug: "business-flyer", name: "Business Flyer", category: "business", price: 65, short: "Promo and announcement flyers for business.", sizes: printSizes(), recommended: ["brochure-design", "social-media-post-design"],
+    variations: [
+      {
+        id: "sides",
+        name: "Sides",
+        options: [
+          { id: "single", name: "Single-Sided (Front Only)", blurb: "Front-only business announcement.", price: 65, isDefault: true, icon: "📄" },
+          { id: "double", name: "Double-Sided (Front & Back)", blurb: "Front headline promo + back services & terms.", price: 95, icon: "📑" },
+        ],
+      },
+    ] }),
+  svc({ slug: "brochure-design", name: "Brochure", category: "business", price: 220, short: "Bi-fold, tri-fold, z-fold, and gate-fold brochures that inform and sell.", sizes: printSizes(), pricingType: "starting_at", optionIds: ["double-sided", "print-ready", "source-file", "extra-revision", "rush"],
+    variations: [
+      {
+        id: "folding",
+        name: "Folding & Panel Structure",
+        options: [
+          { id: "flat-insert", name: "Flat Flyer / Insert (No Fold · 2 Sides)", blurb: "Two-sided promotional sell sheet or binder insert.", price: 95, icon: "📄", turnaround: "2–3 days", revisions: 2 },
+          { id: "bi-fold", name: "Bi-Fold / Half Fold (4 Panels)", blurb: "Single center fold creating a 4-page booklet layout.", price: 160, icon: "📖", turnaround: "3–5 days", revisions: 2 },
+          { id: "tri-fold", name: "Tri-Fold / Letter Fold (6 Panels)", blurb: "Classic 3-panel roll or letter fold for mailers and countertop displays.", price: 220, isDefault: true, icon: "🗂️", turnaround: "3–5 days", revisions: 2 },
+          { id: "z-fold", name: "Z-Fold (6 Panels Accordion)", blurb: "Zig-zag accordion 3-panel fold opening outward sequentially.", price: 240, icon: "⚡", turnaround: "4–6 days", revisions: 3 },
+          { id: "gate-fold", name: "Gate Fold / Double Parallel (8 Panels)", blurb: "Two side panels opening inward like double doors for executive impact.", price: 290, icon: "🚪", turnaround: "5–7 days", revisions: 3 },
+        ],
+      },
+    ] }),
+  svc({ slug: "company-profile", name: "Company / Corporate Profile", category: "business", price: 450, short: "Multi-page profiles that win contracts.", pricingType: "starting_at", purchaseMode: "QUOTE_ONLY", turnaround: "7–10 days", revisions: 3, optionIds: ["print-ready", "source-file", "extra-revision"],
+    variations: [
+      {
+        id: "page_count",
+        name: "Profile Scope",
+        options: [
+          { id: "summary-4", name: "4-Page Executive Snapshot", blurb: "Cover, company overview, core services, and contact.", price: 250, icon: "📄" },
+          { id: "standard-8", name: "8-Page Corporate Deck", blurb: "Mission, leadership, detailed offerings, case studies & clients.", price: 450, isDefault: true, icon: "📊" },
+          { id: "master-12", name: "12–16 Page Master Profile", blurb: "Comprehensive tender/RFP-ready company portfolio document.", price: 680, icon: "💼", turnaround: "10–14 days", revisions: 4 },
+        ],
+      },
+    ] }),
   svc({ slug: "business-card", name: "Business Card Design", category: "business", price: 95, short: "Cards people keep, not bin.", sizes: [{ sizeId: "bc-standard", isDefault: true }, { sizeId: "bc-vertical" }, { sizeId: "bc-square", adjType: "fixed", adj: 10 }], popular: true, featured: true, optionIds: ["double-sided", "rounded-corners", "print-ready", "source-file", "extra-revision", "rush"], recommended: ["logo-design", "letterhead-design", "email-signature"],
+    variations: [
+      {
+        id: "sides",
+        name: "Print Sides",
+        options: [
+          { id: "single", name: "Single-Sided (Front Only)", blurb: "Minimalist front-only layout or appointment card.", price: 65, icon: "📄", revisions: 1 },
+          { id: "double", name: "Double-Sided (Front & Back)", blurb: "Front brand mark + back details, QR code, and social links.", price: 95, isDefault: true, icon: "📑", revisions: 2 },
+          { id: "team-suite", name: "Multi-Person Team Suite (3 Names)", blurb: "Front/back template with individualized contact files for 3 team members.", price: 160, icon: "👥", revisions: 3 },
+        ],
+      },
+    ],
     tiers: [
       { id: "basic", name: "Basic", blurb: "1 concept, front only, 1 revision.", price: 65, revisions: 1 },
       { id: "standard", name: "Standard", blurb: "2 concepts, double-sided, 2 revisions, print-ready.", price: 95 },
@@ -237,8 +325,31 @@ export const DESIGN_SERVICES: DesignService[] = [
     ] }),
   svc({ slug: "letterhead-design", name: "Letterhead", category: "business", price: 60, short: "Branded stationery for official correspondence.", sizes: [{ sizeId: "p-letter", isDefault: true }, { sizeId: "a4" }] }),
   svc({ slug: "invoice-template", name: "Invoice / Receipt Template", category: "business", price: 70, short: "Branded, reusable billing templates." }),
-  svc({ slug: "presentation-design", name: "Presentation / Proposal Design", category: "business", price: 300, short: "Decks and proposals that close.", pricingType: "starting_at", turnaround: "5–7 days" }),
+  svc({ slug: "presentation-design", name: "Presentation / Proposal Design", category: "business", price: 300, short: "Decks and proposals that close.", pricingType: "starting_at", turnaround: "5–7 days",
+    variations: [
+      {
+        id: "slide_count",
+        name: "Presentation Scope",
+        options: [
+          { id: "deck-5", name: "Up to 5 Slides / One-Pager Deck", price: 175, icon: "📊" },
+          { id: "deck-10", name: "Up to 10 Slides (Standard Pitch)", price: 300, isDefault: true, icon: "📈" },
+          { id: "deck-20", name: "Up to 20 Slides (Master Keynote)", price: 550, icon: "🎯", turnaround: "7–10 days", revisions: 3 },
+        ],
+      },
+    ] }),
   svc({ slug: "menu-design", name: "Menu Design", category: "restaurant", price: 120, short: "Menus engineered to sell the high-margin items.", sizes: printSizes(), pricingType: "starting_at", popular: true, optionIds: ["double-sided", "print-ready", "source-file", "extra-revision", "rush"],
+    variations: [
+      {
+        id: "menu_structure",
+        name: "Menu Format & Panels",
+        options: [
+          { id: "single-page", name: "Single Page Flat Menu", blurb: "Single-sided laminated or clipboard menu layout.", price: 80, icon: "📄", revisions: 1 },
+          { id: "double-sided", name: "Double-Sided 2-Page Menu", blurb: "Front and back food + drink layout.", price: 120, isDefault: true, icon: "📑", revisions: 2 },
+          { id: "tri-fold", name: "Tri-Fold 6-Panel Takeout Menu", blurb: "6-panel takeout / delivery menu with category segmentation.", price: 180, icon: "🗂️", revisions: 2 },
+          { id: "booklet", name: "Multi-Page Dining Booklet Menu (8+ Pages)", blurb: "Multi-page bound dining menu with photography and cocktail sections.", price: 260, icon: "📖", turnaround: "5–7 days", revisions: 3 },
+        ],
+      },
+    ],
     tiers: [
       { id: "basic", name: "Basic", blurb: "Single-page menu, 1 concept, 2 revisions.", price: 90 },
       { id: "standard", name: "Standard", blurb: "Multi-page or double-sided, 2 concepts, 2 revisions.", price: 150 },
@@ -248,13 +359,35 @@ export const DESIGN_SERVICES: DesignService[] = [
   svc({ slug: "recruitment-flyer", name: "Recruitment / Announcement Flyer", category: "business", price: 60, short: "Hiring and company news, designed properly.", sizes: [...printSizes(), ...digitalSizes()] }),
 
   /* branding */
-  svc({ slug: "logo-design", name: "Logo Design", category: "branding", price: 350, short: "3 concepts, 2 revision rounds, full file kit.", turnaround: "5–7 days", revisions: 2, featured: true, popular: true, optionIds: ["extra-concept", "extra-revision", "source-file", "style-guide-addon"], recommended: ["business-card", "social-profile-graphics", "brand-style-guide"],
+  svc({ slug: "logo-design", name: "Logo Design", category: "branding", price: 350, short: "Custom identity vectors engineered for recognition across all media.", turnaround: "5–7 days", revisions: 2, featured: true, popular: true, optionIds: ["extra-concept", "extra-revision", "source-file", "style-guide-addon"], recommended: ["business-card", "social-profile-graphics", "brand-style-guide"],
+    variations: [
+      {
+        id: "color_mode",
+        name: "Color & Style Edition",
+        options: [
+          { id: "bw", name: "Black & White / Monochrome Vector", blurb: "Crisp black and white vector mark for minimalists or stamping.", price: 250, icon: "⚫", turnaround: "4–6 days", revisions: 1 },
+          { id: "full-color", name: "Full Color Dynamic Vector Suite", blurb: "Primary color palette, dark & light backgrounds, color breakdown codes.", price: 350, isDefault: true, icon: "🎨", turnaround: "5–7 days", revisions: 2 },
+          { id: "metallic-3d", name: "3D Metallic / Luxury Edition", blurb: "Gold/silver foil textures, 3D photoreal shading & luxury product mockups.", price: 495, icon: "✨", turnaround: "7–10 days", revisions: 3 },
+        ],
+      },
+    ],
     tiers: [
       { id: "basic", name: "Basic", blurb: "1 concept, 1 revision round, web files.", price: 250, revisions: 1, turnaround: "4–6 days" },
       { id: "standard", name: "Standard", blurb: "3 concepts, 2 rounds, full file kit.", price: 350 },
       { id: "professional", name: "Professional", blurb: "5 concepts, 3 rounds, source files + mini style guide.", price: 550, revisions: 3, turnaround: "7–10 days" },
     ] }),
-  svc({ slug: "logo-redesign", name: "Logo Redesign", category: "branding", price: 280, short: "A careful evolution of what you already have.", turnaround: "5–7 days", optionIds: ["extra-concept", "extra-revision", "source-file"] }),
+  svc({ slug: "logo-redesign", name: "Logo Redesign", category: "branding", price: 280, short: "A careful evolution of what you already have.", turnaround: "5–7 days", optionIds: ["extra-concept", "extra-revision", "source-file"],
+    variations: [
+      {
+        id: "color_mode",
+        name: "Redesign Scope",
+        options: [
+          { id: "vector-cleanup", name: "Vector Cleanup & High-Res Redraw", blurb: "Recreate low-res logo into infinite resolution SVG/EPS.", price: 195, icon: "📐", revisions: 1 },
+          { id: "color-modernization", name: "Full Color Modernization", blurb: "Modern typography, refreshed color palette & vector master files.", price: 280, isDefault: true, icon: "🎨", revisions: 2 },
+          { id: "complete-system", name: "Modernization + Submark & Icons", blurb: "Primary logo refresh + matching avatar icon & horizontal lockup.", price: 395, icon: "✨", revisions: 3 },
+        ],
+      },
+    ] }),
   svc({ slug: "brand-identity", name: "Brand Identity", category: "branding", price: 1200, short: "Logo suite, colours, type and usage — the full system.", pricingType: "starting_at", purchaseMode: "QUOTE_ONLY", turnaround: "2–3 weeks", revisions: 3, featured: true, optionIds: ["style-guide-addon", "extra-revision", "source-file"], recommended: ["brand-style-guide", "business-card", "social-profile-graphics"] }),
   svc({ slug: "brand-style-guide", name: "Brand Style Guide", category: "branding", price: 400, short: "The rulebook that keeps your brand consistent.", turnaround: "7–10 days" }),
   svc({ slug: "email-signature", name: "Email Signature", category: "branding", price: 45, short: "A signature that markets on every send." }),
@@ -264,8 +397,29 @@ export const DESIGN_SERVICES: DesignService[] = [
   /* print */
   svc({ slug: "poster-design", name: "Poster", category: "print", price: 85, short: "Posters from tabloid to billboard thinking.", sizes: [{ sizeId: "p-tabloid" }, { sizeId: "p-18x24", isDefault: true }, { sizeId: "p-24x36", adjType: "fixed", adj: 25 }, { sizeId: "a3" }] }),
   svc({ slug: "pull-up-banner", name: "Pull-Up / Retractable Banner", category: "print", price: 150, short: "Trade-show and storefront banners.", sizes: [{ sizeId: "banner-pullup", isDefault: true }], allowCustomSize: true, customLimits: { minW: 24, maxW: 60, minH: 60, maxH: 96, unit: "in" } }),
-  svc({ slug: "postcard-invitation", name: "Postcards & Invitations", category: "print", price: 70, short: "Mailers and invites that get kept.", sizes: [{ sizeId: "p-4x6", isDefault: true }, { sizeId: "p-5x7" }, { sizeId: "a5" }] }),
-  svc({ slug: "stickers-labels", name: "Stickers & Labels", category: "print", price: 65, short: "Product labels, sticker sheets and seals.", pricingType: "starting_at", allowCustomSize: true, customLimits: { minW: 1, maxW: 12, minH: 1, maxH: 12, unit: "in" } }),
+  svc({ slug: "postcard-invitation", name: "Postcards & Invitations", category: "print", price: 70, short: "Mailers and invites that get kept.", sizes: [{ sizeId: "p-4x6", isDefault: true }, { sizeId: "p-5x7" }, { sizeId: "a5" }],
+    variations: [
+      {
+        id: "sides",
+        name: "Sides",
+        options: [
+          { id: "single", name: "Single-Sided Postcard", price: 55, icon: "✉️" },
+          { id: "double", name: "Double-Sided (Art Front + Mailer Back)", price: 80, isDefault: true, icon: "💌" },
+        ],
+      },
+    ] }),
+  svc({ slug: "stickers-labels", name: "Stickers & Labels", category: "print", price: 65, short: "Product labels, sticker sheets and seals.", pricingType: "starting_at", allowCustomSize: true, customLimits: { minW: 1, maxW: 12, minH: 1, maxH: 12, unit: "in" },
+    variations: [
+      {
+        id: "label_format",
+        name: "Sticker Format",
+        options: [
+          { id: "single-die-cut", name: "Single Die-Cut / Kiss-Cut Sticker", blurb: "Individual contoured sticker artwork.", price: 65, isDefault: true, icon: "🏷️" },
+          { id: "front-back-set", name: "Front & Back Label Set", blurb: "Matching front brand label + back ingredients/barcode label.", price: 110, icon: "🧴" },
+          { id: "sheet-pack", name: "Multi-Design Sticker Sheet (4–8 Stickers)", blurb: "Full sticker sheet layout for merch.", price: 150, icon: "📦", revisions: 3 },
+        ],
+      },
+    ] }),
   svc({ slug: "certificate-design", name: "Certificates & Gift Certificates", category: "print", price: 55, short: "Awards and vouchers worth framing.", sizes: [{ sizeId: "p-letter", isDefault: true }, { sizeId: "a4" }] }),
 
   /* advertising */
@@ -279,12 +433,32 @@ export const DESIGN_SERVICES: DesignService[] = [
   /* product & e-commerce */
   svc({ slug: "product-promo-graphic", name: "Product Promotional Graphic", category: "product", price: 70, short: "Feature and comparison graphics that sell the product.", sizes: digitalSizes() }),
   svc({ slug: "ecommerce-listing", name: "E-Commerce Listing Graphics", category: "product", price: 120, short: "Listing image sets for your store.", pricingType: "starting_at" }),
-  svc({ slug: "product-label", name: "Product Label", category: "product", price: 130, short: "Labels that earn shelf presence.", pricingType: "starting_at", allowCustomSize: true, customLimits: { minW: 1, maxW: 12, minH: 1, maxH: 12, unit: "in" } }),
+  svc({ slug: "product-label", name: "Product Label", category: "product", price: 130, short: "Labels that earn shelf presence.", pricingType: "starting_at", allowCustomSize: true, customLimits: { minW: 1, maxW: 12, minH: 1, maxH: 12, unit: "in" },
+    variations: [
+      {
+        id: "label_type",
+        name: "Label Style",
+        options: [
+          { id: "single-wrap", name: "Single Full-Wrap Container Label", blurb: "Complete 360 wrap label for bottles or jars.", price: 130, isDefault: true, icon: "🏷️" },
+          { id: "front-back", name: "Front & Back Two-Piece Set", blurb: "Separate front branding + back nutrition/directions.", price: 180, icon: "🧴" },
+        ],
+      },
+    ] }),
   svc({ slug: "packaging-design", name: "Packaging Design", category: "product", price: 600, short: "Structural-ready packaging artwork.", pricingType: "starting_at", purchaseMode: "QUOTE_ONLY", turnaround: "2–3 weeks", revisions: 3 }),
   svc({ slug: "product-mockup", name: "Product Mockup", category: "product", price: 85, short: "Photoreal mockups of your product or packaging." }),
 
   /* real estate */
-  svc({ slug: "property-listing-flyer", name: "Property Listing Flyer", category: "real-estate", price: 75, short: "Listings presented to sell.", sizes: [...printSizes(), ...digitalSizes()], recommended: ["open-house-flyer", "property-brochure"] }),
+  svc({ slug: "property-listing-flyer", name: "Property Listing Flyer", category: "real-estate", price: 75, short: "Listings presented to sell.", sizes: [...printSizes(), ...digitalSizes()], recommended: ["open-house-flyer", "property-brochure"],
+    variations: [
+      {
+        id: "sides",
+        name: "Sides",
+        options: [
+          { id: "single", name: "Single-Sided Property Feature", blurb: "Hero photo, price, specs, and agent details.", price: 75, isDefault: true, icon: "🏠" },
+          { id: "double", name: "Double-Sided Feature Sheet", blurb: "Hero front + back floorplan, photo gallery & neighborhood stats.", price: 110, icon: "📑" },
+        ],
+      },
+    ] }),
   svc({ slug: "open-house-flyer", name: "Open House Flyer", category: "real-estate", price: 70, short: "Fill the open house.", sizes: [...printSizes(), ...digitalSizes()] }),
   svc({ slug: "sold-graphic", name: "For Sale / Sold Graphic", category: "real-estate", price: 45, short: "Proof-of-work posts for your pipeline.", sizes: digitalSizes() }),
   svc({ slug: "property-brochure", name: "Property Brochure / Feature Sheet", category: "real-estate", price: 180, short: "Multi-page property presentations.", pricingType: "starting_at" }),
@@ -295,9 +469,32 @@ export const DESIGN_SERVICES: DesignService[] = [
   svc({ slug: "table-tent", name: "Table Tent", category: "restaurant", price: 55, short: "On-table promo for upsells and events.", sizes: [{ sizeId: "p-4x6", isDefault: true }, { sizeId: "p-5x7" }, { sizeId: "a5" }] }),
 
   /* specialty */
-  svc({ slug: "wedding-invitation", name: "Wedding Invitation", category: "specialty", price: 150, short: "Suites and single cards for the big day.", pricingType: "starting_at", sizes: [{ sizeId: "p-5x7", isDefault: true }, { sizeId: "a5" }] }),
+  svc({ slug: "wedding-invitation", name: "Wedding Invitation", category: "specialty", price: 150, short: "Suites and single cards for the big day.", pricingType: "starting_at", sizes: [{ sizeId: "p-5x7", isDefault: true }, { sizeId: "a5" }],
+    variations: [
+      {
+        id: "suite_scope",
+        name: "Invitation Scope",
+        options: [
+          { id: "single-card", name: "Single Main Invitation Card", price: 95, icon: "✉️" },
+          { id: "double-sided", name: "Double-Sided Invitation Card", price: 130, icon: "💌" },
+          { id: "full-suite", name: "Complete 3-Piece Suite (Invite + RSVP + Details)", price: 195, isDefault: true, icon: "💍", turnaround: "5–7 days", revisions: 3 },
+        ],
+      },
+    ] }),
   svc({ slug: "birthday-invitation", name: "Birthday / Baby Shower Invitation", category: "specialty", price: 55, short: "Invites worth keeping.", sizes: [{ sizeId: "p-5x7", isDefault: true }, { sizeId: "p-4x6" }, ...digitalSizes()] }),
-  svc({ slug: "funeral-program", name: "Funeral Program / Memorial Booklet", category: "specialty", price: 120, short: "Handled with care, delivered on time.", pricingType: "starting_at", turnaround: "2–4 days" }),
+  svc({ slug: "funeral-program", name: "Funeral Program / Memorial Booklet", category: "specialty", price: 140, short: "Handled with care, delivered on time.", pricingType: "starting_at", turnaround: "2–4 days",
+    variations: [
+      {
+        id: "program_structure",
+        name: "Page & Binding Structure",
+        options: [
+          { id: "single-sheet", name: "Single Sheet 2-Page Card", blurb: "Front photo tribute + back order of service.", price: 90, icon: "📄", revisions: 1 },
+          { id: "bi-fold", name: "Bi-Fold 4-Page Program", blurb: "Cover, obituary, order of service, and pallbearers/acknowledgments.", price: 140, isDefault: true, icon: "📖", revisions: 2 },
+          { id: "booklet-8", name: "8-Page Memorial Booklet", blurb: "Photo collage spreads, reflections, tributes, and family memories.", price: 220, icon: "📚", turnaround: "3–5 days", revisions: 3 },
+          { id: "booklet-12", name: "12-Page Deluxe Commemorative Book", blurb: "Comprehensive life celebration keepsake booklet.", price: 320, icon: "🕊️", turnaround: "4–6 days", revisions: 3 },
+        ],
+      },
+    ] }),
   svc({ slug: "church-flyer", name: "Church / Community Flyer", category: "specialty", price: 55, short: "Services, revivals and community events.", sizes: [...printSizes(), ...digitalSizes()] }),
   svc({ slug: "graduation-design", name: "Graduation Design", category: "specialty", price: 65, short: "Announcements and celebration graphics.", sizes: [...printSizes(), ...digitalSizes()] }),
 ];
@@ -327,24 +524,27 @@ export interface ConfigSelection {
   optionIds: string[];
   qty: number;
   tierId?: string;                 // productized tier (replaces base price)
+  selectedVariants?: Record<string, string>; // variation group id -> selected option id
 }
 
 export interface PricedLine {
   service: DesignService;
   tier: ServiceTier | null;
+  selectedVariants?: { groupId: string; groupName: string; option: ServiceVariantOption }[];
+  variantLabel?: string;
   size: DesignSize | null;
   customSize: ConfigSelection["customSize"] | null;
   sizeLabel: string;
   sizeAdj: number;
   options: { id: string; name: string; amount: number }[];
   qty: number;
-  unitBase: number;                // base (or tier price) + size adj (per design)
+  unitBase: number;                // base (or variant/tier price) + size adj (per design)
   optionsPerDesign: number;
   projectFees: number;
   lineTotal: number;
   isQuote: boolean;
-  turnaround: string;              // tier override → service default
-  revisions: number;               // tier override → service default
+  turnaround: string;              // variant/tier override → service default
+  revisions: number;               // variant/tier override → service default
 }
 
 export function sizeById(id: string | undefined, sizes: DesignSize[] = DESIGN_SIZES): DesignSize | null {
@@ -372,11 +572,37 @@ export function priceLine(
   const qty = Math.max(s.minQty, Math.min(s.maxQty, Math.round(sel.qty) || s.minQty));
   const isQuote = isQuoteOnly(s);
 
-  // productized tier — replaces the base price when picked
-  const tier = (s.tiers ?? []).find((t) => t.id === sel.tierId) ?? null;
-  const basePrice = tier ? tier.price : s.price;
+  // 1. Resolve selected variations (first-class variant pricing)
+  const selectedVariantDetails: PricedLine["selectedVariants"] = [];
+  let variantBasePrice: number | null = null;
+  let variantTurnaround: string | undefined;
+  let variantRevisions: number | undefined;
 
-  // size adjustment
+  if (s.variations && s.variations.length > 0) {
+    s.variations.forEach((group, idx) => {
+      const chosenId = sel.selectedVariants?.[group.id] || group.options.find((o) => o.isDefault)?.id || group.options[0]?.id;
+      const opt = group.options.find((o) => o.id === chosenId) || group.options[0];
+      if (opt) {
+        selectedVariantDetails.push({ groupId: group.id, groupName: group.name, option: opt });
+        if (idx === 0) {
+          variantBasePrice = opt.price;
+        } else {
+          // secondary variation groups add their price
+          variantBasePrice = (variantBasePrice ?? s.price) + opt.price;
+        }
+        if (opt.turnaround) variantTurnaround = opt.turnaround;
+        if (opt.revisions !== undefined) variantRevisions = opt.revisions;
+      }
+    });
+  }
+
+  // 2. Productized tier — replaces base price when picked
+  const tier = (s.tiers ?? []).find((t) => t.id === sel.tierId) ?? null;
+  const basePrice = tier ? tier.price : (variantBasePrice !== null ? variantBasePrice : s.price);
+
+  const variantLabel = selectedVariantDetails.map((v) => v.option.name).join(" · ");
+
+  // 3. Size adjustment
   let size: DesignSize | null = null;
   let sizeAdj = 0;
   let sizeLabel = "";
@@ -392,7 +618,7 @@ export function priceLine(
 
   const unitBase = basePrice + sizeAdj;
 
-  // options, by scope (PRD §16)
+  // 4. Options, by scope (PRD §16)
   let optionsPerDesign = 0;
   let projectFees = 0;
   const options: PricedLine["options"] = [];
@@ -408,10 +634,11 @@ export function priceLine(
 
   const lineTotal = isQuote ? 0 : (unitBase + optionsPerDesign) * qty + projectFees;
   return {
-    service: s, tier, size, customSize: sel.customSize ?? null, sizeLabel, sizeAdj,
+    service: s, tier, selectedVariants: selectedVariantDetails, variantLabel: variantLabel || undefined,
+    size, customSize: sel.customSize ?? null, sizeLabel, sizeAdj,
     options, qty, unitBase, optionsPerDesign, projectFees, lineTotal, isQuote,
-    turnaround: tier?.turnaround ?? s.turnaround,
-    revisions: tier?.revisions ?? s.revisions,
+    turnaround: tier?.turnaround ?? variantTurnaround ?? s.turnaround,
+    revisions: tier?.revisions ?? variantRevisions ?? s.revisions,
   };
 }
 
@@ -445,7 +672,11 @@ export function packageValue(
 export function priceLabel(s: DesignService, fmtFn?: (n: number) => string): string {
   if (isQuoteOnly(s)) return "Custom quote";
   const f = fmtFn ?? ((n: number) => `$${n.toLocaleString()}`);
-  const lowest = (s.tiers ?? []).length ? Math.min(s.price, ...(s.tiers ?? []).map((t) => t.price)) : s.price;
+  const tierPrices = (s.tiers ?? []).map((t) => t.price);
+  const variantPrices = (s.variations ?? []).flatMap((g) => g.options.map((o) => o.price)).filter((p) => p > 0);
+  const allPrices = [s.price, ...tierPrices, ...variantPrices].filter((p) => p > 0);
+  const lowest = allPrices.length ? Math.min(...allPrices) : s.price;
   const base = f(lowest);
-  return s.pricingType === "starting_at" || (s.tiers ?? []).length > 0 ? `From ${base}` : base;
+  const hasVariantsOrTiers = (s.tiers ?? []).length > 0 || (s.variations ?? []).length > 0;
+  return s.pricingType === "starting_at" || hasVariantsOrTiers ? `From ${base}` : base;
 }

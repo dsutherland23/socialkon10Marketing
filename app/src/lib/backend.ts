@@ -1525,6 +1525,7 @@ export function cartToOrderItems(items: CartItem[]) {
     name: i.name,
     serviceSlug: i.serviceSlug,
     tierLabel: i.tierLabel,
+    variantLabel: i.variantLabel,
     unitPrice: i.unitPrice,
     addons: i.addons.map((a) => ({ name: a.name, price: a.price })),
     rush: i.rush,

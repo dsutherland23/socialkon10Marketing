@@ -103,6 +103,26 @@ export function DesignCatalogProvider({ children }: { children: ReactNode }) {
                     revisions: Number.isFinite(Number(t.revisions)) ? Number(t.revisions) : undefined,
                   }))
               : undefined,
+            variations: Array.isArray(s.variations) && s.variations.length > 0
+              ? (s.variations as { id?: string; name?: string; options?: any[] }[])
+                  .filter((g) => g && g.name && Array.isArray(g.options) && g.options.length > 0)
+                  .map((g, gi) => ({
+                    id: String(g.id ?? `group-${gi}`),
+                    name: String(g.name),
+                    options: (g.options || [])
+                      .filter((o) => o && o.name && Number.isFinite(Number(o.price)))
+                      .map((o, oi) => ({
+                        id: String(o.id ?? `opt-${oi}`),
+                        name: String(o.name),
+                        blurb: o.blurb ? String(o.blurb) : undefined,
+                        price: Number(o.price),
+                        turnaround: o.turnaround ? String(o.turnaround) : undefined,
+                        revisions: Number.isFinite(Number(o.revisions)) ? Number(o.revisions) : undefined,
+                        isDefault: Boolean(o.isDefault),
+                        icon: o.icon ? String(o.icon) : undefined,
+                      })),
+                  }))
+              : undefined,
           }))
           .filter((s) => s.active);
 

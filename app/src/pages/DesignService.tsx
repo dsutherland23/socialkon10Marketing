@@ -29,6 +29,18 @@ export function Configurator({ s, onAdd, onOrder }: {
   const { sizes, options } = useDesignCatalog();
   const money = useMoney();
   const tiers = s.tiers ?? [];
+  const variationGroups = s.variations ?? [];
+
+  // Initialize selected variations for each group
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    variationGroups.forEach((g) => {
+      const defOpt = g.options.find((o) => o.isDefault) || g.options[0];
+      if (defOpt) initial[g.id] = defOpt.id;
+    });
+    return initial;
+  });
+
   const def = s.sizes.find((x) => x.isDefault) ?? s.sizes[0];
   const [tierId, setTierId] = useState<string | undefined>(
     tiers.length ? (tiers[1]?.id ?? tiers[0]?.id) : undefined   // default to the middle tier
@@ -52,7 +64,8 @@ export function Configurator({ s, onAdd, onOrder }: {
     optionIds: picked,
     qty,
     tierId,
-  }), [useCustom, sizeId, cw, ch, customError, picked, qty, tierId, s]);
+    selectedVariants,
+  }), [useCustom, sizeId, cw, ch, customError, picked, qty, tierId, selectedVariants, s]);
 
   const line = useMemo(() => priceLine(s, sel, { sizes, options }), [s, sel, sizes, options]);
   const selSize = sizeById(sizeId, sizes);
@@ -64,13 +77,68 @@ export function Configurator({ s, onAdd, onOrder }: {
     track("design_addon_toggle", { service: s.slug, addon: id, on });
   };
 
+  const selectVariant = (groupId: string, optionId: string, optPrice: number) => {
+    setSelectedVariants((prev) => ({ ...prev, [groupId]: optionId }));
+    track("design_variant_select", { service: s.slug, group: groupId, option: optionId, price: optPrice });
+  };
+
   return (
     <div className="grid lg:grid-cols-12 gap-10">
       {/* configuration */}
-      <div className="lg:col-span-7">
+      <div className="lg:col-span-7 space-y-10">
+        {/* variation groups (e.g. Folding Style, Sides, Color Mode, Page Count) */}
+        {variationGroups.length > 0 && variationGroups.map((group) => {
+          const currentOptId = selectedVariants[group.id] || group.options[0]?.id;
+          return (
+            <fieldset key={group.id} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <legend className="idx">/{group.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")} — choose your variation</legend>
+                <span className="font-meta text-[9px] text-[var(--muted)]">{group.options.length} options</span>
+              </div>
+              <div className={`grid gap-2.5 ${group.options.length <= 2 ? "sm:grid-cols-2" : group.options.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label={group.name}>
+                {group.options.map((opt) => {
+                  const active = currentOptId === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => selectVariant(group.id, opt.id, opt.price)}
+                      aria-pressed={active}
+                      className={`text-left border p-4 transition-all rounded-2xl relative flex flex-col justify-between ${
+                        active
+                          ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)] shadow-xs"
+                          : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {opt.icon && <span className="text-base shrink-0">{opt.icon}</span>}
+                            <span className="font-display text-xs sm:text-sm font-bold uppercase leading-tight">{opt.name}</span>
+                          </div>
+                          <span className="font-display-wide text-sm font-bold dept-accent shrink-0">{money(opt.price)}</span>
+                        </div>
+                        {opt.blurb && (
+                          <p className="text-[11px] text-[var(--muted)] mt-2 leading-relaxed">{opt.blurb}</p>
+                        )}
+                      </div>
+                      {(opt.turnaround || opt.revisions !== undefined) && (
+                        <div className="mt-3 pt-2.5 border-t border-[var(--line)]/60 flex items-center justify-between font-meta text-[8.5px] text-[var(--muted)]">
+                          {opt.turnaround && <span>⏱️ {opt.turnaround}</span>}
+                          {opt.revisions !== undefined && <span>🔄 {opt.revisions} revisions</span>}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          );
+        })}
+
         {/* package tier (journey A — choose your package) */}
         {tiers.length > 0 && (
-          <fieldset className="mb-10">
+          <fieldset>
             <legend className="idx">/package — choose your tier</legend>
             <div className="mt-4 grid sm:grid-cols-3 gap-2" role="group" aria-label="Package tier">
               {tiers.map((t) => {
@@ -80,10 +148,10 @@ export function Configurator({ s, onAdd, onOrder }: {
                     key={t.id}
                     onClick={() => { setTierId(t.id); track("design_tier_select", { service: s.slug, tier: t.id, price: t.price }); }}
                     aria-pressed={active}
-                    className="text-left border px-4 py-4 transition-colors"
+                    className="text-left border px-4 py-4 transition-colors rounded-2xl"
                     style={active
                       ? { borderColor: "var(--dept)", background: "var(--dept-soft)" }
-                      : { borderColor: "var(--line)" }}
+                      : { borderColor: "var(--line)", background: "var(--panel)" }}
                   >
                     <span className="flex items-baseline justify-between gap-2">
                       <span className="font-display text-sm font-bold uppercase">{t.name}</span>
@@ -219,6 +287,12 @@ export function Configurator({ s, onAdd, onOrder }: {
               <dt className="text-[var(--muted)]">{line.tier ? `${line.tier.name} — ${s.name}` : `Base — ${s.name}`}</dt>
               <dd>{line.isQuote ? "Quote" : money(line.tier ? line.tier.price : s.price)}</dd>
             </div>
+            {line.variantLabel && (
+              <div className="flex justify-between font-meta text-[10px]">
+                <dt className="text-[var(--muted)]">Variation</dt>
+                <dd className="dept-accent font-bold text-right">{line.variantLabel}</dd>
+              </div>
+            )}
             {line.sizeAdj !== 0 && <div className="flex justify-between"><dt className="text-[var(--muted)]">Size — {line.sizeLabel}</dt><dd>+{money(line.sizeAdj)}</dd></div>}
             {line.sizeAdj === 0 && line.sizeLabel && <div className="flex justify-between font-meta text-[10px]"><dt className="text-[var(--muted)]">Size</dt><dd>{line.sizeLabel}</dd></div>}
             {line.options.map((o) => (
@@ -347,9 +421,10 @@ export default function DesignServicePage() {
 
     addToShop({
       serviceSlug: s.slug,
-      name: `${s.name}${line.tier ? ` (${line.tier.name})` : ""}${line.size ? ` · ${line.size.name}` : ""}`,
+      name: `${s.name}${line.variantLabel ? ` (${line.variantLabel})` : ""}${line.tier ? ` · ${line.tier.name}` : ""}${line.size ? ` · ${line.size.name}` : ""}`,
       unitPrice: line.unitBase || s.price,
       tierLabel: line.tier?.name,
+      variantLabel: line.variantLabel,
       addons: selectedOptions,
       rush: false,
       billing: "one_time",

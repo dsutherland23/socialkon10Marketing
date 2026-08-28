@@ -9,8 +9,9 @@ export interface CartItem {
   key: string;              // unique line key
   serviceSlug: string;
   name: string;
-  unitPrice: number;        // USD base (after fixed-tier choice)
+  unitPrice: number;        // USD base (after fixed-tier or variant choice)
   tierLabel?: string;       // e.g. "Event Pro"
+  variantLabel?: string;    // e.g. "Tri-Fold (6 Panels)"
   addons: { id: string; name: string; price: number }[];
   rush: boolean;
   billing: ServiceProduct["billing"];

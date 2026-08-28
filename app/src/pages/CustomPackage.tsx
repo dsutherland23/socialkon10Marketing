@@ -197,8 +197,9 @@ export default function CustomPackage() {
     try {
       // immutable price snapshot (PRD §30) — current catalog values are frozen into the order
       const items = pkg.lines.map((l) => ({
-        name: `${l.service.name}${l.tier ? ` (${l.tier.name})` : ""}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""} × ${l.qty}`,
-        tierLabel: "Design package",
+        name: `${l.service.name}${l.variantLabel ? ` (${l.variantLabel})` : ""}${l.tier ? ` (${l.tier.name})` : ""}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""} × ${l.qty}`,
+        tierLabel: l.tier?.name || (l.variantLabel ? l.variantLabel : "Design package"),
+        variantLabel: l.variantLabel,
         unitPrice: Math.round((l.unitBase + l.optionsPerDesign) * 100) / 100,
         addons: [
           ...l.options.map((o) => ({ name: o.name, price: Math.round(o.amount * 100) / 100 })),
@@ -387,7 +388,8 @@ export default function CustomPackage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <span className="font-display text-sm font-bold uppercase">{l.service.name}</span>
-                      {l.tier && <span className="block font-meta text-[8px] dept-accent mt-0.5">{l.tier.name} package</span>}
+                      {l.variantLabel && <span className="block font-meta text-[8.5px] dept-accent font-semibold mt-0.5">{l.variantLabel}</span>}
+                      {l.tier && <span className="block font-meta text-[8px] text-[var(--muted)] mt-0.5">{l.tier.name} tier</span>}
                       {l.sizeLabel && <span className="block font-meta text-[8px] text-[var(--muted)] mt-0.5">{l.sizeLabel}</span>}
                       {l.options.length > 0 && <span className="block font-meta text-[8px] text-[var(--muted)]">{l.options.map((o) => o.name).join(" · ")}</span>}
                     </div>
