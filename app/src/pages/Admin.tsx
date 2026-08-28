@@ -9,6 +9,7 @@ import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
 import {
   ORDER_STATUSES, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setLeadsStatus, deleteLead, deleteLeads, setOrderStatus, setOrdersStatus, deleteOrder, deleteOrders, deleteOrderFile, isOrderHistory,
+  resetAccountingLedger,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
   getSettings, saveSettings, convertLeadToOrder, recordPayment, createOrder,
@@ -425,11 +426,174 @@ function OrderStudioWorkspace({ order, onReload }: { order: OrderRecord; onReloa
   );
 }
 
+function ResetAccountingModal({
+  orders,
+  isOpen,
+  onClose,
+  onResetComplete,
+}: {
+  orders: OrderRecord[];
+  isOpen: boolean;
+  onClose: () => void;
+  onResetComplete?: () => void;
+}) {
+  const money = useMoney();
+  const [confirmText, setConfirmText] = useState("");
+  const [exportBackup, setExportBackup] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const totalRevenue = orders.reduce((s, o) => s + (o.amountPaid || 0), 0);
+  const totalOutstanding = orders.reduce((s, o) => s + (o.balanceDue || 0), 0);
+
+  if (!isOpen) return null;
+
+  const handleExecuteReset = async () => {
+    if (confirmText.trim().toUpperCase() !== "RESET") {
+      toast.error("Please type RESET to confirm accounting reset.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (exportBackup && orders.length > 0) {
+        exportToCsv<OrderRecord>(
+          `Financial_Ledger_Archive_${new Date().toISOString().slice(0, 10)}`,
+          [
+            { key: "id", header: "Order ID" },
+            { key: "name", header: "Client Name" },
+            { key: "email", header: "Email" },
+            { key: "company", header: "Company", format: (o) => o.company || "" },
+            { key: "status", header: "Status" },
+            { key: "total", header: "Total Price (USD)", format: (o) => o.total || 0 },
+            { key: "amountPaid", header: "Amount Paid (USD)", format: (o) => o.amountPaid || 0 },
+            { key: "balanceDue", header: "Balance Due (USD)", format: (o) => o.balanceDue || 0 },
+            { key: "items", header: "Items", format: (o) => o.items.map((i) => i.name).join("; ") },
+            { key: "createdAt", header: "Created Date", format: (o) => o.createdAt || "" },
+            { key: "completedAt", header: "Archived Date", format: (o) => o.completedAt || "" },
+          ],
+          orders
+        );
+      }
+
+      await resetAccountingLedger(orders.map((o) => o.id));
+      toast.success("Financial ledger & accounting zeroed out ($0.00)");
+      onResetComplete?.();
+      onClose();
+    } catch (err) {
+      toast.error("Failed to reset accounting: " + String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="w-full max-w-lg bg-[var(--panel)] border border-red-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 text-[var(--ink)]">
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--line)] pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-red-500/10 text-red-400 flex items-center justify-center font-bold text-xl border border-red-500/30">
+              ⚠️
+            </div>
+            <div>
+              <h3 className="font-display text-lg sm:text-xl font-bold uppercase tracking-tight text-red-400">
+                Zero Out Accounting Ledger
+              </h3>
+              <p className="text-xs text-[var(--muted)] mt-0.5">
+                2026 Audit-Compliant Financial Reset & Metrics Zeroing
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-full text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--line)] transition-colors cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Ledger Impact Summary */}
+        <div className="grid grid-cols-3 gap-2.5 p-3.5 rounded-2xl bg-[var(--bg)] border border-[var(--line)] text-center">
+          <div>
+            <span className="font-meta text-[9px] text-[var(--muted)] uppercase block">Revenue Wiped</span>
+            <span className="font-display font-bold text-base text-red-400">{money(totalRevenue)}</span>
+          </div>
+          <div>
+            <span className="font-meta text-[9px] text-[var(--muted)] uppercase block">Balances Cleared</span>
+            <span className="font-display font-bold text-base text-amber-400">{money(totalOutstanding)}</span>
+          </div>
+          <div>
+            <span className="font-meta text-[9px] text-[var(--muted)] uppercase block">Transactions</span>
+            <span className="font-display font-bold text-base text-[var(--ink)]">{orders.length}</span>
+          </div>
+        </div>
+
+        {/* Compliance Safety Notice */}
+        <div className="p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/5 text-xs text-[var(--muted)] space-y-1.5">
+          <p className="font-semibold text-amber-400 flex items-center gap-1.5">
+            <span>🛡️ Enterprise Accounting Safety</span>
+          </p>
+          <p className="text-[11px] leading-relaxed">
+            This action purges all order receipts and resets studio gross revenue, accounts receivable, and order tallies to $0.00.
+          </p>
+        </div>
+
+        {/* Audit Backup Checkbox */}
+        <label className="flex items-center gap-2.5 cursor-pointer text-xs select-none">
+          <input
+            type="checkbox"
+            checked={exportBackup}
+            onChange={(e) => setExportBackup(e.target.checked)}
+            className="w-4 h-4 accent-red-500 rounded cursor-pointer"
+          />
+          <span className="font-medium text-[var(--ink)]">
+            Automatically download financial audit archive (CSV) before wiping
+          </span>
+        </label>
+
+        {/* Guard Input */}
+        <div>
+          <label className="block font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-1.5">
+            Type <span className="font-mono font-bold text-red-400">RESET</span> to confirm zero-out:
+          </label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder="RESET"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-red-500/40 bg-[var(--bg)] font-mono text-sm uppercase tracking-widest text-red-400 placeholder:text-red-900/40 outline-none focus:border-red-500"
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn btn-ghost !py-2 !px-4 text-xs cursor-pointer"
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleExecuteReset}
+            disabled={confirmText.trim().toUpperCase() !== "RESET" || busy}
+            className="btn !py-2 !px-4 text-xs font-bold bg-red-600 hover:bg-red-500 text-white border-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-md flex items-center gap-2 cursor-pointer"
+          >
+            {busy ? "Zeroing Out Ledger..." : "Zero Out Accounting ($0.00)"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Orders() {
   const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [resetAccountingOpen, setResetAccountingOpen] = useState(false);
   const [mobileCockpitOpen, setMobileCockpitOpen] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ACTIVE");
   const [search, setSearch] = useState("");
@@ -727,13 +891,24 @@ function Orders() {
           )}
         </div>
 
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search client, ID, email, item…"
-          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
-        />
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search client, ID, email, item…"
+            className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-56"
+          />
+          <button
+            type="button"
+            onClick={() => setResetAccountingOpen(true)}
+            className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
+            title="Zero out accounting ledger and reset revenue metrics ($0.00)"
+          >
+            <span>⚠️</span>
+            <span>Zero Out Accounting</span>
+          </button>
+        </div>
       </div>
 
       {/* Closed-business report — visible in the History archive */}
@@ -1180,6 +1355,17 @@ function Orders() {
           )}
         </div>
       )}
+
+      <ResetAccountingModal
+        orders={orders}
+        isOpen={resetAccountingOpen}
+        onClose={() => setResetAccountingOpen(false)}
+        onResetComplete={() => {
+          setSelectedId("");
+          clearSelection();
+          reload();
+        }}
+      />
     </div>
   );
 }
@@ -3028,6 +3214,8 @@ function Analytics() {
   const money = useMoney();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [leads, setLeads] = useState<LeadRecord[]>([]);
+  const [resetAccountingOpen, setResetAccountingOpen] = useState(false);
+
   useEffect(() => {
     const unsubOrders = subscribeAllOrders(setOrders);
     const unsubLeads = subscribeLeads(setLeads);
@@ -3054,12 +3242,34 @@ function Analytics() {
 
   return (
     <div>
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <div>
+          <span className="idx">/financial-ledger</span>
+          <h3 className="font-display text-lg font-bold uppercase mt-1">Financial & Studio Analytics</h3>
+        </div>
+        <button
+          type="button"
+          onClick={() => setResetAccountingOpen(true)}
+          className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
+          title="Zero out accounting ledger and reset revenue metrics ($0.00)"
+        >
+          <span>⚠️</span>
+          <span>Zero Out Accounting ($0.00)</span>
+        </button>
+      </div>
+
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-10">
         <Stat label="REVENUE COLLECTED" value={money(revenue)} sub={`${orders.length} orders`} />
         <Stat label="OUTSTANDING BALANCES" value={money(outstanding)} sub="deposits → final approval" />
         <Stat label="AVERAGE ORDER VALUE" value={money(aov)} />
         <Stat label="LEADS" value={String(leads.length)} sub={`${leads.filter((l) => l.status === "converted").length} converted`} />
       </div>
+
+      <ResetAccountingModal
+        orders={orders}
+        isOpen={resetAccountingOpen}
+        onClose={() => setResetAccountingOpen(false)}
+      />
       <div className="grid lg:grid-cols-3 gap-8">
         <div>
           <span className="idx">/pipeline</span>

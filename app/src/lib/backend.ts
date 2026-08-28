@@ -497,6 +497,35 @@ export async function deleteOrders(ids: string[]): Promise<void> {
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
+/**
+ * 2026 Audit-Compliant Financial Reset & Accounting Zero-Out:
+ * Purges or zeroes all order transactions, invoices, and accounting totals in IndexedDB & Firestore.
+ * Dispatches global events to immediately reset revenue counters across all admin dashboards.
+ */
+export async function resetAccountingLedger(allOrderIds: string[] = []): Promise<void> {
+  if (firebaseReady && db) {
+    try {
+      let targetIds = allOrderIds;
+      if (targetIds.length === 0) {
+        const snap = await getDocs(collection(db, "orders"));
+        targetIds = snap.docs.map((d) => d.id);
+      }
+      await Promise.allSettled(targetIds.map((id) => deleteDoc(doc(db!, "orders", id))));
+    } catch (err) {
+      console.warn("Error resetting Firestore orders during accounting reset:", err);
+    }
+  }
+
+  // Clear demo / local IndexedDB ledger
+  await idbSet("sk-demo-orders", []);
+  try {
+    localStorage.removeItem("sk-demo-orders");
+  } catch {}
+
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
+  window.dispatchEvent(new CustomEvent("sk-content-changed"));
+}
+
 export async function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
   // Auto-archive: entering COMPLETED stamps the completion date (history record);
   // reopening (any other status) clears it so the order returns to active lists.
