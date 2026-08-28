@@ -1,9 +1,7 @@
-"use client";
-
 import { useRef, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import DottedMap from "dotted-map";
-import { useTheme } from "next-themes";
+import { useTheme } from "../../lib/theme";
 
 export interface MapPoint {
   lat: number;
@@ -24,6 +22,7 @@ export interface WorldMapProps {
   dots?: MapDot[];
   points?: MapPoint[];
   lineColor?: string;
+  dotsColor?: string;
   className?: string;
   onSelectPoint?: (point: MapPoint) => void;
   onHoverPoint?: (point: MapPoint | null) => void;
@@ -33,7 +32,8 @@ export interface WorldMapProps {
 export function WorldMap({
   dots = [],
   points = [],
-  lineColor = "#0ea5e9",
+  lineColor = "#0284c7",
+  dotsColor,
   className = "",
   onSelectPoint,
   onHoverPoint,
@@ -42,30 +42,22 @@ export function WorldMap({
   const svgRef = useRef<SVGSVGElement>(null);
   const [internalHover, setInternalHover] = useState<MapPoint | null>(null);
 
-  // Safe theme detection with fallback for non-next-themes contexts
-  let currentTheme = "dark";
-  try {
-    const themeContext = useTheme();
-    if (themeContext?.theme) {
-      currentTheme = themeContext.theme;
-    } else if (typeof document !== "undefined" && document.documentElement.classList.contains("light")) {
-      currentTheme = "light";
-    }
-  } catch {
-    if (typeof document !== "undefined" && document.documentElement.classList.contains("light")) {
-      currentTheme = "light";
-    }
-  }
+  // Exact theme resolution from app ThemeProvider + DOM check
+  const { resolved } = useTheme();
+  const isDark = resolved === "dark" || (typeof document !== "undefined" && document.documentElement.classList.contains("dark"));
 
-  const isDark = currentTheme === "dark" || currentTheme === "system";
+  const computedDotsColor = useMemo(() => {
+    if (dotsColor) return dotsColor;
+    return isDark ? "rgba(255, 255, 255, 0.35)" : "rgba(30, 41, 59, 0.45)";
+  }, [dotsColor, isDark]);
 
   const svgMap = useMemo(() => {
     try {
       const DottedMapConstructor = (DottedMap as unknown as { default?: typeof DottedMap }).default || DottedMap;
       const map = new DottedMapConstructor({ height: 100, grid: "diagonal" });
       return map.getSVG({
-        radius: 0.22,
-        color: isDark ? "rgba(255, 255, 255, 0.28)" : "rgba(0, 0, 0, 0.25)",
+        radius: 0.38,
+        color: computedDotsColor,
         shape: "circle",
         backgroundColor: "transparent",
       });
@@ -73,7 +65,7 @@ export function WorldMap({
       console.warn("Failed to generate dotted map SVG:", e);
       return "";
     }
-  }, [isDark]);
+  }, [computedDotsColor]);
 
   const projectPoint = (lat: number, lng: number) => {
     const x = (lng + 180) * (800 / 360);
@@ -108,11 +100,11 @@ export function WorldMap({
 
   return (
     <div className={`w-full aspect-[2/1] rounded-2xl relative font-sans overflow-hidden select-none ${className}`}>
-      {/* Background Dotted SVG Map */}
+      {/* Background Dotted SVG Map with High Visibility & Contrast */}
       {svgMap && (
         <img
           src={`data:image/svg+xml;utf8,${encodeURIComponent(svgMap)}`}
-          className="h-full w-full object-cover [mask-image:linear-gradient(to_bottom,transparent,white_8%,white_92%,transparent)] pointer-events-none select-none opacity-85"
+          className="h-full w-full object-contain pointer-events-none select-none opacity-95"
           alt="World telemetry map"
           height="495"
           width="1056"
