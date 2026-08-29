@@ -117,6 +117,9 @@ function TemplateForm({ initial, managedId, onDone }: {
     if (!f.name.trim() || !f.slug.trim()) { toast.error("Name and slug are required."); return; }
     const payload: Record<string, unknown> = { ...f };
     delete (payload as { id?: unknown }).id;
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined) delete payload[k];
+    }
     const ok = await mutate(async () => {
       if (managedId) await updateManaged("templates", managedId, payload);
       else await addManaged("templates", payload);
@@ -283,14 +286,22 @@ function TemplatesManager() {
 
   const reload = () => listManaged("templates").then(setManaged);
   useEffect(() => { reload(); }, []);
-  const managedIdFor = (slug: string) => managed.find((m) => m.slug === slug)?.id;
+  const managedIdFor = (slug: string, tpl?: Template) =>
+    (tpl as unknown as { id?: string })?.id || managed.find((m) => m.slug === slug)?.id;
 
   const write = async (tpl: Template, changes: Partial<Template>, action: string) => {
-    const id = managedIdFor(tpl.slug);
+    const id = managedIdFor(tpl.slug, tpl);
     const payload: Record<string, unknown> = { ...tpl, ...changes };
     delete (payload as { id?: unknown }).id;
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined) delete payload[k];
+    }
+    const cleanChanges: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(changes)) {
+      if (v !== undefined) cleanChanges[k] = v;
+    }
     await mutate(async () => {
-      if (id) await updateManaged("templates", id, changes as Record<string, unknown>);
+      if (id) await updateManaged("templates", id, cleanChanges);
       else await addManaged("templates", payload);
       await logAudit({ user: "admin", action, entity: `template:${tpl.slug}` });
       await reload();
@@ -332,7 +343,7 @@ function TemplatesManager() {
                 <td className="py-3 pr-4 font-meta text-[9px]">{t.privateFilePath ? "✓ PRIVATE" : "—"}</td>
                 <td className="py-3 text-right whitespace-nowrap">
                   <Link to={`/editor/author/${t.slug}`} className="font-meta text-[9px] px-2 py-1 dept-accent hover:underline">STUDIO</Link>
-                  <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]" onClick={() => setEditing({ tpl: t, id: managedIdFor(t.slug) })}>EDIT</button>
+                  <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]" onClick={() => setEditing({ tpl: t, id: managedIdFor(t.slug, t) })}>EDIT</button>
                   <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]"
                     onClick={() => setEditing({ tpl: { ...t, slug: `${t.slug}-copy`, name: `${t.name} (Copy)`, status: "draft" }, id: undefined })}>DUPLICATE</button>
                   {t.status !== "published" ? (
@@ -346,7 +357,7 @@ function TemplatesManager() {
                   <button className="font-meta text-[9px] px-2 py-1 text-red-600"
                     onClick={async () => {
                       if (!confirm(`Delete "${t.name}"? Existing customers keep their downloads.`)) return;
-                      const id = managedIdFor(t.slug);
+                      const id = managedIdFor(t.slug, t);
                       if (id) await mutate(() => removeManaged("templates", id).then(reload), "Deleted.");
                       else await write(t, { status: "archived" }, "template_archived"); // seeds can't be hard-deleted — archive instead
                     }}>DELETE</button>

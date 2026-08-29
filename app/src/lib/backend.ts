@@ -885,8 +885,35 @@ export async function listManaged(kind: ManagedKind, filterByUid?: string | null
   }
 }
 
+/**
+ * Recursively removes all `undefined` properties from an object or array.
+ * Firestore strictly forbids `undefined` values and throws:
+ * "Function addDoc() called with invalid data. Unsupported field value: undefined"
+ */
+export function cleanFirestoreData<T>(input: T): T {
+  if (input === null || typeof input !== "object") {
+    return input;
+  }
+  if (Array.isArray(input)) {
+    return input
+      .filter((v) => v !== undefined)
+      .map((v) => cleanFirestoreData(v)) as unknown as T;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (v !== undefined) {
+      output[k] = cleanFirestoreData(v);
+    }
+  }
+  return output as T;
+}
+
 async function sanitizePayload(kind: ManagedKind, data: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const clone = { ...data };
+  // 1. Recursively strip any `undefined` values so Firestore validation never fails
+  const cleaned = cleanFirestoreData(data) as Record<string, unknown>;
+  const clone = { ...cleaned };
+
+  // 2. Offload large canvas payloads to Storage if needed
   for (const [key, val] of Object.entries(clone)) {
     if (typeof val === "string" && val.length > 500000) {
       if (firebaseReady && storage) {
@@ -904,7 +931,7 @@ async function sanitizePayload(kind: ManagedKind, data: Record<string, unknown>)
       }
     }
   }
-  return clone;
+  return cleanFirestoreData(clone) as Record<string, unknown>;
 }
 
 export async function addManaged(kind: ManagedKind, data: Record<string, unknown>): Promise<string> {
