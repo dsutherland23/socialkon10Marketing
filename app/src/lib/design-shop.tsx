@@ -7,6 +7,7 @@ import {
 } from "./design";
 import { listManaged } from "./backend";
 import { track } from "./seo";
+import { safeStorage } from "./storage";
 
 /* ------------------------------------------------------------------
    DESIGN CATALOG PROVIDER — database is the source of truth (PRD §57).
@@ -184,9 +185,9 @@ const KEY = "sk-design-package";
 export function DesignPackageProvider({ children }: { children: ReactNode }) {
   const { services, sizes, options, discounts } = useDesignCatalog();
   const [items, setItems] = useState<PackageItem[]>(() => {
-    try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; }
+    return safeStorage.getJSON<PackageItem[]>(KEY, []);
   });
-  useEffect(() => { localStorage.setItem(KEY, JSON.stringify(items)); }, [items]);
+  useEffect(() => { safeStorage.setJSON(KEY, items); }, [items]);
 
   const defaultSel = (slug: string): ConfigSelection => {
     const s = services.find((x) => x.slug === slug);

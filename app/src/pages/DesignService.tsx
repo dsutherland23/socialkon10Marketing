@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   priceLabel, sizeById, validateCustomSize, priceLine,
+  isBookConsultation,
   type ConfigSelection, type DesignService,
 } from "../lib/design";
 import { useDesignCatalog, useDesignPackage } from "../lib/design-shop";
@@ -15,6 +16,8 @@ import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
 import { CartConflictModal } from "../components/CartConflictModal";
 import { detectPackageOverlap } from "../lib/orderConflict";
+import { SERVICES, resolveServiceSlug } from "../lib/data";
+import { WebConfigurator } from "../components/WebConfigurator";
 
 /* ------------------------------------------------------------------
    DESIGN SERVICE PAGE (PRD §5/§10/§11/§16/§25/§48) — hybrid commerce:
@@ -376,11 +379,25 @@ export function Configurator({ s, onAdd, onOrder }: {
             {qty > 1 && <div className="flex justify-between"><dt className="text-[var(--muted)]">× {qty} design{qty === 1 ? "" : "s"}</dt><dd></dd></div>}
           </dl>
           <div className="flex justify-between items-baseline border-t border-[var(--line-strong)] mt-4 pt-4">
-            <span className="font-meta text-[10px]">{line.isQuote ? "PRICED PER PROJECT" : "TOTAL"}</span>
-            <span className="font-display-wide text-3xl font-bold">{line.isQuote ? "Quote" : money(line.lineTotal)}</span>
+            <span className="font-meta text-[10px]">{line.isQuote ? "PRICED PER PROJECT" : isBookConsultation(s) ? "STARTING FROM" : "TOTAL"}</span>
+            <span className="font-display-wide text-3xl font-bold">{line.isQuote ? "Quote" : money(isBookConsultation(s) ? s.price : line.lineTotal)}</span>
           </div>
 
-          {line.isQuote ? (
+          {isBookConsultation(s) ? (
+            /* Journey C — book a consultation */
+            <div className="mt-6">
+              <a
+                href={s.bookingUrl ?? `/start?intent=consultation&service=${encodeURIComponent(s.name)}`}
+                {...(s.bookingUrl ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                className="btn btn-dept w-full justify-center"
+                onClick={() => track("booking_cta_click", { service: s.slug, via: "service-page" })}
+              >
+                Book a consultation <span className="btn-arrow" aria-hidden>→</span>
+              </a>
+              <p className="font-meta text-[9px] text-[var(--muted)] mt-3 text-center">Schedule a call with the creative team — we'll scope the project together.</p>
+              <TalkToUs serviceName={s.name} className="mt-4 justify-center" />
+            </div>
+          ) : line.isQuote ? (
             /* Journey B — conversation-driven */
             <div className="mt-6">
               <Link
@@ -419,15 +436,24 @@ export function Configurator({ s, onAdd, onOrder }: {
         </div>
       </div>
 
-      {/* mobile sticky order bar (journey A) / quote bar (journey B) */}
+      {/* mobile sticky order bar — journey A / quote bar — journey B / booking bar — journey C */}
       <div className="fixed bottom-0 inset-x-0 z-40 lg:hidden border-t border-[var(--line-strong)] px-5 py-3.5 flex items-center justify-between gap-3" style={{ background: "var(--bg)" }}>
         <span>
           <span className="block font-meta text-[8px] text-[var(--muted)] truncate max-w-[200px]">
             {line.variantLabel ?? (line.tier ? `${line.tier.name} tier` : s.name)}
           </span>
-          <span className="font-display-wide text-lg font-bold">{line.isQuote ? "Custom quote" : money(line.lineTotal)}</span>
+          <span className="font-display-wide text-lg font-bold">{isBookConsultation(s) ? priceLabel(s) : line.isQuote ? "Custom quote" : money(line.lineTotal)}</span>
         </span>
-        {line.isQuote ? (
+        {isBookConsultation(s) ? (
+          <a
+            href={s.bookingUrl ?? `/start?intent=consultation&service=${encodeURIComponent(s.name)}`}
+            {...(s.bookingUrl ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+            className="btn btn-dept !py-2.5 font-meta text-[10px]"
+            onClick={() => track("booking_cta_click", { service: s.slug, via: "sticky" })}
+          >
+            Book Consultation →
+          </a>
+        ) : line.isQuote ? (
           <Link
             to={`/start?intent=quote&service=${encodeURIComponent(s.name)}`}
             className="btn btn-dept !py-2.5 font-meta text-[10px]"
@@ -455,26 +481,50 @@ export default function DesignServicePage() {
   const money = useMoney();
   const { slug } = useParams();
   const navigate = useNavigate();
-  useDepartment("brand");
   const { services, categories, sizes, options } = useDesignCatalog();
   const pkg = useDesignPackage();
   const { add: addToShop } = useShop();
-  const s = services.find((x) => x.slug === slug);
+  const resolvedSlug = slug ? resolveServiceSlug(slug) : "";
+  const s = services.find((x) =>
+    x.slug === slug ||
+    x.slug === resolvedSlug ||
+    x.slug === `${slug}-project` ||
+    (slug?.endsWith("-project") && x.slug === slug.replace(/-project$/, ""))
+  );
+
+  const [webConfigOpen, setWebConfigOpen] = useState(false);
+  const matchingWebPkg = useMemo(() => {
+    if (!s || s.dept !== "web") return null;
+    return SERVICES.find((p) => p.dept === "web" && (p.slug === s.slug || `${p.slug}-project` === s.slug)) ?? null;
+  }, [s]);
+
+  // Apply dept theming when the service carries a dept (agency services)
+  useDepartment(s?.dept ?? "brand");
 
   useSEO({
-    title: s ? `${s.name} — ${priceLabel(s, money)} | Social Kon10 Design Store` : "Design service — Social Kon10",
-    description: s?.short ?? "",
+    title: s
+      ? (s.seoTitle ?? `${s.name} — ${priceLabel(s, money)} | Social Kon10`)
+      : "Design service — Social Kon10",
+    description: s?.seoDescription ?? s?.short ?? "",
     path: s ? `/design-services/${s.slug}` : undefined,
     jsonLd: s && s.price > 0 ? ({
       "@context": "https://schema.org",
       "@type": "Product",
       name: s.name,
-      description: s.short,
+      description: s.seoDescription ?? s.short,
       offers: { "@type": "Offer", priceCurrency: "USD", price: s.price },
     } as object) : undefined,
   });
 
-  if (!s) return <Navigate to="/graphic-design-branding/design-store" replace />;
+  if (!s) {
+    if (slug?.includes("web") || slug?.includes("page") || slug?.includes("site") || slug?.includes("ecommerce")) {
+      return <Navigate to="/website-design-development" replace />;
+    }
+    if (slug?.includes("social") || slug?.includes("market") || slug?.includes("ad")) {
+      return <Navigate to="/social-media-marketing" replace />;
+    }
+    return <Navigate to="/packages" replace />;
+  }
 
   const recommended = s.recommended
     .map((r) => services.find((x) => x.slug === r))
@@ -552,11 +602,23 @@ export default function DesignServicePage() {
       <section className="wrap pt-14 md:pt-20 pb-12">
         <Reveal>
           <div className="flex flex-wrap justify-between gap-3 font-meta text-[10px] text-[var(--muted)]">
-            <span><Link to="/graphic-design-branding/design-store" className="u-line">← /design-store</Link></span>
+            <span>
+              <Link
+                to={s.dept === "web" ? "/website-design-development" : s.dept === "social" ? "/social-media-marketing" : "/graphic-design-branding/design-store"}
+                className="u-line"
+              >
+                {s.dept === "web" ? "← /website-design-development" : s.dept === "social" ? "← /social-media-marketing" : "← /design-store"}
+              </Link>
+            </span>
             <span className="idx">/{categories.find((c) => c.slug === s.category)?.name ?? s.category}</span>
           </div>
         </Reveal>
         <h1 className="display-section mt-6 max-w-[16ch]">{s.name}</h1>
+        {s.tagline && (
+          <Reveal delay={100}>
+            <p className="mt-2 text-[var(--dept)] font-display-wide font-bold text-lg">{s.tagline}</p>
+          </Reveal>
+        )}
         <Reveal delay={160}>
           <p className="mt-4 max-w-xl text-[var(--muted)]">{s.short}</p>
         </Reveal>
@@ -564,9 +626,49 @@ export default function DesignServicePage() {
           <div className="mt-5 flex flex-wrap gap-5 font-meta text-[10px] text-[var(--muted)]">
             <span className="dept-accent">{priceLabel(s, money)}</span>
             <span>Turnaround {s.turnaround}</span>
-            <span>{s.revisions} revisions included</span>
+            {s.revisions > 0 && <span>{s.revisions} revisions included</span>}
+            {s.billing === "monthly" && <span className="dept-accent font-bold">/mo</span>}
           </div>
         </Reveal>
+        {s.deliverables && s.deliverables.length > 0 && (
+          <Reveal delay={280}>
+            <div className="mt-8 border-t border-[var(--line)] pt-6">
+              <span className="idx">/what-you-get</span>
+              <ul className="mt-4 grid sm:grid-cols-2 gap-x-8 gap-y-2">
+                {s.deliverables.map((d) => (
+                  <li key={d} className="flex items-start gap-2 text-sm">
+                    <span className="dept-accent mt-0.5 text-xs leading-5">✓</span>
+                    <span>{d}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </Reveal>
+        )}
+        {matchingWebPkg && (
+          <Reveal delay={320}>
+            <div className="mt-8 p-6 border border-[var(--dept)]/40 bg-[var(--dept-soft)] flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div>
+                <span className="font-meta text-[9px] uppercase tracking-wider text-[var(--dept)] font-bold">
+                  Interactive Scope Builder (Power Up)
+                </span>
+                <h4 className="font-display text-xl font-bold uppercase mt-1">
+                  Customize {s.name} With Add-Ons
+                </h4>
+                <p className="text-xs text-[var(--muted)] mt-1.5 max-w-xl leading-relaxed">
+                  Select additional pages, booking engines, WhatsApp automation, SEO growth packs, and analytics integrations with live pricing and deposit calculations.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWebConfigOpen(true)}
+                className="btn btn-dept !py-3 !px-6 whitespace-nowrap shrink-0 justify-center"
+              >
+                Open Web Configurator <span className="btn-arrow" aria-hidden>→</span>
+              </button>
+            </div>
+          </Reveal>
+        )}
       </section>
 
       <section className="wrap rule-t pt-12 pb-20" aria-label="Configure">
@@ -609,6 +711,9 @@ export default function DesignServicePage() {
         onAddAnyway={conflictModal.action}
         packageUrl="/custom-package"
       />
+      {webConfigOpen && matchingWebPkg && (
+        <WebConfigurator pkg={matchingWebPkg} onClose={() => setWebConfigOpen(false)} />
+      )}
     </>
   );
 }

@@ -1,12 +1,14 @@
 import { useEffect, useState, lazy, Suspense } from "react";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "./lib/theme";
 import { ShopProvider } from "./lib/shop";
 import { AuthProvider } from "./lib/auth";
 import { ContentProvider } from "./lib/content";
 import { DesignCatalogProvider, DesignPackageProvider } from "./lib/design-shop";
+import { WebsiteAddonsCatalogProvider } from "./lib/website-addons-provider";
 import { TemplateCatalogProvider } from "./lib/templates";
+import { AgencyServicesProvider } from "./lib/agency-services-provider";
 import { trackPageView } from "./lib/analytics";
 import { SiteHeader } from "./components/header";
 import { SiteFooter } from "./components/footer";
@@ -23,7 +25,18 @@ import { ConsentBanner } from "./components/ConsentBanner";
 import Home from "./pages/Home";
 import DepartmentPage from "./pages/Department";
 import Work from "./pages/Work";
-import ServicePage from "./pages/Service";
+import { resolveServiceSlug } from "./lib/data";
+import { cleanStorageIfNeeded } from "./lib/storage";
+
+// Immediately ensure storage quota health before providers initialize
+cleanStorageIfNeeded();
+
+/** Redirect /services/:slug → /design-services/:resolvedSlug (preserves external links + SEO) */
+function ServiceRedirect() {
+  const { slug } = useParams<{ slug: string }>();
+  const resolved = slug ? resolveServiceSlug(slug) : "";
+  return <Navigate to={`/design-services/${resolved}`} replace />;
+}
 import Packages from "./pages/Packages";
 import Start from "./pages/Start";
 import About from "./pages/About";
@@ -142,7 +155,7 @@ function Shell() {
               <Route path="/editor/:slug" element={<Editor />} />
               <Route path="/social-media-marketing" element={<DepartmentPage deptId="social" />} />
               <Route path="/website-design-development" element={<DepartmentPage deptId="web" />} />
-              <Route path="/services/:slug" element={<ServicePage />} />
+              <Route path="/services/:slug" element={<ServiceRedirect />} />
               <Route path="/work" element={<Work />} />
               <Route path="/work/:slug" element={<ProjectPage />} />
               <Route path="/packages" element={<Packages />} />
@@ -186,16 +199,20 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <ContentProvider>
-          <ShopProvider>
-            <DesignCatalogProvider>
-              <DesignPackageProvider>
-                <TemplateCatalogProvider>
-                  <ScrollAndTrack />
-                  <Shell />
-                </TemplateCatalogProvider>
-              </DesignPackageProvider>
-            </DesignCatalogProvider>
-          </ShopProvider>
+          <AgencyServicesProvider>
+            <ShopProvider>
+              <DesignCatalogProvider>
+                <DesignPackageProvider>
+                  <WebsiteAddonsCatalogProvider>
+                    <TemplateCatalogProvider>
+                      <ScrollAndTrack />
+                      <Shell />
+                    </TemplateCatalogProvider>
+                  </WebsiteAddonsCatalogProvider>
+                </DesignPackageProvider>
+              </DesignCatalogProvider>
+            </ShopProvider>
+          </AgencyServicesProvider>
         </ContentProvider>
       </AuthProvider>
     </ThemeProvider>

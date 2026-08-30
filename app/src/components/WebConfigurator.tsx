@@ -26,6 +26,7 @@ import {
   type WebAddon,
   type WebPackageId,
 } from "../lib/website-addons";
+import { useWebsiteAddonsCatalog } from "../lib/website-addons-provider";
 
 const inputBtn = "font-meta text-[10px] px-3 py-2 border border-[var(--line)] hover:border-[var(--dept)] transition-colors";
 
@@ -63,6 +64,7 @@ export function WebConfigurator({ pkg, onClose }: WebConfiguratorProps) {
   const pkgId = pkg.id as WebPackageId;
   const dialogRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
+  const { defaultCategories, advancedCategories, allAddons } = useWebsiteAddonsCatalog();
 
   /* selections persist for the session per package (PRD: no data loss on close) */
   const storeKey = `sk-web-config-${pkgId}`;
@@ -70,7 +72,7 @@ export function WebConfigurator({ pkg, onClose }: WebConfiguratorProps) {
     try { return JSON.parse(sessionStorage.getItem(storeKey) || "{}"); } catch { return {}; }
   });
   const [care, setCare] = useState(() => sessionStorage.getItem(`${storeKey}-care`) === "1");
-  const [cat, setCat] = useState(DEFAULT_CATEGORIES[0].id);
+  const [cat, setCat] = useState(() => defaultCategories[0]?.id || DEFAULT_CATEGORIES[0].id);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => { try { sessionStorage.setItem(storeKey, JSON.stringify(sel)); } catch { /* best-effort */ } }, [sel, storeKey]);
@@ -87,18 +89,20 @@ export function WebConfigurator({ pkg, onClose }: WebConfiguratorProps) {
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const priced = useMemo(() => priceConfiguration(sel), [sel]);
+  const priced = useMemo(() => priceConfiguration(sel, allAddons), [sel, allAddons]);
   const carePlan = serviceBySlug("website-care-plan");
   const careMonthly = care && carePlan ? carePlan.price : 0;
   const projectTotal = pkg.price + priced.oneTime;
   const monthlyTotal = priced.monthly + careMonthly;
   const selectionCount = Object.keys(sel).length;
 
-  const categories = showAdvanced ? [...DEFAULT_CATEGORIES, ...ADVANCED_CATEGORIES] : DEFAULT_CATEGORIES;
+  const currentDefaultCats = defaultCategories.length > 0 ? defaultCategories : DEFAULT_CATEGORIES;
+  const currentAdvCats = advancedCategories.length > 0 ? advancedCategories : ADVANCED_CATEGORIES;
+  const categories = showAdvanced ? [...currentDefaultCats, ...currentAdvCats] : currentDefaultCats;
   const activeCat = categories.find((c) => c.id === cat) ?? categories[0];
 
   const onToggle = (a: WebAddon) => {
-    const { next, notes } = toggleAddon(sel, a);
+    const { next, notes } = toggleAddon(sel, a, allAddons);
     const turningOn = !sel[a.id];
     setSel(next);
     notes.forEach((n) => toast.info(n));

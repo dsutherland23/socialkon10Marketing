@@ -76,7 +76,7 @@ export interface ServiceTier {
   revisions?: number;        // overrides included revisions when set
 }
 
-export type PurchaseMode = "DIRECT_PURCHASE" | "QUOTE_ONLY";
+export type PurchaseMode = "DIRECT_PURCHASE" | "QUOTE_ONLY" | "BOOK_CONSULTATION";
 
 export interface DesignService {
   slug: string;
@@ -86,6 +86,7 @@ export interface DesignService {
   price: number;             // USD base; 0 with custom_quote = quote only
   pricingType: PricingType;
   purchaseMode?: PurchaseMode; // explicit override; defaults derived from pricingType/price
+  bookingUrl?: string;       // external booking link for BOOK_CONSULTATION mode (cal.com, Calendly, etc.)
   tiers?: ServiceTier[];     // optional productized packages for this service
   variations?: ServiceVariationGroup[]; // first-class design variations with individual pricing
   minQty: number;
@@ -101,6 +102,13 @@ export interface DesignService {
   popular?: boolean;
   packageEligible?: boolean; // allow_custom_package
   active?: boolean;
+  // Agency / project-service enrichment fields (merged from ServiceProduct)
+  dept?: "brand" | "social" | "web"; // department for theming and filtering
+  tagline?: string;                   // sub-headline shown on the service page
+  deliverables?: string[];            // bullet list of what the client receives
+  billing?: "one_time" | "monthly";   // one_time (default) or recurring monthly
+  seoTitle?: string;                  // custom <title> tag; falls back to generated
+  seoDescription?: string;            // custom meta description; falls back to short
 }
 
 /** A service is quote-only when explicitly flagged, priced as custom_quote, or has no price. */
@@ -108,6 +116,12 @@ export function isQuoteOnly(s: Pick<DesignService, "purchaseMode" | "pricingType
   if (s.purchaseMode) return s.purchaseMode === "QUOTE_ONLY";
   return s.pricingType === "custom_quote" || s.price <= 0;
 }
+
+/** A service requires booking a consultation when explicitly flagged as BOOK_CONSULTATION. */
+export function isBookConsultation(s: Pick<DesignService, "purchaseMode">): boolean {
+  return s.purchaseMode === "BOOK_CONSULTATION";
+}
+
 
 export interface DesignPackage {
   slug: string;
@@ -477,6 +491,247 @@ export const DESIGN_SERVICES: DesignService[] = [
     ] }),
   svc({ slug: "church-flyer", name: "Church / Community Flyer", category: "specialty", price: 55, short: "Services, revivals and community events.", sizes: [...printSizes(), ...digitalSizes()] }),
   svc({ slug: "graduation-design", name: "Graduation Design", category: "specialty", price: 65, short: "Announcements and celebration graphics.", sizes: [...printSizes(), ...digitalSizes()] }),
+
+  /* ── Agency / project services (migrated from ServiceProduct — PRD §consolidation) ── */
+  svc({ slug: "logo-design-project", name: "Logo Design (Agency Project)", category: "branding",
+    dept: "brand", price: 750, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "7–10 days", revisions: 2, sizes: [], optionIds: [], recommended: ["brand-identity-project", "social-branding-kit"],
+    featured: true, packageEligible: false, billing: "one_time",
+    tagline: "A mark that carries your business.",
+    short: "3 initial concepts, 2 revision rounds and final vector + web files — a logo built to work everywhere your customers meet you.",
+    deliverables: ["3 initial concepts", "2 revision rounds", "Primary logo", "Alternate logo", "Icon / mark", "Digital files", "Print-ready vector files"],
+    seoTitle: "Logo Design Jamaica — Social Kon10 Marketing",
+    seoDescription: "Professional logo design from $750. 3 concepts, 2 revision rounds, final vector and web files. Kingston, Jamaica creative agency.",
+  }),
+  svc({ slug: "brand-identity-project", name: "Complete Brand Identity", category: "branding",
+    dept: "brand", price: 2500, pricingType: "fixed", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "3–4 weeks", revisions: 3, sizes: [], optionIds: [], recommended: ["logo-design-project", "social-branding-kit", "brand-style-guide"],
+    featured: true, packageEligible: false, billing: "one_time",
+    tagline: "A full visual system, not just a logo.",
+    short: "Primary and secondary logos, brand color palette, typography guidelines, a brand style guide and business card design — everything your brand needs to stay consistent.",
+    deliverables: ["Primary + secondary logos", "Brand color palette", "Typography system", "Brand elements + patterns", "Social media assets", "Stationery + business card design", "Brand guidelines book"],
+    seoTitle: "Brand Identity Package Jamaica — Social Kon10",
+    seoDescription: "Complete brand identity package from $2,500. Logo system, palette, typography, guidelines and stationery.",
+  }),
+  svc({ slug: "event-branding-project", name: "Event Creative (Agency)", category: "events",
+    dept: "brand", price: 750, pricingType: "starting_at", purchaseMode: "QUOTE_ONLY",
+    turnaround: "1–2 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["event-flyer", "event-poster"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Design that connects and converts.",
+    short: "Professional event branding and design — from first-time launches to festivals, concert tours and premium productions.",
+    deliverables: ["Brand concept + colour palette", "Flyer / poster artwork", "Social media pack", "Ticket graphic", "Step-and-repeat artwork"],
+  }),
+  svc({ slug: "print-digital-collateral", name: "Print + Digital Collateral", category: "business",
+    dept: "brand", price: 0, pricingType: "custom_quote", purchaseMode: "QUOTE_ONLY",
+    turnaround: "Scoped per project", revisions: 2, sizes: [], optionIds: [], recommended: ["business-card", "brochure"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Every brand touchpoint, unified.",
+    short: "Business cards, letterheads, brochures, signage and digital assets — a full collateral suite that keeps your brand consistent everywhere.",
+    deliverables: ["Business card design", "Letterhead", "Envelope", "Brochure / capability statement", "Email signature", "Digital assets"],
+  }),
+  svc({ slug: "brand-strategy-project", name: "Brand Strategy", category: "branding",
+    dept: "brand", price: 0, pricingType: "custom_quote", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "2–4 weeks", revisions: 0, sizes: [], optionIds: [], recommended: ["brand-identity-project", "logo-design-project"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Clarity before creativity.",
+    short: "Brand positioning, audience definition, messaging framework and competitive differentiation — the strategic foundation everything else is built on.",
+    deliverables: ["Brand positioning statement", "Target audience personas", "Core messaging framework", "Competitive landscape analysis", "Brand voice + tone guidelines", "Strategy presentation deck"],
+  }),
+  svc({ slug: "social-media-management", name: "Social Media Management", category: "social-media",
+    dept: "social", price: 1200, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 2, sizes: [], optionIds: [], recommended: ["paid-social-advertising", "social-content-bundle"],
+    popular: true, featured: true, packageEligible: false, billing: "monthly",
+    tagline: "Consistency builds brands. We do the consistent part.",
+    short: "Full social media management — content calendar, creative production, scheduling, community management and monthly reporting across your channels.",
+    deliverables: ["Monthly content calendar", "12–16 posts per month", "Caption + hashtag copywriting", "Story + Reel creation", "Community management", "Monthly analytics report"],
+    seoTitle: "Social Media Management Jamaica — Social Kon10",
+    seoDescription: "Managed social media from $1,200/mo. Content creation, scheduling and community management.",
+  }),
+  svc({ slug: "social-content-bundle", name: "Social Media Design Bundle", category: "social-media",
+    dept: "social", price: 800, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "5–7 days", revisions: 2, sizes: [], optionIds: [], recommended: ["social-media-post-design", "social-branding-kit"],
+    packageEligible: false, billing: "one_time",
+    tagline: "A month of content, ready to post.",
+    short: "30 social media template designs tailored to your brand — posts, stories and covers across every major platform.",
+    deliverables: ["20 post templates", "8 story templates", "2 cover templates", "Canva or PSD source files", "Brand-colour locked assets"],
+  }),
+  svc({ slug: "paid-social-advertising", name: "Paid Social Advertising", category: "advertising",
+    dept: "social", price: 1500, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 2, sizes: [], optionIds: [], recommended: ["social-media-management", "facebook-ad"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Ad spend that actually returns.",
+    short: "Full-service paid social advertising — campaign strategy, creative production, audience targeting, A/B testing and performance reporting on Meta and TikTok.",
+    deliverables: ["Campaign strategy", "Ad creative production", "Audience targeting setup", "A/B testing", "Weekly spend + performance report"],
+  }),
+  svc({ slug: "landing-page-project", name: "Landing Page / One-Page Website", category: "specialty",
+    dept: "web", price: 1500, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "7–10 days", revisions: 2, sizes: [], optionIds: [], recommended: ["business-website-project", "facebook-ad"],
+    packageEligible: false, billing: "one_time",
+    tagline: "One page, one goal, one result.",
+    short: "A high-converting single-page website built to capture leads, sell a product or promote an event — mobile-first, SEO-ready and live in under 2 weeks.",
+    deliverables: ["Custom design + development", "Mobile-optimised responsive layout", "Lead capture form", "Basic on-page SEO", "Speed optimisation", "Domain + hosting setup guidance"],
+  }),
+  svc({ slug: "business-website-project", name: "Standard Business Website", category: "specialty",
+    dept: "web", price: 3500, pricingType: "fixed", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "3–4 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["ecommerce-website-project", "social-media-management"],
+    featured: true, packageEligible: false, billing: "one_time",
+    tagline: "Your website should work as hard as you do.",
+    short: "A professionally designed, fast and mobile-first business website — up to 6 custom pages, SEO-optimised, integrated contact forms and CMS.",
+    deliverables: ["Up to 6 custom pages", "Mobile-first responsive design", "On-page SEO setup", "Contact + enquiry forms", "Basic CMS (edit your own content)", "Google Analytics integration", "90-day post-launch support"],
+    seoTitle: "Business Website Design Jamaica — Social Kon10",
+    seoDescription: "Professional business website from $3,500. Up to 6 pages, mobile-first, SEO-ready. Kingston, Jamaica web design agency.",
+  }),
+  svc({ slug: "ecommerce-website-project", name: "E-Commerce Website", category: "specialty",
+    dept: "web", price: 5500, pricingType: "fixed", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "5–6 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["business-website-project", "paid-social-advertising"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Sell online. Professionally.",
+    short: "A fully-featured e-commerce store — product catalogue (up to 20 products), secure checkout, customer accounts, order management and automated email receipts.",
+    deliverables: ["Product catalog (up to 20 products)", "Checkout + payment integration", "Customer accounts", "Order management + inventory", "Automated email receipts", "Mobile optimisation"],
+  }),
+  svc({ slug: "website-care-plan", name: "Website Care Plan", category: "specialty",
+    dept: "web", price: 200, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 0, sizes: [], optionIds: [], recommended: ["business-website-project"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Your site, looked after.",
+    short: "Monthly website maintenance — security updates, plugin management, backups, uptime monitoring and priority support so your site stays fast and secure.",
+    deliverables: ["Security + plugin updates", "Daily automated backups", "Uptime monitoring", "Monthly performance report", "Priority support (4h response)"],
+  }),
+  /* ── SEO Services ── */
+  svc({ slug: "seo-local", name: "Local SEO Management", category: "specialty",
+    dept: "web", price: 450, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 0, sizes: [], optionIds: [], recommended: ["seo-technical-audit", "analytics-visitor-intelligence"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Get found locally. Stay found permanently.",
+    short: "Local SEO optimization — Google Business Profile, citation building, local keyword targeting and monthly reporting to dominate your market area.",
+    deliverables: ["Google Business Profile optimization", "Local citation building", "Local keyword research + targeting", "On-page local SEO", "Monthly ranking report", "Competitor gap analysis"],
+    seoTitle: "Local SEO Management Jamaica — Social Kon10",
+    seoDescription: "Local SEO management from $450/mo. Google Business Profile, citations, local keywords and monthly ranking reports.",
+  }),
+  svc({ slug: "seo-technical-audit", name: "Technical SEO Audit", category: "specialty",
+    dept: "web", price: 750, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "5–7 business days", revisions: 1, sizes: [], optionIds: [], recommended: ["seo-local", "seo-on-page"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Fix what Google can't ignore.",
+    short: "Comprehensive technical SEO audit — site speed, crawlability, indexing, structured data, mobile performance and Core Web Vitals — with a prioritized action plan.",
+    deliverables: ["Full site crawl report", "Core Web Vitals analysis", "Crawlability + indexation audit", "Structured data review", "Mobile performance review", "Priority action plan"],
+  }),
+  svc({ slug: "seo-on-page", name: "On-Page SEO Optimization", category: "specialty",
+    dept: "web", price: 350, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "3–5 business days", revisions: 1, sizes: [], optionIds: [], recommended: ["seo-technical-audit", "seo-local"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Every page optimized to earn its ranking.",
+    short: "Keyword mapping, title tags, meta descriptions, header structure, internal linking and content optimization — up to 10 pages, fully documented.",
+    deliverables: ["Keyword mapping (up to 10 pages)", "Title tags + meta descriptions", "Header structure optimization", "Internal linking audit", "Content optimization recommendations", "Optimization report"],
+  }),
+
+  /* ── Paid Advertising & Email ── */
+  svc({ slug: "google-ads-management", name: "Google Ads Management", category: "advertising",
+    dept: "social", price: 750, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 0, sizes: [], optionIds: [], recommended: ["paid-social-advertising", "analytics-visitor-intelligence"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Every click accountable. Every dollar tracked.",
+    short: "Full Google Ads management — campaign strategy, keyword research, ad copywriting, bid optimization, A/B testing and weekly performance reports. Ad spend billed separately.",
+    deliverables: ["Campaign strategy + structure", "Keyword research + negative keywords", "Ad copy + extensions", "Bid management + optimization", "A/B testing", "Weekly performance reports"],
+    seoTitle: "Google Ads Management Jamaica — Social Kon10",
+    seoDescription: "Google Ads management from $750/mo. Campaign strategy, keywords, copy and weekly reporting. Ad spend billed separately.",
+  }),
+  svc({ slug: "email-marketing-campaigns", name: "Email Marketing Campaigns", category: "specialty",
+    dept: "social", price: 650, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 2, sizes: [], optionIds: [], recommended: ["email-automation-setup", "social-media-management"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Email that earns opens — and revenue.",
+    short: "Monthly email campaigns — strategy, list segmentation, copywriting, branded design, A/B testing and performance reporting. Platform subscription billed separately.",
+    deliverables: ["Email strategy + calendar", "List segmentation", "Copywriting + branded design", "A/B testing (subject lines + CTAs)", "Send + delivery management", "Monthly performance report"],
+  }),
+  svc({ slug: "email-automation-setup", name: "Email Automation Setup", category: "specialty",
+    dept: "social", price: 1200, pricingType: "starting_at", purchaseMode: "QUOTE_ONLY",
+    turnaround: "2–3 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["email-marketing-campaigns"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Revenue while you sleep.",
+    short: "Automated email sequences — welcome series, lead nurture, abandoned cart, re-engagement and promotional flows — fully designed, written and configured in your platform.",
+    deliverables: ["Flow strategy + mapping", "Copy + design for each email", "Platform setup + configuration", "Trigger + segmentation logic", "Testing + QA", "Handover + documentation"],
+  }),
+
+  /* ── Video & Motion ── */
+  svc({ slug: "video-production", name: "Video Production", category: "specialty",
+    dept: "brand", price: 1500, pricingType: "starting_at", purchaseMode: "QUOTE_ONLY",
+    turnaround: "2–3 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["motion-graphics", "social-media-management"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Stories that stay.",
+    short: "Professional video production — brand films, product showcases, testimonial reels and social content. Scripting, production and post-production included.",
+    deliverables: ["Creative brief + script", "Storyboard", "Shoot direction", "Professional editing", "Color grading + audio mix", "Final delivery (web + social formats)"],
+  }),
+  svc({ slug: "motion-graphics", name: "Motion Graphics & Animation", category: "specialty",
+    dept: "brand", price: 350, pricingType: "starting_at", purchaseMode: "QUOTE_ONLY",
+    turnaround: "5–7 business days", revisions: 2, sizes: [], optionIds: [], recommended: ["video-production", "social-media-management"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Move people. Literally.",
+    short: "Custom motion graphics — animated logos, social reels, explainer videos, lower-thirds and short-form video ads engineered for scroll-stopping impact.",
+    deliverables: ["Concept + storyboard", "Animation production", "Sound design (optional)", "Delivery in web + social formats"],
+  }),
+
+  /* ── AI & Technology ── */
+  svc({ slug: "ai-website-assistant", name: "AI Website Assistant", category: "specialty",
+    dept: "web", price: 1500, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "2–3 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["ai-workflow-automation", "business-website-project"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Your website, always on. Always helpful.",
+    short: "An AI-powered website assistant trained on your business — handles FAQs, qualifies leads, routes inquiries and books appointments. Integrated directly into your site.",
+    deliverables: ["AI assistant strategy", "Training on business content", "Website integration", "Lead capture configuration", "Conversation flow design", "Analytics setup", "30-day optimization support"],
+  }),
+  svc({ slug: "ai-workflow-automation", name: "AI Workflow Automation", category: "specialty",
+    dept: "web", price: 2500, pricingType: "starting_at", purchaseMode: "QUOTE_ONLY",
+    turnaround: "3–4 weeks", revisions: 2, sizes: [], optionIds: [], recommended: ["ai-website-assistant"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Automate the work, own the results.",
+    short: "Custom AI-powered workflows — automated lead follow-up, CRM enrichment, reporting, content generation and business process automation using n8n, Zapier or custom APIs.",
+    deliverables: ["Workflow audit + strategy", "Automation design + mapping", "Platform setup + integrations", "Testing + QA", "Documentation + handover", "2-week post-launch support"],
+  }),
+  svc({ slug: "web-application", name: "Custom Web Application", category: "specialty",
+    dept: "web", price: 5000, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "8–16 weeks", revisions: 3, sizes: [], optionIds: [], recommended: ["business-website-project"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Purpose-built technology for your business.",
+    short: "Custom web applications — client portals, booking platforms, inventory systems, SaaS MVPs and business-specific tools built to specification, deployed and supported.",
+    deliverables: ["Discovery + specification", "UI/UX design", "Front-end + back-end development", "Database design", "Testing + QA", "Deployment + hosting setup", "Documentation + training"],
+    seoTitle: "Custom Web Application Development Jamaica — Social Kon10",
+    seoDescription: "Custom web application development from $5,000. Portals, booking platforms, SaaS MVPs and business tools.",
+  }),
+
+  /* ── Content & Marketing ── */
+  svc({ slug: "content-marketing", name: "Content Marketing", category: "specialty",
+    dept: "social", price: 800, pricingType: "starting_at", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Ongoing", revisions: 2, sizes: [], optionIds: [], recommended: ["seo-on-page", "social-media-management"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Content that ranks. Content that converts.",
+    short: "Monthly content marketing — blog articles, thought leadership pieces, landing page copy and content strategy designed to drive organic traffic and build authority.",
+    deliverables: ["Monthly content calendar", "4–8 SEO blog articles", "Topic research + keyword targeting", "On-page SEO per article", "Internal linking", "Performance tracking"],
+  }),
+  svc({ slug: "consulting-hourly", name: "Strategy Consulting", category: "specialty",
+    dept: "brand", price: 150, pricingType: "fixed", purchaseMode: "BOOK_CONSULTATION",
+    turnaround: "Flexible", revisions: 0, sizes: [], optionIds: [], recommended: ["brand-strategy-project"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Focused strategy. Measurable direction.",
+    short: "One-on-one strategy sessions — brand positioning, digital marketing audits, website strategy, campaign planning or any focused challenge. Billed per hour.",
+    deliverables: ["Pre-session brief", "90-minute strategy session", "Session notes + key recommendations", "Action plan document", "30-day email follow-up support"],
+  }),
+  svc({ slug: "reputation-management", name: "Reputation Management", category: "specialty",
+    dept: "social", price: 350, pricingType: "starting_at", purchaseMode: "QUOTE_ONLY",
+    turnaround: "Ongoing", revisions: 0, sizes: [], optionIds: [], recommended: ["social-media-management", "seo-local"],
+    packageEligible: false, billing: "monthly",
+    tagline: "Control your narrative. Protect your brand.",
+    short: "Online reputation monitoring and management — review generation, negative review response, Google Business Profile management and brand sentiment reporting.",
+    deliverables: ["Review monitoring setup", "Review generation strategy", "Response templates + management", "Google Business Profile management", "Monthly sentiment report"],
+  }),
+  svc({ slug: "analytics-visitor-intelligence", name: "Analytics & Visitor Intelligence", category: "specialty",
+    dept: "web", price: 300, pricingType: "fixed", purchaseMode: "QUOTE_ONLY",
+    turnaround: "5–7 business days", revisions: 1, sizes: [], optionIds: [], recommended: ["seo-local", "business-website-project"],
+    packageEligible: false, billing: "one_time",
+    tagline: "Know exactly who visits — and what they want.",
+    short: "Full analytics setup and visitor intelligence — GA4, heatmaps, session recording, conversion tracking, funnel analysis and a custom dashboard to understand every visitor action.",
+    deliverables: ["GA4 configuration", "Heatmap + session recording setup", "Conversion goal tracking", "Traffic source analysis", "Custom dashboard", "Insights report + recommendations"],
+  }),
 ];
 
 /* ---------------- package discounts (PRD §20) ---------------- */

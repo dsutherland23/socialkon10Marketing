@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { DEPARTMENTS, EVENT_TIERS, SOCIAL_TIERS, formatMoney, type DeptId } from "../lib/data";
+import { DEPARTMENTS, EVENT_TIERS, SOCIAL_TIERS, CARE_PLAN_TIERS, PREMIUM_BUNDLES, formatMoney, type DeptId, type ServiceProduct } from "../lib/data";
 import { useContent } from "../lib/content";
 import { useDepartment } from "../lib/dept";
 import { useShop } from "../lib/shop";
@@ -9,6 +9,7 @@ import { trackPricingView } from "../lib/analytics";
 import { Reveal } from "../lib/motion";
 import { FinalCta, SectionHead, ServiceCard } from "../components/blocks";
 import { DeliverablesPopover } from "../components/DeliverablesPopover";
+import { WebConfigurator } from "../components/WebConfigurator";
 
 /* ------------------------------------------------------------------
    PACKAGES + BUILD-YOUR-PACKAGE CONFIGURATOR (PRD §27, §35)
@@ -198,9 +199,108 @@ function Bundle() {
     </div>
   );
 }
+function PremiumBundles() {
+  return (
+    <section className="py-20 md:py-28">
+      <SectionHead
+        idx="/bundles"
+        title="Premium bundles."
+        sub="Complete solutions, scoped and priced. Each bundle saves you compared to booking services individually."
+      />
+      <div className="mt-12 grid md:grid-cols-2 xl:grid-cols-3 gap-px" style={{ background: "var(--line)" }}>
+        {PREMIUM_BUNDLES.map((bundle, i) => (
+          <Reveal key={bundle.id} delay={i * 60} className="h-full">
+            <div
+              className="relative flex flex-col h-full p-6 md:p-8"
+              style={{ background: bundle.popular ? "var(--ink)" : "var(--bg)", color: bundle.popular ? "var(--bg)" : "inherit" }}
+            >
+              {bundle.badge && (
+                <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">{bundle.badge}</span>
+              )}
+              <span className="font-meta text-[9px] text-[var(--muted)] mt-4">BUNDLE</span>
+              <h3 className="font-display text-xl font-bold uppercase mt-2">{bundle.name}</h3>
+              <p className="text-[12px] mt-2 opacity-70 flex-initial">{bundle.tagline}</p>
+              <div className="mt-6">
+                {bundle.priceType === "consultation" ? (
+                  <span className="font-display-wide text-3xl font-bold">Custom</span>
+                ) : (
+                  <>
+                    <span className="font-meta text-[9px] opacity-60">Starting at</span>
+                    <div className="font-display-wide text-3xl font-bold">{formatMoney(bundle.price)}</div>
+                  </>
+                )}
+                {bundle.savings && bundle.savings > 0 && (
+                  <span className="font-meta text-[9px] mt-1 block" style={{ color: bundle.popular ? "rgba(255,255,255,0.6)" : "var(--muted)" }}>
+                    Save {formatMoney(bundle.savings)} vs. individual pricing
+                  </span>
+                )}
+              </div>
+              <ul className="mt-6 flex flex-col gap-1.5 text-[12.5px] flex-1">
+                {bundle.deliverables.map((d) => (
+                  <li key={d} className="flex gap-2">
+                    <span className="dept-accent" aria-hidden>✓</span>
+                    {d}
+                  </li>
+                ))}
+              </ul>
+              <a
+                href="/start?intent=quote"
+                className={`btn mt-8 justify-center ${bundle.popular ? "btn-dept" : "btn-ghost"}`}
+              >
+                Book a consultation
+              </a>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+      <p className="text-center font-meta text-[10px] text-[var(--muted)] mt-6">
+        All bundle prices are starting prices. Custom scope sessions available.
+      </p>
+    </section>
+  );
+}
+
+function WebCarePlanTiers() {
+  return (
+    <div className="mt-12">
+      <p className="font-meta text-[10px] text-[var(--muted)] mb-4">WEBSITE CARE PLANS — MONTHLY MAINTENANCE</p>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
+        {CARE_PLAN_TIERS.map((t, i) => (
+          <Reveal key={t.id} delay={i * 60} className="h-full">
+            <div
+              className="relative flex flex-col h-full p-5 md:p-6"
+              style={{ background: t.popular ? "var(--ink)" : "var(--panel)", color: t.popular ? "var(--bg)" : "inherit" }}
+            >
+              {t.popular && <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">Most popular</span>}
+              <span className="font-meta text-[9px] text-[var(--muted)] mt-4">CARE PLAN</span>
+              <h4 className="font-display text-lg font-bold uppercase mt-1">{t.name}</h4>
+              <p className="text-[11px] mt-1 opacity-70">{t.blurb}</p>
+              <p className="font-display-wide text-3xl font-bold mt-4">{formatMoney(t.price)}<span className="text-sm font-normal opacity-60">{t.period}</span></p>
+              <ul className="mt-5 flex flex-col gap-1.5 text-[11.5px] flex-1">
+                {t.features.map((f) => (
+                  <li key={f.label} className="flex justify-between gap-2">
+                    <span className="opacity-70">{f.label}</span>
+                    <span className="font-medium text-right">{f.value}</span>
+                  </li>
+                ))}
+              </ul>
+              <a
+                href="/start?intent=quote"
+                className={`btn btn-sm mt-6 justify-center ${t.popular ? "btn-dept" : "btn-ghost"}`}
+              >
+                Get started
+              </a>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Packages() {
   const [tab, setTab] = useState<DeptId>("brand");
+  const [configFor, setConfigFor] = useState<ServiceProduct | null>(null);
   useDepartment(tab);
   const { currency, add } = useShop();
   const { services: allServices } = useContent();
@@ -282,7 +382,7 @@ export default function Packages() {
                     </div>
                   </div>
                   <div className="mt-6 flex items-center justify-between gap-2 pt-4 border-t border-[var(--line)]">
-                    <Link to="/services/event-branding" className="font-meta text-[10px] dept-accent u-line">Details →</Link>
+                    <Link to="/design-services/event-branding-project" className="font-meta text-[10px] dept-accent u-line">Details →</Link>
                     <button
                       className={`btn !py-1.5 !px-3 font-meta text-[10px] ${t.popular ? "btn-dept" : "btn-ghost"}`}
                       onClick={() =>
@@ -328,18 +428,50 @@ export default function Packages() {
                     </div>
                   </div>
                   <div className="mt-6 pt-4 border-t border-[var(--line)]">
-                    <Link to="/services/social-media-management" className="font-meta text-[10px] dept-accent inline-block u-line">Configure retainer →</Link>
+                    <Link to="/design-services/social-media-management" className="font-meta text-[10px] dept-accent inline-block u-line">Configure retainer →</Link>
                   </div>
                 </div>
               ))}
             </div>
           </div>
         )}
+        {tab === "web" && (
+          <>
+            <div className="mt-12 p-6 md:p-8 border border-[var(--dept)]/40 bg-[var(--dept-soft)] flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div>
+                <span className="font-meta text-[9px] uppercase tracking-wider text-[var(--dept)] font-bold">
+                  Interactive Scope & Add-On Estimator (Power Up)
+                </span>
+                <h3 className="font-display text-2xl font-bold uppercase mt-1">
+                  Customize Your Website Package
+                </h3>
+                <p className="text-xs text-[var(--muted)] mt-1.5 max-w-xl leading-relaxed">
+                  Choose a base build (Landing Page, Business Site, or E-Commerce), configure Power Up add-ons (extra pages, WhatsApp automation, SEO growth, booking engines), and calculate your exact live kickoff deposit.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2.5 shrink-0">
+                {services.filter((s) => s.billing !== "monthly").map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setConfigFor(s)}
+                    className="btn btn-dept !py-2.5 !px-4 text-xs font-bold whitespace-nowrap"
+                  >
+                    Configure {s.name.split("/")[0]} <span className="btn-arrow" aria-hidden>→</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <WebCarePlanTiers />
+          </>
+        )}
 
         <div className="mt-24 grid lg:grid-cols-2 gap-8 items-start">
           <Builder />
           <Bundle />
         </div>
+
+        <PremiumBundles />
       </section>
 
       {/* bridge: managed packages → one-off design store (PRD §5 flow) */}
@@ -359,6 +491,10 @@ export default function Packages() {
         </div>
       </section>
       <FinalCta />
+
+      {configFor && (
+        <WebConfigurator pkg={configFor} onClose={() => setConfigFor(null)} />
+      )}
     </>
   );
 }

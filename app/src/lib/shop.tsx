@@ -4,6 +4,7 @@ import { PROMO_CODES, serviceBySlug, type CurrencyCode, type ServiceProduct } fr
 import { useContent } from "./content";
 import { refreshRates, fxStatus } from "./rates";
 import { track } from "./seo";
+import { safeStorage } from "./storage";
 
 export interface CartItem {
   key: string;              // unique line key
@@ -69,9 +70,9 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   // shipped defaults + admin-managed codes (PRD §34/§85)
   const allPromos = useMemo(() => ({ ...PROMO_CODES, ...managedPromos }), [managedPromos]);
   const [items, setItems] = useState<CartItem[]>(() => {
-    try { return JSON.parse(localStorage.getItem(CART_KEY) || "[]"); } catch { return []; }
+    return safeStorage.getJSON<CartItem[]>(CART_KEY, []);
   });
-  const [currency, setCurrency] = useState<CurrencyCode>(() => (localStorage.getItem(CUR_KEY) as CurrencyCode) || guessCurrency());
+  const [currency, setCurrency] = useState<CurrencyCode>(() => (safeStorage.getItem(CUR_KEY) as CurrencyCode) || guessCurrency());
   const [promo, setPromo] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ pct: number; expiresAt: number } | null>(() => {
     // survives page reloads — the 2-minute clock keeps running (PRD: session-scoped)
@@ -81,11 +82,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } catch { return null; }
   });
 
-  useEffect(() => { localStorage.setItem(CART_KEY, JSON.stringify(items)); }, [items]);
-  useEffect(() => { localStorage.setItem(CUR_KEY, currency); }, [currency]);
+  useEffect(() => { safeStorage.setJSON(CART_KEY, items); }, [items]);
+  useEffect(() => { safeStorage.setItem(CUR_KEY, currency); }, [currency]);
   useEffect(() => {
-    if (flash) sessionStorage.setItem("sk-flash", JSON.stringify(flash));
-    else sessionStorage.removeItem("sk-flash");
+    try {
+      if (flash) sessionStorage.setItem("sk-flash", JSON.stringify(flash));
+      else sessionStorage.removeItem("sk-flash");
+    } catch { /* session storage safety */ }
   }, [flash]);
 
   // Live FX: refresh on boot, re-render consumers if converted prices moved

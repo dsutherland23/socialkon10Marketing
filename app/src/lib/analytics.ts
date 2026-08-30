@@ -19,9 +19,9 @@
 
 import {
   addDoc, collection, doc, setDoc, serverTimestamp, getDocs,
-  query, orderBy, limit as fsLimit, where, getCountFromServer,
+  query, orderBy, limit as fsLimit, where,
 } from "firebase/firestore";
-import { db, firebaseReady } from "./firebase";
+import { auth, db, firebaseReady, ADMIN_EMAILS } from "./firebase";
 import { idbGet, idbSet } from "./backend";
 
 /* ─── Types ──────────────────────────────────────────────────────── */
@@ -1152,16 +1152,53 @@ export function getSessionAttribution(): AttributionData {
 
 /* ─── Dashboard Query Helpers (Hybrid Firestore + IndexedDB) ─────── */
 
+let firestoreAnalyticsBlocked = false;
+
+if (auth) {
+  auth.onAuthStateChanged((user) => {
+    if (user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) {
+      firestoreAnalyticsBlocked = false;
+    } else {
+      firestoreAnalyticsBlocked = true;
+    }
+  });
+}
+
+/** Check if current client has active admin session to query Firestore analytics without 403 Forbidden */
+function canQueryFirestoreAnalytics(): boolean {
+  if (!firebaseReady || !db || firestoreAnalyticsBlocked) return false;
+  const user = auth?.currentUser;
+  if (!user || !user.email) return false;
+  return ADMIN_EMAILS.includes(user.email.toLowerCase());
+}
+
+function handleFirestoreAnalyticsError(err: unknown) {
+  const msg = String(err);
+  if (
+    msg.includes("permission-denied") ||
+    msg.includes("403") ||
+    msg.includes("insufficient permissions") ||
+    msg.includes("Missing or insufficient permissions")
+  ) {
+    firestoreAnalyticsBlocked = true;
+  }
+}
+
 export async function getSessionCount(days = 30): Promise<number> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
-      const snap = await getCountFromServer(
-        query(collection(db, "analytics_sessions"), where("started_at", ">=", since))
+      const snap = await getDocs(
+        query(
+          collection(db!, "analytics_sessions"),
+          where("started_at", ">=", since),
+          fsLimit(1000)
+        )
       );
-      const count = snap.data().count;
-      if (count > 0) return count;
-    } catch { /* fallback */ }
+      if (!snap.empty) return snap.size;
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   const local = await getLocalSessions();
   return local.filter((s) => s.started_at >= since).length;
@@ -1169,11 +1206,11 @@ export async function getSessionCount(days = 30): Promise<number> {
 
 export async function getActiveLiveVisitors(withinMinutes = 15): Promise<SessionData[]> {
   const since = new Date(Date.now() - withinMinutes * 60_000).toISOString();
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_sessions"),
+          collection(db!, "analytics_sessions"),
           where("last_active", ">=", since),
           orderBy("last_active", "desc"),
           fsLimit(50)
@@ -1182,7 +1219,9 @@ export async function getActiveLiveVisitors(withinMinutes = 15): Promise<Session
       if (!snap.empty) {
         return snap.docs.map((d) => ({ ...d.data() } as SessionData));
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   const local = await getLocalSessions();
   return local
@@ -1193,11 +1232,11 @@ export async function getActiveLiveVisitors(withinMinutes = 15): Promise<Session
 
 export async function getTopPages(days = 30, topN = 10): Promise<{ path: string; views: number }[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_page_views"),
+          collection(db!, "analytics_page_views"),
           where("created_at", ">=", since),
           orderBy("created_at", "desc"),
           fsLimit(500)
@@ -1214,7 +1253,9 @@ export async function getTopPages(days = 30, topN = 10): Promise<{ path: string;
           .slice(0, topN)
           .map(([path, views]) => ({ path, views }));
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   try {
     const local = (await idbGet<PageViewRecord[]>(IDB_PAGE_VIEWS_KEY)) || [];
@@ -1233,11 +1274,11 @@ export async function getTopPages(days = 30, topN = 10): Promise<{ path: string;
 
 export async function getTrafficSources(days = 30): Promise<{ source: string; sessions: number }[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_sessions"),
+          collection(db!, "analytics_sessions"),
           where("started_at", ">=", since),
           orderBy("started_at", "desc"),
           fsLimit(500)
@@ -1253,7 +1294,9 @@ export async function getTrafficSources(days = 30): Promise<{ source: string; se
           .sort((a, b) => b[1] - a[1])
           .map(([source, sessions]) => ({ source, sessions }));
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   const local = await getLocalSessions();
   const counts = new Map<string, number>();
@@ -1270,11 +1313,11 @@ export async function getTrafficSources(days = 30): Promise<{ source: string; se
 
 export async function getServiceInterestRanking(days = 30): Promise<{ service_name: string; service_slug: string; views: number }[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_service_interest"),
+          collection(db!, "analytics_service_interest"),
           where("created_at", ">=", since),
           orderBy("created_at", "desc"),
           fsLimit(500)
@@ -1292,7 +1335,9 @@ export async function getServiceInterestRanking(days = 30): Promise<{ service_na
           .sort((a, b) => b[1].views - a[1].views)
           .map(([service_slug, v]) => ({ service_slug, ...v }));
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   try {
     const local = (await idbGet<ServiceInterestRecord[]>(IDB_SERVICE_INTEREST_KEY)) || [];
@@ -1314,27 +1359,25 @@ export async function getFunnelCounts(days = 30): Promise<Record<string, number>
   const funnelEvents = ["page_view", "service_view", "pricing_view", "cta_click", "form_start", "form_submit", "lead_submit", "checkout_start", "checkout_complete"];
   const results: Record<string, number> = {};
 
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
-      await Promise.all(
-        funnelEvents.map(async (ev) => {
-          try {
-            const snap = await getCountFromServer(
-              query(
-                collection(db!, "analytics_events"),
-                where("event_name", "==", ev),
-                where("created_at", ">=", since)
-              )
-            );
-            results[ev] = snap.data().count;
-          } catch {
-            results[ev] = 0;
-          }
-        })
+      const snap = await getDocs(
+        query(
+          collection(db!, "analytics_events"),
+          where("created_at", ">=", since),
+          fsLimit(1000)
+        )
       );
-      const totalCount = Object.values(results).reduce((a, b) => a + b, 0);
-      if (totalCount > 0) return results;
-    } catch { /* fallback */ }
+      if (!snap.empty) {
+        funnelEvents.forEach((ev) => {
+          results[ev] = snap.docs.filter((d) => d.data().event_name === ev).length;
+        });
+        const totalCount = Object.values(results).reduce((a, b) => a + b, 0);
+        if (totalCount > 0) return results;
+      }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
 
   try {
@@ -1347,11 +1390,11 @@ export async function getFunnelCounts(days = 30): Promise<Record<string, number>
 }
 
 export async function getRecentSessions(limitN = 25): Promise<SessionData[]> {
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_sessions"),
+          collection(db!, "analytics_sessions"),
           orderBy("last_active", "desc"),
           fsLimit(limitN)
         )
@@ -1359,7 +1402,9 @@ export async function getRecentSessions(limitN = 25): Promise<SessionData[]> {
       if (!snap.empty) {
         return snap.docs.map((d) => ({ ...d.data() } as SessionData));
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   const local = await getLocalSessions();
   return local
@@ -1369,11 +1414,11 @@ export async function getRecentSessions(limitN = 25): Promise<SessionData[]> {
 
 export async function getCampaignPerformance(days = 30): Promise<{ campaign: string; source: string; medium: string; sessions: number }[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_sessions"),
+          collection(db!, "analytics_sessions"),
           where("started_at", ">=", since),
           where("utm_campaign", "!=", null),
           orderBy("utm_campaign"),
@@ -1393,7 +1438,9 @@ export async function getCampaignPerformance(days = 30): Promise<{ campaign: str
         });
         return [...counts.values()].sort((a, b) => b.sessions - a.sessions);
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   const local = await getLocalSessions();
   const counts = new Map<string, { campaign: string; source: string; medium: string; sessions: number }>();
@@ -1411,11 +1458,11 @@ export async function getCampaignPerformance(days = 30): Promise<{ campaign: str
 }
 
 export async function getSessionEvents(sessionId: string): Promise<AnalyticsEvent[]> {
-  if (firebaseReady && db) {
+  if (canQueryFirestoreAnalytics()) {
     try {
       const snap = await getDocs(
         query(
-          collection(db, "analytics_events"),
+          collection(db!, "analytics_events"),
           where("session_id", "==", sessionId),
           orderBy("created_at", "asc"),
           fsLimit(100)
@@ -1424,7 +1471,9 @@ export async function getSessionEvents(sessionId: string): Promise<AnalyticsEven
       if (!snap.empty) {
         return snap.docs.map((d) => ({ ...d.data() } as AnalyticsEvent));
       }
-    } catch { /* fallback */ }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
   }
   try {
     const localEvents = (await idbGet<AnalyticsEvent[]>(IDB_EVENTS_KEY)) || [];

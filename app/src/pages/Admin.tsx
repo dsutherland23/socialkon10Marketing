@@ -6451,7 +6451,7 @@ const ADMIN_SECTIONS = [
     id: "studio",
     label: "Studio & Catalog",
     icon: "🎨",
-    tabs: ["Design", "Templates", "Products", "Portfolio", "Analytics"] as const,
+    tabs: ["Design", "Templates", "Portfolio", "Analytics"] as const,
   },
   {
     id: "cms",
@@ -6461,7 +6461,7 @@ const ADMIN_SECTIONS = [
   },
 ] as const;
 
-const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Intakes", "Analytics", "Products", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
+const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Intakes", "Analytics", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
 
 const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
 const labelCls2 = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
@@ -6805,7 +6805,6 @@ export default function Admin() {
           {tab === "Communications" && <AdminCommunications />}
           {tab === "Leads" && <Leads />}
           {tab === "Intakes" && <IntakesManager />}
-          {tab === "Products" && <Products />}
           {tab === "Portfolio" && <PortfolioManager />}
           {tab === "Promos" && (
             <>

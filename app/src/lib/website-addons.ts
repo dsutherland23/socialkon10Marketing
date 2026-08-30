@@ -41,6 +41,7 @@ const ECOM: WebPackageId[] = ["SK-WEB-03"];
 
 export const UPGRADE_MESSAGE = "This feature is available with a Standard Business Website or higher.";
 
+/** All website add-on categories — seed data. Admin overrides are merged at runtime via WebsiteAddonsCatalogProvider. */
 export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
   {
     id: "website_expansion", name: "Website Expansion", icon: "layers",
@@ -157,6 +158,25 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
       { id: "security_pro", name: "Security PRO", desc: "Security hardening, bot protection, spam protection and monitoring setup.", categoryId: "security", price: 200, billing: "one_time", eligible: ALL3 },
     ],
   },
+  {
+    id: "maintenance_support", name: "Maintenance & Support", icon: "wrench", advanced: true,
+    desc: "Ongoing maintenance, bug fixes and priority support beyond the base care plan.",
+    addons: [
+      { id: "monthly_content_updates", name: "Monthly Content Updates", desc: "Regular text, image and content updates handled for you each month.", categoryId: "maintenance_support", price: 150, priceSuffix: " / hr", billing: "monthly" as const, eligible: ["SK-WEB-02", "SK-WEB-03", "SK-WEB-04"] as WebPackageId[], popular: true },
+      { id: "priority_bug_fixes", name: "Priority Bug Fixing", desc: "Fast-response bug investigation and resolution with documented fixes.", categoryId: "maintenance_support", price: 100, priceSuffix: " / hr", billing: "one_time" as const, eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03", "SK-WEB-04"] as WebPackageId[] },
+      { id: "emergency_support", name: "Emergency Support", desc: "Same-day emergency response for critical website issues.", categoryId: "maintenance_support", price: 200, pricePrefix: "from" as const, billing: "one_time" as const, eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03", "SK-WEB-04"] as WebPackageId[] },
+      { id: "third_party_integrations", name: "Third-Party Integration", desc: "Connect and configure third-party tools, services and APIs.", categoryId: "maintenance_support", price: 250, pricePrefix: "from" as const, billing: "one_time" as const, eligible: ["SK-WEB-02", "SK-WEB-03"] as WebPackageId[] },
+    ],
+  },
+  {
+    id: "marketing_intelligence", name: "Marketing Intelligence", icon: "eye", advanced: true,
+    desc: "Deeper visitor insight tools to understand behavior and improve conversions.",
+    addons: [
+      { id: "heatmap_session_recording", name: "Heatmap & Session Recording", desc: "Install and configure heatmap and session recording tools to see exactly how visitors interact.", categoryId: "marketing_intelligence", price: 150, billing: "one_time" as const, eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03"] as WebPackageId[], popular: true },
+      { id: "ab_testing_setup", name: "A/B Testing Setup", desc: "Configure split-testing experiments on key pages and CTAs.", categoryId: "marketing_intelligence", price: 300, pricePrefix: "from" as const, billing: "one_time" as const, eligible: ["SK-WEB-02", "SK-WEB-03"] as WebPackageId[] },
+      { id: "visitor_intelligence_dashboard", name: "Visitor Intelligence Dashboard", desc: "Custom reporting dashboard combining analytics, heatmaps, conversions and traffic sources.", categoryId: "marketing_intelligence", price: 400, billing: "one_time" as const, eligible: ["SK-WEB-02", "SK-WEB-03"] as WebPackageId[], requires: ["analytics_setup"] },
+    ],
+  },
 ];
 
 /* ---------------- lookups ---------------- */
@@ -190,14 +210,16 @@ export interface ToggleResult {
  * - selecting an add-on with requirements auto-adds its dependencies (with a note)
  * - removing a dependency also removes its dependents (with a note)
  */
-export function toggleAddon(sel: AddonSelection, addon: WebAddon): ToggleResult {
+export function toggleAddon(sel: AddonSelection, addon: WebAddon, customAddons?: WebAddon[]): ToggleResult {
+  const pool = customAddons || ALL_WEB_ADDONS;
+  const findAddon = (id: string) => pool.find((a) => a.id === id) || addonById(id);
   const notes: string[] = [];
   const next: AddonSelection = { ...sel };
 
   if (next[addon.id]) {
     // turning OFF — cascade to dependents
     delete next[addon.id];
-    for (const other of ALL_WEB_ADDONS) {
+    for (const other of pool) {
       if (next[other.id] && other.requires?.includes(addon.id)) {
         delete next[other.id];
         notes.push(`${other.name} was removed — it requires ${addon.name}.`);
@@ -209,7 +231,7 @@ export function toggleAddon(sel: AddonSelection, addon: WebAddon): ToggleResult 
   // turning ON — resolve conflicts first
   for (const conflictId of addon.conflicts ?? []) {
     if (next[conflictId]) {
-      const c = addonById(conflictId);
+      const c = findAddon(conflictId);
       delete next[conflictId];
       if (c) notes.push(`${c.name} was replaced — these features overlap, so ${addon.name} takes its place.`);
     }
@@ -219,7 +241,7 @@ export function toggleAddon(sel: AddonSelection, addon: WebAddon): ToggleResult 
   // auto-add dependencies
   for (const reqId of addon.requires ?? []) {
     if (!next[reqId]) {
-      const req = addonById(reqId);
+      const req = findAddon(reqId);
       if (req) {
         next[reqId] = 1;
         notes.push(`${req.name} was added — ${addon.name} requires it.`);
@@ -248,11 +270,13 @@ export interface ConfigurationPrice {
 }
 
 /** Price a selection. One-time and monthly are NEVER merged (PRD §addon_rules). */
-export function priceConfiguration(sel: AddonSelection): ConfigurationPrice {
+export function priceConfiguration(sel: AddonSelection, customAddons?: WebAddon[]): ConfigurationPrice {
+  const pool = customAddons || ALL_WEB_ADDONS;
+  const findAddon = (id: string) => pool.find((a) => a.id === id) || addonById(id);
   const oneTimeLines: PricedLine[] = [];
   const monthlyLines: PricedLine[] = [];
   for (const [id, qty] of Object.entries(sel)) {
-    const addon = addonById(id);
+    const addon = findAddon(id);
     if (!addon) continue;
     const line = { addon, qty, lineTotal: addon.price * qty };
     (addon.billing === "monthly" ? monthlyLines : oneTimeLines).push(line);

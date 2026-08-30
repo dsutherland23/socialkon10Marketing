@@ -399,6 +399,8 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
               Services <Chevron open={servicesOpen} />
             </button>
 
+            <NavLink to="/packages" className={navCls}>Packages & Pricing</NavLink>
+
             <NavLink to="/work" className={navCls}>Work</NavLink>
 
             {/* Store & Products Mega Dropdown */}
@@ -411,7 +413,7 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
               onMouseEnter={() => openIntent("store")}
               onMouseLeave={closeIntent}
             >
-              Store <Chevron open={storeOpen} />
+              Studio Store <Chevron open={storeOpen} />
             </button>
 
             <div className="relative">
@@ -505,51 +507,10 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
       {mobileOpen && (
         <div className="xl:hidden fixed inset-0 top-[67px] z-40 overflow-y-auto rule-t" style={{ background: "var(--bg)" }}>
           <nav className="wrap py-8 flex flex-col gap-4" aria-label="Mobile">
-            {/* Store & Products Section */}
+            {/* Agency Solutions Section */}
             <div className="pb-4 border-b border-[var(--line)]">
               <span className="font-meta text-[10px] text-[var(--dept)] uppercase tracking-wider font-bold block mb-2">
-                Store & Purchasing
-              </span>
-              <div className="flex flex-col gap-1">
-                <Link
-                  to="/templates"
-                  onClick={() => setMobileOpen(false)}
-                  className="py-2.5 flex items-center justify-between font-display text-xl font-bold uppercase hover:text-cyan-400 transition-colors"
-                >
-                  <span className="flex items-center gap-2"><span>🎨</span> Templates & Editor</span>
-                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold">Live Editor</span>
-                </Link>
-                <Link
-                  to="/packages"
-                  onClick={() => setMobileOpen(false)}
-                  className="py-2.5 flex items-center justify-between font-display text-xl font-bold uppercase hover:text-amber-400 transition-colors"
-                >
-                  <span className="flex items-center gap-2"><span>📦</span> Design Packages</span>
-                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold">Save 30%</span>
-                </Link>
-                <Link
-                  to="/graphic-design-branding/design-store"
-                  onClick={() => setMobileOpen(false)}
-                  className="py-2.5 flex items-center justify-between font-display text-xl font-bold uppercase hover:text-emerald-400 transition-colors"
-                >
-                  <span className="flex items-center gap-2"><span>🏷️</span> Design Services Store</span>
-                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">60+ Services</span>
-                </Link>
-                <Link
-                  to="/custom-package"
-                  onClick={() => setMobileOpen(false)}
-                  className="py-2.5 flex items-center justify-between font-display text-xl font-bold uppercase hover:text-purple-400 transition-colors"
-                >
-                  <span className="flex items-center gap-2"><span>🛠️</span> Build a Package</span>
-                  <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold">Discounts</span>
-                </Link>
-              </div>
-            </div>
-
-            {/* Department Services Section */}
-            <div className="pb-4 border-b border-[var(--line)]">
-              <span className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider font-bold block mb-2">
-                Agency Services
+                Agency Solutions
               </span>
               {DEPARTMENTS.map((d) => (
                 <button
@@ -567,10 +528,62 @@ export function SiteHeader({ onOpenCommand }: { onOpenCommand: () => void }) {
               ))}
             </div>
 
+            {/* Packages & Pricing + Work */}
+            <div className="pb-4 border-b border-[var(--line)] flex flex-col gap-1">
+              <Link
+                to="/packages"
+                onClick={() => setMobileOpen(false)}
+                className="py-2.5 flex items-center justify-between font-display text-xl font-bold uppercase hover:text-[var(--dept)] transition-colors"
+              >
+                <span>Packages & Pricing</span>
+                <span className="font-meta text-[8.5px] px-2 py-0.5 rounded-full bg-[var(--dept-soft)] text-[var(--dept)] font-bold">Transparent Rates</span>
+              </Link>
+              <Link
+                to="/work"
+                onClick={() => setMobileOpen(false)}
+                className="py-2.5 font-display text-xl font-bold uppercase text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+              >
+                Selected Work
+              </Link>
+            </div>
+
+            {/* Studio Store & Digital Products Section */}
+            <div className="pb-4 border-b border-[var(--line)]">
+              <span className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider font-bold block mb-2">
+                Studio Store & Digital Products
+              </span>
+              <div className="flex flex-col gap-1">
+                <Link
+                  to="/templates"
+                  onClick={() => setMobileOpen(false)}
+                  className="py-2 flex items-center justify-between font-display text-base font-bold uppercase hover:text-cyan-400 transition-colors"
+                >
+                  <span className="flex items-center gap-2"><span>🎨</span> Templates & Live Editor</span>
+                  <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold">Instant</span>
+                </Link>
+                <Link
+                  to="/graphic-design-branding/design-store"
+                  onClick={() => setMobileOpen(false)}
+                  className="py-2 flex items-center justify-between font-display text-base font-bold uppercase hover:text-emerald-400 transition-colors"
+                >
+                  <span className="flex items-center gap-2"><span>🏷️</span> 60+ À La Carte Design Services</span>
+                  <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Catalog</span>
+                </Link>
+                <Link
+                  to="/custom-package"
+                  onClick={() => setMobileOpen(false)}
+                  className="py-2 flex items-center justify-between font-display text-base font-bold uppercase hover:text-purple-400 transition-colors"
+                >
+                  <span className="flex items-center gap-2"><span>🛠️</span> Custom Package Builder</span>
+                  <span className="font-meta text-[8px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold">Discounts</span>
+                </Link>
+              </div>
+            </div>
+
             {/* General Navigation */}
             <div className="flex flex-col gap-1">
-              {[["/work", "Work"], ["/about", "About"], ["/insights", "Insights"], ["/client", "Client portal"]].map(([to, label]) => (
-                <Link key={to} to={to} onClick={() => setMobileOpen(false)} className="py-2.5 font-display text-lg font-bold uppercase text-[var(--muted)] hover:text-[var(--text)] transition-colors">
+              {[["/about", "About"], ["/insights", "Insights"], ["/client", "Client portal"]].map(([to, label]) => (
+                <Link key={to} to={to} onClick={() => setMobileOpen(false)} className="py-2 font-display text-base font-bold uppercase text-[var(--muted)] hover:text-[var(--text)] transition-colors">
                   {label}
                 </Link>
               ))}

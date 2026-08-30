@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { safeStorage } from "./storage";
 
 type Theme = "light" | "dark" | "system";
 const KEY = "sk-theme";
@@ -16,7 +17,7 @@ function resolve(t: Theme): "light" | "dark" {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem(KEY) as Theme | null;
+    const stored = safeStorage.getItem(KEY) as Theme | null;
     if (stored) return stored;
     const param = new URLSearchParams(window.location.search).get("theme");
     return param === "light" || param === "dark" ? param : "system";
@@ -36,7 +37,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   const setTheme = (t: Theme) => {
-    localStorage.setItem(KEY, t);
+    safeStorage.setItem(KEY, t);
     setThemeState(t);
   };
 

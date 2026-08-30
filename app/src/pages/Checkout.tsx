@@ -245,14 +245,32 @@ export default function Checkout() {
     }
   };
 
+  const handleSingleSaveForLater = (type: "agency" | "pkg", item: any) => {
+    const newSaved = {
+      id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      type,
+      item,
+      date: new Date().toLocaleDateString(),
+    };
+    setSavedItems((prev) => [...prev, newSaved]);
+    if (type === "agency") {
+      remove(item.key);
+    } else {
+      pkg.remove(item.key);
+    }
+    setSelectedKeys((prev) => prev.filter((k) => k !== item.key));
+    setShowSavedShelf(true);
+    toast.success(`Moved "${type === "agency" ? item.name : item.service.name}" to Saved for Later`);
+  };
+
   const handleBatchSaveForLater = () => {
     if (selectedKeys.length === 0) return;
     const toSaveAgency = items.filter((i) => selectedKeys.includes(i.key));
     const toSavePkg = pkg.lines.filter((l) => selectedKeys.includes(l.key));
 
     const newSaved = [
-      ...toSaveAgency.map((i) => ({ id: `saved-${Date.now()}-${Math.random()}`, type: "agency" as const, item: i, date: new Date().toLocaleDateString() })),
-      ...toSavePkg.map((l) => ({ id: `saved-${Date.now()}-${Math.random()}`, type: "pkg" as const, item: l, date: new Date().toLocaleDateString() })),
+      ...toSaveAgency.map((i) => ({ id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type: "agency" as const, item: i, date: new Date().toLocaleDateString() })),
+      ...toSavePkg.map((l) => ({ id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type: "pkg" as const, item: l, date: new Date().toLocaleDateString() })),
     ];
 
     setSavedItems((prev) => [...prev, ...newSaved]);
@@ -270,7 +288,16 @@ export default function Checkout() {
     if (saved.type === "agency") {
       add(saved.item);
     } else {
-      pkg.add(saved.item.service.slug, { tierId: saved.item.tier?.id, sizeId: saved.item.size?.id, optionIds: saved.item.options?.map((o: any) => o.id), qty: saved.item.qty });
+      if (saved.item.sel) {
+        pkg.add(saved.item.service.slug, saved.item.sel);
+      } else {
+        pkg.add(saved.item.service.slug, {
+          tierId: saved.item.tier?.id,
+          sizeId: saved.item.size?.id,
+          optionIds: saved.item.options?.map((o: any) => o.id),
+          qty: saved.item.qty,
+        });
+      }
     }
     setSavedItems((prev) => prev.filter((s) => s.id !== saved.id));
     toast.success("Item moved back to cart");
@@ -742,6 +769,14 @@ export default function Checkout() {
 
                             <div className="flex items-center gap-1.5">
                               <button
+                                onClick={() => handleSingleSaveForLater("agency", i)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
+                                title="Save for later"
+                                aria-label={`Save ${i.name} for later`}
+                              >
+                                <Bookmark className="w-3.5 h-3.5" />
+                              </button>
+                              <button
                                 onClick={() => handleDuplicate("agency", i)}
                                 className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
                                 title="Duplicate this line item"
@@ -828,6 +863,14 @@ export default function Checkout() {
 
                             <div className="flex items-center gap-1.5">
                               <button
+                                onClick={() => handleSingleSaveForLater("pkg", l)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
+                                title="Save for later"
+                                aria-label={`Save ${l.service.name} for later`}
+                              >
+                                <Bookmark className="w-3.5 h-3.5" />
+                              </button>
+                              <button
                                 onClick={() => handleDuplicate("pkg", l)}
                                 className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
                                 title="Duplicate this line item"
@@ -858,65 +901,6 @@ export default function Checkout() {
                   </div>
                 )}
 
-                {/* Saved for Later Shelf */}
-                {savedItems.length > 0 && (
-                  <div className="mt-8 pt-6 border-t border-[var(--line)]">
-                    <button
-                      type="button"
-                      onClick={() => setShowSavedShelf((prev) => !prev)}
-                      className="flex items-center justify-between w-full py-2 text-left font-meta text-[11px] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Bookmark className="w-3.5 h-3.5 text-[var(--dept)]" />
-                        <span className="font-bold uppercase tracking-wider text-[var(--ink)]">
-                          Saved for later ({savedItems.length})
-                        </span>
-                      </span>
-                      {showSavedShelf ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                    </button>
-
-                    {showSavedShelf && (
-                      <ul className="mt-3 space-y-2 animate-in fade-in duration-200">
-                        {savedItems.map((s) => {
-                          const name = s.type === "agency" ? s.item.name : s.item.service?.name || "Design Item";
-                          const price = s.type === "agency"
-                            ? (s.item.unitPrice + s.item.addons.reduce((a: number, b: any) => a + b.price, 0)) * (s.item.rush ? 1.25 : 1)
-                            : s.item.lineTotal;
-
-                          return (
-                            <li
-                              key={s.id}
-                              className="p-3.5 rounded-lg border border-[var(--line)] bg-[var(--bg)] flex items-center justify-between gap-4 text-xs"
-                            >
-                              <div>
-                                <span className="font-display font-bold uppercase">{name}</span>
-                                <span className="block font-meta text-[9px] text-[var(--muted)] mt-0.5">
-                                  Saved on {s.date} · {formatMoney(price, currency)}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleRestoreSaved(s)}
-                                  className="btn btn-dept !py-1 !px-2.5 text-[10px] font-meta"
-                                >
-                                  Move to Cart
-                                </button>
-                                <button
-                                  onClick={() => handleRemoveSaved(s.id)}
-                                  className="p-1 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400"
-                                  title="Delete saved item"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                )}
-
                 {/* promo */}
                 <div className="mt-8 flex flex-wrap items-center gap-3">
                   <label htmlFor="promo" className="font-meta text-[10px] text-[var(--muted)]">Promo code</label>
@@ -935,6 +919,70 @@ export default function Checkout() {
                   <button className="btn btn-fill" onClick={() => { setStep(1); track("checkout_start", { value: total }); trackCheckoutStart(total); }}>Your details <span className="btn-arrow" aria-hidden>→</span></button>
                 </div>
               </>
+            )}
+
+            {/* Saved for Later Shelf — always visible and accessible even when cart is empty */}
+            {savedItems.length > 0 && (
+              <div className="mt-8 pt-6 border-t border-[var(--line)]">
+                <button
+                  type="button"
+                  onClick={() => setShowSavedShelf((prev) => !prev)}
+                  className="flex items-center justify-between w-full py-2.5 px-3 rounded-lg bg-[var(--panel)] border border-[var(--line)] text-left font-meta text-[11px] text-[var(--muted)] hover:text-[var(--ink)] hover:border-[var(--dept)] transition-all"
+                >
+                  <span className="flex items-center gap-2">
+                    <Bookmark className="w-3.5 h-3.5 text-[var(--dept)]" />
+                    <span className="font-bold uppercase tracking-wider text-[var(--ink)]">
+                      Saved for later ({savedItems.length})
+                    </span>
+                    {!hasAnyItems && (
+                      <span className="font-meta text-[9px] px-2 py-0.5 rounded-full bg-[var(--dept-soft)] text-[var(--dept)] font-semibold">
+                        Ready to restore
+                      </span>
+                    )}
+                  </span>
+                  {showSavedShelf || !hasAnyItems ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {(showSavedShelf || !hasAnyItems) && (
+                  <ul className="mt-3 space-y-2 animate-in fade-in duration-200">
+                    {savedItems.map((s) => {
+                      const name = s.type === "agency" ? s.item.name : s.item.service?.name || "Design Item";
+                      const price = s.type === "agency"
+                        ? (s.item.unitPrice + s.item.addons.reduce((a: number, b: any) => a + b.price, 0)) * (s.item.rush ? 1.25 : 1)
+                        : s.item.lineTotal;
+
+                      return (
+                        <li
+                          key={s.id}
+                          className="p-3.5 rounded-lg border border-[var(--line)] bg-[var(--panel)] flex items-center justify-between gap-4 text-xs"
+                        >
+                          <div>
+                            <span className="font-display font-bold uppercase">{name}</span>
+                            <span className="block font-meta text-[9px] text-[var(--muted)] mt-0.5">
+                              Saved on {s.date} · {formatMoney(price, currency)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleRestoreSaved(s)}
+                              className="btn btn-dept !py-1 !px-2.5 text-[10px] font-meta"
+                            >
+                              Move to Cart
+                            </button>
+                            <button
+                              onClick={() => handleRemoveSaved(s.id)}
+                              className="p-1 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400"
+                              title="Delete saved item"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
             )}
           </div>
         )}

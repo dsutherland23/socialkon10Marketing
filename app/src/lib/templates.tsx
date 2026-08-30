@@ -5,6 +5,7 @@ import {
 } from "./backend";
 import { firebaseReady } from "./firebase";
 import { track } from "./seo";
+import { safeStorage } from "./storage";
 
 /* ------------------------------------------------------------------
    DESIGN TEMPLATES MARKETPLACE (Templates PRD)
@@ -526,9 +527,9 @@ const FAV_KEY = "sk-template-favorites";
 
 export function useTemplateFavorites() {
   const [favs, setFavs] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem(FAV_KEY) || "[]"); } catch { return []; }
+    return safeStorage.getJSON<string[]>(FAV_KEY, []);
   });
-  useEffect(() => { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); }, [favs]);
+  useEffect(() => { safeStorage.setJSON(FAV_KEY, favs); }, [favs]);
   const toggle = (slug: string) => {
     setFavs((xs) => {
       const next = xs.includes(slug) ? xs.filter((x) => x !== slug) : [...xs, slug];

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  DEPARTMENTS, EVENT_TIERS, SOCIAL_TIERS,
+  DEPARTMENTS, EVENT_TIERS, SOCIAL_TIERS, CARE_PLAN_TIERS,
   deptById, formatMoney, type DeptId, type ServiceProduct,
 } from "../lib/data";
 import { useContent } from "../lib/content";
@@ -77,7 +77,7 @@ function EventTiers() {
 function SocialTiers() {
   const { currency, add } = useShop();
   return (
-    <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
+    <div className="grid sm:grid-cols-2 xl:grid-cols-5 gap-px" style={{ background: "var(--line)" }}>
       {SOCIAL_TIERS.map((t, i) => (
         <Reveal key={t.id} delay={i * 60} className="h-full">
           <div
@@ -618,6 +618,110 @@ function BrandCatalog({ services }: { services: ServiceProduct[] }) {
   );
 }
 
+function WebCarePlanSection() {
+  return (
+    <div className="mt-20">
+      <SectionHead
+        index="/care-plans"
+        title={["Website", "care plans."]}
+        meta="Monthly maintenance retainers that keep your site fast, secure and updated — so you never have to think about it."
+      />
+      <div className="mt-8 grid sm:grid-cols-2 xl:grid-cols-4 gap-px" style={{ background: "var(--line)" }}>
+        {CARE_PLAN_TIERS.map((t, i) => (
+          <Reveal key={t.id} delay={i * 60} className="h-full">
+            <div
+              className="relative flex flex-col h-full p-5 md:p-6"
+              style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}
+            >
+              {t.popular && (
+                <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">Most popular</span>
+              )}
+              <span className="font-meta text-[9px] text-[var(--muted)] mt-4">CARE PLAN</span>
+              <h3 className="font-display text-lg font-bold uppercase mt-1">{t.name}</h3>
+              <p className="text-[11px] mt-1 opacity-70">{t.blurb}</p>
+              <p className="font-display-wide text-3xl font-bold mt-4">
+                {formatMoney(t.price)}
+                <span className="text-sm font-normal opacity-60">{t.period}</span>
+              </p>
+              <ul className="mt-5 flex flex-col gap-1.5 text-[11px] flex-1">
+                {t.features.map((f) => (
+                  <li key={f.label} className="flex justify-between gap-2 border-b border-[var(--line)] pb-1.5 last:border-0">
+                    <span className="opacity-70">{f.label}</span>
+                    <span className="font-medium">{f.value}</span>
+                  </li>
+                ))}
+              </ul>
+              <a
+                href="/start?intent=quote"
+                className={`btn mt-6 justify-center text-sm ${t.popular ? "btn-dept" : "btn-ghost"}`}
+              >
+                Get started
+              </a>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WebAiSection() {
+  const aiServices = [
+    {
+      slug: "ai-website-assistant",
+      title: "AI Website Assistant",
+      tagline: "Your website, always on. Always helpful.",
+      price: "From $1,500",
+      desc: "An AI assistant trained on your business — answers questions, qualifies leads, routes inquiries and books appointments.",
+    },
+    {
+      slug: "ai-workflow-automation",
+      title: "AI Workflow Automation",
+      tagline: "Automate the work, own the results.",
+      price: "From $2,500",
+      desc: "Automated lead follow-up, CRM enrichment, reporting and business process automation using n8n, Zapier or custom APIs.",
+    },
+    {
+      slug: "web-application",
+      title: "Custom Web Application",
+      tagline: "Purpose-built technology for your business.",
+      price: "From $5,000",
+      desc: "Client portals, booking platforms, inventory systems, SaaS MVPs and business-specific tools built to specification.",
+    },
+  ];
+
+  return (
+    <div className="mt-20">
+      <SectionHead
+        index="/ai-technology"
+        title={["AI +", "Technology."]}
+        meta="Intelligent features and custom-built technology that give your business a measurable competitive edge."
+      />
+      <div className="mt-8 grid md:grid-cols-3 gap-px" style={{ background: "var(--line)" }}>
+        {aiServices.map((svc, i) => (
+          <Reveal key={svc.slug} delay={i * 80} className="h-full">
+            <div className="flex flex-col h-full p-6 md:p-8" style={{ background: "var(--panel)" }}>
+              <span className="font-meta text-[9px] text-[var(--muted)]">AI + TECH</span>
+              <h3 className="font-display text-lg font-bold uppercase mt-2">{svc.title}</h3>
+              <p className="text-[11px] mt-1 dept-accent">{svc.tagline}</p>
+              <p className="text-[12.5px] mt-4 opacity-80 flex-1">{svc.desc}</p>
+              <div className="mt-6 flex items-center justify-between">
+                <span className="font-display-wide font-bold text-xl">{svc.price}</span>
+                <a
+                  href={`/design-services/${svc.slug}`}
+                  className="btn btn-ghost btn-sm"
+                >
+                  Learn more
+                </a>
+              </div>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const dept = DEPARTMENTS.find((d) => d.id === deptId);
   const { currency } = useShop();
   const { services: allServices, faqs: allFaqs, projects } = useContent();
@@ -720,7 +824,9 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
                 <Reveal key={s.id} delay={i * 60} className="h-full">
                   <div className="group flex flex-col h-full p-6 md:p-7 hover:bg-[var(--dept-soft)] transition-colors" style={{ background: "var(--bg)" }}>
                     <span className="font-meta text-[9px] text-[var(--muted)]">{s.billing === "monthly" ? "MONTHLY" : "PROJECT"} · {s.id}</span>
-                    <h3 className="font-display text-lg font-bold uppercase mt-3">{s.name}</h3>
+                    <Link to={`/services/${s.slug}`} className="hover:text-[var(--dept)] transition-colors">
+                      <h3 className="font-display text-lg font-bold uppercase mt-3">{s.name}</h3>
+                    </Link>
                     <span className="font-display-wide text-3xl font-bold mt-5">
                       {formatMoney(s.price, currency)}<span className="text-sm font-meta font-normal text-[var(--muted)]">{s.billing === "monthly" ? "/mo" : s.priceType === "starting" ? "+" : ""}</span>
                     </span>
@@ -729,15 +835,15 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
                       <span className="mt-6 flex flex-col gap-2">
                         <button type="button" onClick={() => { setConfigFor(s); track("package_selected", { package_id: s.id, package_name: s.name }); }}
                           className="btn btn-dept !py-2.5 justify-center w-full">
-                          Customize This Package <span className="btn-arrow" aria-hidden>→</span>
+                          Customize Scope (Power Up) <span className="btn-arrow" aria-hidden>→</span>
                         </button>
                         <Link to={`/services/${s.slug}`} className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors text-center underline underline-offset-4">
-                          View details
+                          View full project scope & deliverables →
                         </Link>
                       </span>
                     ) : (
-                      <Link to={`/services/${s.slug}`} className="font-meta text-[10px] dept-accent mt-6 transition-transform duration-200 group-hover:translate-x-1" aria-label={`Configure ${s.name}`}>
-                        CONFIGURE →
+                      <Link to={`/services/${s.slug}`} className="font-meta text-[10px] dept-accent mt-6 transition-transform duration-200 group-hover:translate-x-1 inline-flex items-center gap-1" aria-label={`Configure ${s.name}`}>
+                        VIEW CARE PLAN DETAILS →
                       </Link>
                     )}
                   </div>
@@ -746,6 +852,8 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
             </div>
           </div>
           </section>
+          {deptId === "web" && <WebCarePlanSection />}
+          {deptId === "web" && <WebAiSection />}
         </>
       )}
 

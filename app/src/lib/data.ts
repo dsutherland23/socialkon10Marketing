@@ -38,6 +38,26 @@ export interface ServiceProduct {
   seoDescription: string;
 }
 
+/** Maps ServiceProduct slugs to their corresponding DesignService agency project slugs */
+export const SERVICE_PROJECT_SLUG_MAP: Record<string, string> = {
+  "landing-page": "landing-page-project",
+  "business-website": "business-website-project",
+  "ecommerce-website": "ecommerce-website-project",
+  "website-care-plan": "website-care-plan",
+  "logo-design": "logo-design-project",
+  "brand-identity": "brand-identity-project",
+  "event-branding": "event-branding-project",
+  "brand-strategy": "brand-strategy-project",
+  "social-media-management": "social-media-management",
+  "social-content-bundle": "social-content-bundle",
+  "paid-social-advertising": "paid-social-advertising",
+  "print-digital-collateral": "print-digital-collateral",
+};
+
+export function resolveServiceSlug(slug: string): string {
+  return SERVICE_PROJECT_SLUG_MAP[slug] ?? slug;
+}
+
 export interface Department {
   id: DeptId;
   index: string;           // /01
@@ -510,6 +530,23 @@ export const SOCIAL_TIERS: SocialTier[] = [
       { label: "Ad management", value: "Optional add-on" },
     ],
   },
+  {
+    id: "social-elite",
+    name: "Elite",
+    price: 3500,
+    period: "+",
+    blurb: "Full-scale multi-platform content and campaigns.",
+    features: [
+      { label: "Posts per week", value: "Daily" },
+      { label: "Platforms", value: "All major" },
+      { label: "Video content", value: "Custom volume" },
+      { label: "Paid advertising", value: "Full management" },
+      { label: "Community management", value: "24/7 active" },
+      { label: "Campaigns + launches", value: "Included" },
+      { label: "Reporting", value: "Weekly" },
+      { label: "Dedicated strategist", value: "Included" },
+    ],
+  },
 ];
 
 /* ---------------- portfolio (sample archive — replace via CMS) ---------------- */
@@ -961,3 +998,154 @@ export function formatMoney(usd: number, code: CurrencyCode = "USD"): string {
 export const serviceBySlug = (slug: string) => SERVICES.find((s) => s.slug === slug);
 export const projectBySlug = (slug: string) => PROJECTS.find((p) => p.slug === slug);
 export const deptById = (id: DeptId) => DEPARTMENTS.find((d) => d.id === id)!;
+
+/* ---------------- website care plan tiers ---------------- */
+
+export interface CarePlanTier {
+  id: string;
+  name: string;
+  price: number;
+  period: string;
+  blurb: string;
+  popular?: boolean;
+  features: { label: string; value: string }[];
+}
+
+export const CARE_PLAN_TIERS: CarePlanTier[] = [
+  {
+    id: "care-essential",
+    name: "Essential",
+    price: 99,
+    period: "/month",
+    blurb: "Keep your site live, secure and updated.",
+    features: [
+      { label: "Security monitoring", value: "Included" },
+      { label: "Plugin / CMS updates", value: "Monthly" },
+      { label: "Daily automated backups", value: "Included" },
+      { label: "Uptime monitoring", value: "Included" },
+      { label: "Content updates", value: "1 hr / month" },
+      { label: "Support response", value: "48 hours" },
+    ],
+  },
+  {
+    id: "care-pro",
+    name: "Pro",
+    price: 249,
+    period: "/month",
+    blurb: "Active maintenance + priority support.",
+    popular: true,
+    features: [
+      { label: "Everything in Essential", value: "Included" },
+      { label: "Content updates", value: "2 hrs / month" },
+      { label: "Performance monitoring", value: "Monthly report" },
+      { label: "Speed optimization checks", value: "Quarterly" },
+      { label: "Support response", value: "24 hours" },
+      { label: "Emergency support", value: "Included" },
+    ],
+  },
+  {
+    id: "care-business",
+    name: "Business",
+    price: 499,
+    period: "/month",
+    blurb: "Proactive care for growing businesses.",
+    features: [
+      { label: "Everything in Pro", value: "Included" },
+      { label: "Content updates", value: "4 hrs / month" },
+      { label: "Analytics review", value: "Monthly" },
+      { label: "Minor feature additions", value: "Included" },
+      { label: "SEO health check", value: "Quarterly" },
+      { label: "Support response", value: "8 hours" },
+    ],
+  },
+  {
+    id: "care-enterprise",
+    name: "Enterprise",
+    price: 749,
+    period: "/month",
+    blurb: "Maximum coverage with a dedicated account manager.",
+    features: [
+      { label: "Everything in Business", value: "Included" },
+      { label: "Content updates", value: "8 hrs / month" },
+      { label: "Dedicated account manager", value: "Included" },
+      { label: "Monthly strategy call", value: "Included" },
+      { label: "Priority development queue", value: "Included" },
+      { label: "Support response", value: "4 hours" },
+    ],
+  },
+];
+
+/* ---------------- premium bundles ---------------- */
+
+export interface PremiumBundle {
+  id: string;
+  name: string;
+  tagline: string;
+  price: number;
+  priceType: "fixed" | "starting" | "consultation";
+  savings?: number;              // vs. individual pricing
+  badge?: string;                // e.g. "Most Popular"
+  deliverables: string[];
+  services: string[];            // service names included
+  cta: "book" | "quote" | "checkout";
+  popular?: boolean;
+}
+
+export const PREMIUM_BUNDLES: PremiumBundle[] = [
+  {
+    id: "bundle-launch-kit",
+    name: "Launch Kit",
+    tagline: "Everything you need to launch professionally — brand, web and social.",
+    price: 2500,
+    priceType: "starting",
+    savings: 500,
+    deliverables: ["Logo Design", "Business Card Design", "Brand Style Guide", "Landing Page / One-Page Website", "Social Media Profile Graphics"],
+    services: ["Logo Design", "Business Card", "Brand Style Guide", "Landing Page", "Social Profile Kit"],
+    cta: "book",
+  },
+  {
+    id: "bundle-digital-authority",
+    name: "Digital Authority",
+    tagline: "A credible online presence built to rank and convert.",
+    price: 5500,
+    priceType: "starting",
+    savings: 1000,
+    popular: true,
+    badge: "Most Popular",
+    deliverables: ["Complete Brand Identity", "Standard Business Website", "Local SEO Setup", "Marketing Analytics Pack", "Google Business Profile Optimization"],
+    services: ["Brand Identity", "Business Website", "Local SEO", "Analytics Setup"],
+    cta: "book",
+  },
+  {
+    id: "bundle-conversion-suite",
+    name: "Conversion Suite",
+    tagline: "Your website working 24/7 to generate leads and sales.",
+    price: 7500,
+    priceType: "starting",
+    savings: 1500,
+    deliverables: ["Business Website", "Google Ads Management (3 months)", "Social Media Management — Starter (3 months)", "Marketing Analytics Pack", "Conversion Tracking + Funnel Setup"],
+    services: ["Business Website", "Google Ads", "Social Management", "Analytics + Conversion Tracking"],
+    cta: "book",
+  },
+  {
+    id: "bundle-growth-system",
+    name: "Growth System",
+    tagline: "E-commerce, traffic and retention — the complete growth engine.",
+    price: 9500,
+    priceType: "starting",
+    savings: 2000,
+    deliverables: ["E-Commerce Website", "Social Media Management — Growth (3 months)", "Email Marketing Setup + 3 Campaigns", "SEO Setup + 3-month Management", "Full Analytics + Tracking"],
+    services: ["E-Commerce Website", "Social Management (Growth)", "Email Marketing", "SEO Management", "Analytics"],
+    cta: "book",
+  },
+  {
+    id: "bundle-enterprise-presence",
+    name: "Enterprise Presence",
+    tagline: "A complete digital ecosystem designed for market leadership.",
+    price: 15000,
+    priceType: "consultation",
+    deliverables: ["Full Brand Identity System", "Enterprise Website", "12-month Digital Marketing Retainer", "AI Website Assistant", "Custom Analytics Dashboard", "Dedicated Account Manager"],
+    services: ["Brand Identity", "Enterprise Website", "Digital Marketing Retainer", "AI Assistant", "Custom Analytics"],
+    cta: "book",
+  },
+];

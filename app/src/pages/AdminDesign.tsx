@@ -11,7 +11,15 @@ import {
   type SizeUnit, type Orientation, type FormatType, type AdjType, type OptionScope,
 } from "../lib/design";
 import { useDesignCatalog } from "../lib/design-shop";
+import { useWebsiteAddonsCatalog } from "../lib/website-addons-provider";
+import {
+  type WebAddon,
+  type WebPackageId,
+  addonPriceLabel,
+} from "../lib/website-addons";
 import { useMoney } from "../lib/money";
+import { useAgencyServices } from "../lib/agency-services-provider";
+import { formatMoney, type ServiceProduct } from "../lib/data";
 
 /* ------------------------------------------------------------------
    STUDIO → DESIGN (PRD §32–§41, §58)
@@ -1511,20 +1519,25 @@ function DiscountsManager() {
 
 interface ServiceDraft {
   slug: string; name: string; category: string; short: string; price: string;
-  pricingType: string; purchaseMode: string; tiers: string; variations: string;
+  pricingType: string; purchaseMode: string; bookingUrl: string; tiers: string; variations: string;
   minQty: string; maxQty: string; turnaround: string; revisions: string;
   sizeIds: string; defaultSize: string; optionIds: string; recommended: string;
   allowCustomSize: boolean; customLimits: string;
   featured: boolean; popular: boolean; packageEligible: boolean; active: boolean;
+  // Agency / project enrichment
+  dept: string; tagline: string; deliverables: string; billing: string;
+  seoTitle: string; seoDescription: string;
 }
 
 const blankDraft: ServiceDraft = {
   slug: "", name: "", category: "social-media", short: "", price: "65",
-  pricingType: "fixed", purchaseMode: "", tiers: "", variations: "",
+  pricingType: "fixed", purchaseMode: "", bookingUrl: "", tiers: "", variations: "",
   minQty: "1", maxQty: "50", turnaround: "3–5 days", revisions: "2",
   sizeIds: "", defaultSize: "", optionIds: "", recommended: "",
   allowCustomSize: false, customLimits: "",
   featured: false, popular: false, packageEligible: true, active: true,
+  dept: "", tagline: "", deliverables: "", billing: "one_time",
+  seoTitle: "", seoDescription: "",
 };
 
 function ServicesManager() {
@@ -1579,6 +1592,7 @@ function ServicesManager() {
       slug: s.slug, name: s.name, category: s.category, short: s.short, price: String(s.price),
       pricingType: s.pricingType,
       purchaseMode: s.purchaseMode ?? "",
+      bookingUrl: s.bookingUrl ?? "",
       tiers: s.tiers?.length ? JSON.stringify(s.tiers, null, 2) : "",
       variations: s.variations?.length ? JSON.stringify(s.variations, null, 2) : "",
       minQty: String(s.minQty), maxQty: String(s.maxQty),
@@ -1589,6 +1603,12 @@ function ServicesManager() {
       allowCustomSize: !!s.allowCustomSize,
       customLimits: s.customLimits ? JSON.stringify(s.customLimits) : "",
       featured: !!s.featured, popular: !!s.popular, packageEligible: s.packageEligible !== false, active: s.active !== false,
+      dept: s.dept ?? "",
+      tagline: s.tagline ?? "",
+      deliverables: s.deliverables?.join("\n") ?? "",
+      billing: s.billing ?? "one_time",
+      seoTitle: s.seoTitle ?? "",
+      seoDescription: s.seoDescription ?? "",
     });
     setEditingSlug(slug);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1596,11 +1616,11 @@ function ServicesManager() {
 
   const submitEditor = async () => {
     if (!draft.name.trim() || !draft.slug.trim()) { toast.error("Name and slug are required."); return; }
-    let customLimits: unknown;
+    let customLimits: unknown = null;
     if (draft.allowCustomSize && draft.customLimits.trim()) {
       try { customLimits = JSON.parse(draft.customLimits); } catch { toast.error("Custom limits must be valid JSON."); return; }
     }
-    let tiers: unknown;
+    let tiers: unknown = null;
     if (draft.tiers.trim()) {
       try {
         const parsed = JSON.parse(draft.tiers);
@@ -1610,7 +1630,7 @@ function ServicesManager() {
         tiers = parsed;
       } catch { toast.error("Tiers must be valid JSON."); return; }
     }
-    let variations: unknown;
+    let variations: unknown = null;
     if (draft.variations.trim()) {
       try {
         const parsed = JSON.parse(draft.variations);
@@ -1625,16 +1645,26 @@ function ServicesManager() {
       slug: draft.slug.trim(), name: draft.name.trim(), category: draft.category,
       short: draft.short.trim(), price: Number(draft.price) || 0, pricingType: draft.pricingType,
       purchaseMode: draft.purchaseMode || null,
-      tiers: tiers ?? null,
-      variations: variations ?? null,
+      bookingUrl: draft.bookingUrl.trim() || null,
+      tiers,
+      variations,
       minQty: Number(draft.minQty) || 1, maxQty: Number(draft.maxQty) || 50,
       turnaround: draft.turnaround, revisions: Number(draft.revisions) || 0,
-      sizes: sizeIds.map((id) => ({ sizeId: id, isDefault: id === draft.defaultSize || undefined })),
+      sizes: sizeIds.map((id) => ({ sizeId: id, ...(id === draft.defaultSize ? { isDefault: true } : {}) })),
       optionIds: draft.optionIds.split(",").map((x) => x.trim()).filter(Boolean),
       recommended: draft.recommended.split(",").map((x) => x.trim()).filter(Boolean),
       allowCustomSize: draft.allowCustomSize, customLimits,
       featured: draft.featured, popular: draft.popular,
       packageEligible: draft.packageEligible, active: draft.active,
+      // Agency / project enrichment
+      dept: draft.dept || null,
+      tagline: draft.tagline.trim() || null,
+      deliverables: draft.deliverables.trim()
+        ? draft.deliverables.split("\n").map((x) => x.trim()).filter(Boolean)
+        : null,
+      billing: draft.billing || "one_time",
+      seoTitle: draft.seoTitle.trim() || null,
+      seoDescription: draft.seoDescription.trim() || null,
     };
     const before = editingSlug ? services.find((x) => x.slug === editingSlug) : undefined;
     const ok = await saveOverride(draft.slug.trim(), data, editingSlug ? "service_updated" : "service_created", before);
@@ -1785,10 +1815,63 @@ function ServicesManager() {
           <label className={labelCls}>PURCHASE MODE
             <select className={`${inputCls} mt-1`} value={draft.purchaseMode} onChange={(e) => setDraft({ ...draft, purchaseMode: e.target.value })}>
               <option value="">Auto (from price/type)</option>
-              <option value="DIRECT_PURCHASE">DIRECT_PURCHASE</option>
-              <option value="QUOTE_ONLY">QUOTE_ONLY</option>
+              <option value="DIRECT_PURCHASE">DIRECT_PURCHASE — Order online</option>
+              <option value="QUOTE_ONLY">QUOTE_ONLY — Request a quote</option>
+              <option value="BOOK_CONSULTATION">BOOK_CONSULTATION — Book a consultation</option>
             </select>
           </label>
+          {draft.purchaseMode === "BOOK_CONSULTATION" && (
+            <label className={labelCls}>BOOKING URL
+              <input
+                className={`${inputCls} mt-1`}
+                placeholder="https://cal.com/yourname or https://calendly.com/yourname (leave blank to use intake form)"
+                value={draft.bookingUrl}
+                onChange={(e) => setDraft({ ...draft, bookingUrl: e.target.value })}
+              />
+              <span className="block font-meta text-[8px] normal-case tracking-normal mt-1">External booking link (Cal.com, Calendly, Square, etc.). Leave blank to use the site's built-in intake form.</span>
+            </label>
+          )}
+
+          {/* ── Agency / Project Enrichment (optional — for higher-ticket project services) ── */}
+          <div className="lg:col-span-3 border border-[var(--line)] p-4 sm:p-5 rounded-2xl bg-[var(--bg)] shadow-xs">
+            <span className={labelCls}>AGENCY / PROJECT SERVICE (optional)</span>
+            <span className="block font-meta text-[8.5px] text-[var(--muted)] mb-4 normal-case tracking-normal">
+              Fill in any of these for project-based and agency services (websites, brand identity, social management, etc.). All fields are optional — leave blank for design-store items.
+            </span>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <label className={labelCls}>DEPARTMENT
+                <select className={`${inputCls} mt-1`} value={draft.dept} onChange={(e) => setDraft({ ...draft, dept: e.target.value })}>
+                  <option value="">— None (design store item) —</option>
+                  <option value="brand">Brand (Graphic + Brand)</option>
+                  <option value="social">Social (Social + Marketing)</option>
+                  <option value="web">Web (Web + Digital)</option>
+                </select>
+              </label>
+              <label className={labelCls}>BILLING CYCLE
+                <select className={`${inputCls} mt-1`} value={draft.billing} onChange={(e) => setDraft({ ...draft, billing: e.target.value })}>
+                  <option value="one_time">One-time payment</option>
+                  <option value="monthly">Monthly retainer</option>
+                </select>
+              </label>
+              <label className={`${labelCls} sm:col-span-2`}>TAGLINE (sub-headline shown on service page)
+                <input className={`${inputCls} mt-1`} placeholder="e.g. A mark that carries your business." value={draft.tagline} onChange={(e) => setDraft({ ...draft, tagline: e.target.value })} />
+              </label>
+              <label className={`${labelCls} sm:col-span-2`}>DELIVERABLES (one per line — shown as ✓ checklist)
+                <textarea rows={5} className={`${inputCls} mt-1 font-mono text-xs`}
+                  placeholder={"3 initial concepts\n2 revision rounds\nPrimary logo\nDigital files\nPrint-ready vector files"}
+                  value={draft.deliverables}
+                  onChange={(e) => setDraft({ ...draft, deliverables: e.target.value })}
+                />
+              </label>
+              <label className={`${labelCls} sm:col-span-2`}>SEO TITLE (overrides auto-generated page title)
+                <input className={`${inputCls} mt-1`} placeholder="e.g. Logo Design Jamaica — Social Kon10 Marketing" value={draft.seoTitle} onChange={(e) => setDraft({ ...draft, seoTitle: e.target.value })} />
+              </label>
+              <label className={`${labelCls} sm:col-span-2`}>SEO DESCRIPTION (overrides short description in meta tags)
+                <textarea rows={2} className={`${inputCls} mt-1`} placeholder="e.g. Professional logo design from $750. 3 concepts, 2 revisions, final vector + web files." value={draft.seoDescription} onChange={(e) => setDraft({ ...draft, seoDescription: e.target.value })} />
+              </label>
+            </div>
+          </div>
+
           <label className={`${labelCls} lg:col-span-3`}>PACKAGE TIERS (JSON, optional — replaces base price when picked)
             <textarea rows={2} className={`${inputCls} mt-1`} placeholder='[{"id":"basic","name":"Basic","price":45,"blurb":"1 concept, 1 revision"},{"id":"standard","name":"Standard","price":65,"blurb":"2 concepts, 2 revisions"}]'
               value={draft.tiers} onChange={(e) => setDraft({ ...draft, tiers: e.target.value })} />
@@ -2293,6 +2376,7 @@ function ServicesManager() {
                       flags.push(`TIERS (${tierPrices.length}) ${money(Math.min(...tierPrices))}–${money(Math.max(...tierPrices))}`);
                     }
                     if (isQuoteOnly(s)) flags.push("QUOTE-ONLY");
+                    else if (s.purchaseMode === "BOOK_CONSULTATION") flags.push("BOOK");
                     else if (s.packageEligible !== false) flags.push("PKG");
                     if (s.active === false) flags.push("OFF");
                     return flags.join(" · ");
@@ -2348,9 +2432,901 @@ function AuditLog() {
   );
 }
 
+/* ============ POWER UP (WEBSITE ADD-ONS) MANAGER ============ */
+
+interface WebAddonDraft {
+  id: string;
+  name: string;
+  desc: string;
+  categoryId: string;
+  price: string;
+  pricePrefix: string;
+  priceSuffix: string;
+  billing: "one_time" | "monthly";
+  eligible: WebPackageId[];
+  popular: boolean;
+  qtyEnabled: boolean;
+  maxQty: string;
+  requires: string;
+  conflicts: string;
+  active: boolean;
+}
+
+const defaultWebAddonDraft: WebAddonDraft = {
+  id: "",
+  name: "",
+  desc: "",
+  categoryId: "website_expansion",
+  price: "150",
+  pricePrefix: "",
+  priceSuffix: "",
+  billing: "one_time",
+  eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03"],
+  popular: false,
+  qtyEnabled: false,
+  maxQty: "100",
+  requires: "",
+  conflicts: "",
+  active: true,
+};
+
+const WEB_PKGS: { id: WebPackageId; name: string; short: string }[] = [
+  { id: "SK-WEB-01", name: "Landing Page / One-Page", short: "LP" },
+  { id: "SK-WEB-02", name: "Standard Business Website", short: "BIZ" },
+  { id: "SK-WEB-03", name: "E-Commerce Website", short: "E-COM" },
+  { id: "SK-WEB-04", name: "Website Care Plan", short: "CARE" },
+];
+
+/* ────────────────────────────────────────────────────────────
+   AGENCY SERVICES MANAGER
+   Admin control for the 12 ServiceProduct entries (data.ts SERVICES[]).
+   Writes price/description/featured overrides to Firestore 'agencyServices'.
+──────────────────────────────────────────────────────────── */
+function AgencyServicesManager() {
+  const { services, ready } = useAgencyServices();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draftPrice, setDraftPrice] = useState("");
+  const [draftTagline, setDraftTagline] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const DEPT_LABELS: Record<string, string> = { brand: "Brand", social: "Social", web: "Web" };
+  const DEPT_COLORS: Record<string, string> = {
+    brand: "var(--dept-brand, #e63946)",
+    social: "var(--dept-social, #f4a261)",
+    web: "var(--dept-web, #457b9d)",
+  };
+
+  async function saveOverride(s: ServiceProduct) {
+    const price = parseFloat(draftPrice);
+    if (!Number.isFinite(price) || price < 0) { toast.error("Enter a valid price."); return; }
+    setSaving(true);
+    try {
+      await addManaged("agencyServices", { ...s, price, tagline: draftTagline || s.tagline });
+      await logAudit({ user: "studio", action: "agency-svc-update", entity: s.slug, after: { price, tagline: draftTagline || s.tagline } });
+      window.dispatchEvent(new Event("sk-content-changed"));
+      toast.success(`${s.name} updated.`);
+      setEditing(null);
+    } catch (e) {
+      toast.error("Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startEdit(s: ServiceProduct) {
+    setEditing(s.slug);
+    setDraftPrice(String(s.price));
+    setDraftTagline(s.tagline ?? "");
+  }
+
+  if (!ready) return <div className="p-8 text-[var(--muted)] text-sm">Loading...</div>;
+
+  const grouped = ["brand", "social", "web"].map((dept) => ({
+    dept,
+    items: services.filter((s) => s.dept === dept),
+  }));
+
+  return (
+    <div className="p-6 md:p-8 space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-display text-2xl font-bold uppercase">Agency Services</h2>
+          <p className="text-sm text-[var(--muted)] mt-1">Edit prices and taglines for the 12 department-level services.</p>
+        </div>
+        <span className="font-meta text-[10px] px-3 py-1.5 border border-[var(--line)] text-[var(--muted)]">{services.length} services</span>
+      </div>
+
+      {grouped.map(({ dept, items }) => (
+        <div key={dept}>
+          <div className="flex items-center gap-3 mb-3">
+            <span className="w-2 h-2 rounded-full" style={{ background: DEPT_COLORS[dept] }} />
+            <span className="font-meta text-[10px] uppercase tracking-widest text-[var(--muted)]">{DEPT_LABELS[dept]}</span>
+          </div>
+          <div className="border border-[var(--line)]" style={{ background: "var(--panel)" }}>
+            {items.map((s, i) => (
+              <div key={s.slug} className={`p-4 md:p-5 ${i > 0 ? "border-t border-[var(--line)]" : ""}`}>
+                {editing === s.slug ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-display font-bold text-sm uppercase">{s.name}</span>
+                      <span className="font-meta text-[9px] px-2 py-0.5" style={{ background: DEPT_COLORS[dept] + "22", color: DEPT_COLORS[dept] }}>{dept}</span>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="font-meta text-[9px] text-[var(--muted)]">PRICE (USD)</span>
+                        <input
+                          type="number" min="0" step="50"
+                          value={draftPrice}
+                          onChange={(e) => setDraftPrice(e.target.value)}
+                          className="input text-sm"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="font-meta text-[9px] text-[var(--muted)]">TAGLINE</span>
+                        <input
+                          type="text"
+                          value={draftTagline}
+                          onChange={(e) => setDraftTagline(e.target.value)}
+                          className="input text-sm"
+                          placeholder={s.tagline}
+                        />
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <button className="btn btn-sm" onClick={() => saveOverride(s)} disabled={saving}>
+                        {saving ? "Saving…" : "Save"}
+                      </button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-display font-bold text-sm uppercase">{s.name}</span>
+                        <span className="font-meta text-[9px] px-2 py-0.5 border border-[var(--line)] text-[var(--muted)] truncate">{s.slug}</span>
+                        {s.featured && <span className="font-meta text-[9px] px-2 py-0.5 bg-amber-100 text-amber-700">FEATURED</span>}
+                      </div>
+                      <p className="text-xs text-[var(--muted)] mt-1 truncate">{s.tagline}</p>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
+                      <div className="text-right">
+                        <span className="font-display-wide font-bold text-base">
+                          {s.price > 0 ? formatMoney(s.price) : s.priceType === "consultation" ? "Consult" : "Quote"}
+                        </span>
+                        {s.billing === "monthly" && <span className="text-[10px] text-[var(--muted)] ml-1">/mo</span>}
+                      </div>
+                      <button className="btn btn-ghost btn-sm" onClick={() => startEdit(s)}>Edit</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PowerUpManager() {
+  const { user } = useAuth();
+  const money = useMoney();
+  const { categories, allAddons } = useWebsiteAddonsCatalog();
+  const [managed, setManaged] = useState<ManagedItem[]>([]);
+  const [draft, setDraft] = useState<WebAddonDraft>(defaultWebAddonDraft);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [billingFilter, setBillingFilter] = useState<"all" | "one_time" | "monthly">("all");
+  const [pkgFilter, setPkgFilter] = useState<"all" | WebPackageId>("all");
+  const [inlinePrices, setInlinePrices] = useState<Record<string, string>>({});
+  const [inlineSaving, setInlineSaving] = useState<string | null>(null);
+
+  const reload = () => listManaged("websiteAddons").then(setManaged);
+  useEffect(() => { reload(); }, []);
+
+  const managedIdById = useMemo(() => {
+    const m = new Map<string, string>();
+    managed.forEach((x) => m.set(String(x.id ?? ""), x.id));
+    return m;
+  }, [managed]);
+
+  const startEdit = (a: WebAddon) => {
+    setDraft({
+      id: a.id,
+      name: a.name,
+      desc: a.desc ?? "",
+      categoryId: a.categoryId,
+      price: String(a.price),
+      pricePrefix: a.pricePrefix ?? "",
+      priceSuffix: a.priceSuffix ?? "",
+      billing: a.billing,
+      eligible: a.eligible ?? ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03"],
+      popular: !!a.popular,
+      qtyEnabled: !!a.qtyEnabled,
+      maxQty: String(a.maxQty ?? 100),
+      requires: (a.requires ?? []).join(", "),
+      conflicts: (a.conflicts ?? []).join(", "),
+      active: (a as never)["active"] !== false,
+    });
+    setEditingId(a.id);
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setDraft(defaultWebAddonDraft);
+    setEditingId(null);
+    setFormOpen(false);
+  };
+
+  const submitForm = async () => {
+    if (!draft.name.trim() || !draft.id.trim()) {
+      toast.error("Add-on ID and Name are required.");
+      return;
+    }
+    const cleanId = draft.id.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+    const data: Record<string, unknown> = {
+      id: cleanId,
+      name: draft.name.trim(),
+      desc: draft.desc.trim(),
+      categoryId: draft.categoryId,
+      price: Number(draft.price) || 0,
+      pricePrefix: draft.pricePrefix === "from" ? "from" : null,
+      priceSuffix: draft.priceSuffix.trim() || null,
+      billing: draft.billing,
+      eligible: draft.eligible,
+      popular: draft.popular,
+      qtyEnabled: draft.qtyEnabled,
+      maxQty: draft.qtyEnabled ? Number(draft.maxQty) || 100 : null,
+      requires: draft.requires.trim()
+        ? draft.requires.split(",").map((s) => s.trim()).filter(Boolean)
+        : null,
+      conflicts: draft.conflicts.trim()
+        ? draft.conflicts.split(",").map((s) => s.trim()).filter(Boolean)
+        : null,
+      active: draft.active,
+    };
+
+    const existingDocId = managedIdById.get(cleanId);
+    const ok = await mutate(
+      () => (existingDocId ? updateManaged("websiteAddons", existingDocId, data) : addManaged("websiteAddons", data)),
+      editingId ? `Add-on "${draft.name}" updated — live now` : `Add-on "${draft.name}" created — live now`
+    );
+
+    if (ok) {
+      logAudit({
+        user: user?.email ?? "studio",
+        action: editingId ? "website_addon_updated" : "website_addon_created",
+        entity: `website_addon:${cleanId}`,
+        after: data,
+      });
+      cancelEdit();
+      reload();
+    }
+  };
+
+  const quickToggleActive = async (a: WebAddon) => {
+    const isCurrentlyActive = (a as never)["active"] !== false;
+    const nextActive = !isCurrentlyActive;
+    const existingDocId = managedIdById.get(a.id);
+    const patch = { id: a.id, active: nextActive };
+
+    const ok = await mutate(
+      () => (existingDocId ? updateManaged("websiteAddons", existingDocId, patch) : addManaged("websiteAddons", { ...a, ...patch })),
+      `"${a.name}" is now ${nextActive ? "Active" : "Inactive"}`
+    );
+
+    if (ok) {
+      logAudit({
+        user: user?.email ?? "studio",
+        action: "website_addon_toggled",
+        entity: `website_addon:${a.id}`,
+        after: { active: nextActive },
+      });
+      reload();
+    }
+  };
+
+  const quickTogglePopular = async (a: WebAddon) => {
+    const nextPopular = !a.popular;
+    const existingDocId = managedIdById.get(a.id);
+    const patch = { id: a.id, popular: nextPopular };
+
+    const ok = await mutate(
+      () => (existingDocId ? updateManaged("websiteAddons", existingDocId, patch) : addManaged("websiteAddons", { ...a, ...patch })),
+      `"${a.name}" marked as ${nextPopular ? "Popular ⭐" : "Standard"}`
+    );
+
+    if (ok) {
+      logAudit({
+        user: user?.email ?? "studio",
+        action: "website_addon_popular_toggled",
+        entity: `website_addon:${a.id}`,
+        after: { popular: nextPopular },
+      });
+      reload();
+    }
+  };
+
+  const quickSavePrice = async (a: WebAddon) => {
+    const val = inlinePrices[a.id];
+    if (val === undefined || val === "") return;
+    const parsed = Number(val);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast.error("Enter a valid price.");
+      return;
+    }
+    setInlineSaving(a.id);
+    const existingDocId = managedIdById.get(a.id);
+    const patch = { id: a.id, price: parsed };
+
+    const ok = await mutate(
+      () => (existingDocId ? updateManaged("websiteAddons", existingDocId, patch) : addManaged("websiteAddons", { ...a, ...patch })),
+      `Price for "${a.name}" updated to $${parsed}`
+    );
+
+    setInlineSaving(null);
+    if (ok) {
+      logAudit({
+        user: user?.email ?? "studio",
+        action: "website_addon_price_changed",
+        entity: `website_addon:${a.id}`,
+        before: { price: a.price },
+        after: { price: parsed },
+      });
+      setInlinePrices((prev) => {
+        const next = { ...prev };
+        delete next[a.id];
+        return next;
+      });
+      reload();
+    }
+  };
+
+  const duplicate = (a: WebAddon) => {
+    const copyId = `${a.id}_copy`;
+    setDraft({
+      id: copyId,
+      name: `${a.name} (Copy)`,
+      desc: a.desc ?? "",
+      categoryId: a.categoryId,
+      price: String(a.price),
+      pricePrefix: a.pricePrefix ?? "",
+      priceSuffix: a.priceSuffix ?? "",
+      billing: a.billing,
+      eligible: a.eligible ?? ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03"],
+      popular: false,
+      qtyEnabled: !!a.qtyEnabled,
+      maxQty: String(a.maxQty ?? 100),
+      requires: (a.requires ?? []).join(", "),
+      conflicts: (a.conflicts ?? []).join(", "),
+      active: true,
+    });
+    setEditingId(null);
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast.success("Duplicated into editor — make adjustments and save.");
+  };
+
+  // Filtered add-ons list
+  const filtered = useMemo(() => {
+    return allAddons.filter((a) => {
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        const matchName = a.name.toLowerCase().includes(q);
+        const matchId = a.id.toLowerCase().includes(q);
+        const matchDesc = (a.desc ?? "").toLowerCase().includes(q);
+        if (!matchName && !matchId && !matchDesc) return false;
+      }
+      if (catFilter !== "all" && a.categoryId !== catFilter) return false;
+      if (billingFilter !== "all" && a.billing !== billingFilter) return false;
+      if (pkgFilter !== "all" && !a.eligible?.includes(pkgFilter)) return false;
+      return true;
+    });
+  }, [allAddons, search, catFilter, billingFilter, pkgFilter]);
+
+  const oneTimeCount = allAddons.filter((a) => a.billing === "one_time").length;
+  const monthlyCount = allAddons.filter((a) => a.billing === "monthly").length;
+  const popularCount = allAddons.filter((a) => a.popular).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Overview & Quick Stats Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-2xl border border-[var(--line)] bg-[var(--panel)]">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-lg font-bold uppercase tracking-tight">Power Up Website Add-Ons</h2>
+            <span className="font-meta text-[10px] px-2 py-0.5 rounded-full bg-[var(--dept)] text-[var(--on-dept)] font-bold">
+              {allAddons.length} Live Add-Ons
+            </span>
+          </div>
+          <p className="font-meta text-[10px] text-[var(--muted)] mt-1 max-w-xl">
+            Control all 50+ website configurator add-ons: pricing, billing models, package eligibility, dependencies, and conflicts. Changes update live in the "Power Up" customer configurator instantly.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 font-meta text-[10px] bg-[var(--bg)] px-3 py-2 rounded-xl border border-[var(--line)]">
+            <span className="text-[var(--muted)]">One-Time:</span>
+            <span className="font-bold text-sky-500">{oneTimeCount}</span>
+            <span className="text-[var(--line)]">|</span>
+            <span className="text-[var(--muted)]">Monthly:</span>
+            <span className="font-bold text-emerald-500">{monthlyCount}</span>
+            <span className="text-[var(--line)]">|</span>
+            <span className="text-[var(--muted)]">Popular:</span>
+            <span className="font-bold text-amber-500">★ {popularCount}</span>
+          </div>
+
+          <button
+            onClick={() => {
+              if (formOpen && !editingId) {
+                setFormOpen(false);
+              } else {
+                setDraft(defaultWebAddonDraft);
+                setEditingId(null);
+                setFormOpen(true);
+              }
+            }}
+            className="btn btn-dept !py-2 !px-4 font-meta text-[10.5px]"
+          >
+            {formOpen && !editingId ? "Close Form ✕" : "+ New Add-On"}
+          </button>
+        </div>
+      </div>
+
+      {/* Add / Edit Drawer Form */}
+      {formOpen && (
+        <div className="border border-[var(--dept)]/40 p-5 sm:p-6 rounded-2xl bg-[var(--panel)] shadow-sm space-y-4 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
+            <div>
+              <h3 className="font-display text-sm font-bold uppercase text-[var(--dept)]">
+                {editingId ? `Edit Add-On: "${draft.name}"` : "Create New Website Add-On"}
+              </h3>
+              <p className="font-meta text-[9px] text-[var(--muted)]">
+                Database-driven website power-up. Saves to Firestore and synchronizes with WebConfigurator.
+              </p>
+            </div>
+            <button onClick={cancelEdit} className="text-xs text-[var(--muted)] hover:text-[var(--ink)] font-bold">
+              Cancel ✕
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <label className={labelCls}>
+              ADD-ON ID (slug format, unique)
+              <input
+                className={`${inputCls} mt-1 font-mono text-xs`}
+                placeholder="e.g. custom_booking_engine"
+                value={draft.id}
+                onChange={(e) => setDraft({ ...draft, id: e.target.value })}
+                disabled={!!editingId}
+              />
+            </label>
+
+            <label className={labelCls}>
+              DISPLAY NAME
+              <input
+                className={`${inputCls} mt-1`}
+                placeholder="e.g. Custom Booking Engine"
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              />
+            </label>
+
+            <label className={labelCls}>
+              CATEGORY
+              <select
+                className={`${inputCls} mt-1`}
+                value={draft.categoryId}
+                onChange={(e) => setDraft({ ...draft, categoryId: e.target.value })}
+              >
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.advanced ? "(Advanced)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className={labelCls}>
+              PRICE (USD base)
+              <input
+                type="number"
+                min="0"
+                step="1"
+                className={`${inputCls} mt-1 font-bold`}
+                placeholder="150"
+                value={draft.price}
+                onChange={(e) => setDraft({ ...draft, price: e.target.value })}
+              />
+            </label>
+
+            <label className={labelCls}>
+              PRICE PREFIX
+              <select
+                className={`${inputCls} mt-1`}
+                value={draft.pricePrefix}
+                onChange={(e) => setDraft({ ...draft, pricePrefix: e.target.value })}
+              >
+                <option value="">None (Fixed price)</option>
+                <option value="from">"from" (Starting at)</option>
+              </select>
+            </label>
+
+            <label className={labelCls}>
+              PRICE SUFFIX (unit label)
+              <input
+                className={`${inputCls} mt-1`}
+                placeholder='e.g. " / page", " / product"'
+                value={draft.priceSuffix}
+                onChange={(e) => setDraft({ ...draft, priceSuffix: e.target.value })}
+              />
+            </label>
+
+            <label className={labelCls}>
+              BILLING TYPE
+              <select
+                className={`${inputCls} mt-1 font-bold`}
+                value={draft.billing}
+                onChange={(e) => setDraft({ ...draft, billing: e.target.value as "one_time" | "monthly" })}
+              >
+                <option value="one_time">One-Time Project Fee</option>
+                <option value="monthly">Monthly Retainer (/mo)</option>
+              </select>
+            </label>
+
+            <label className={`${labelCls} sm:col-span-2`}>
+              SHORT DESCRIPTION
+              <textarea
+                rows={2}
+                className={`${inputCls} mt-1`}
+                placeholder="Explain what the client gets with this add-on..."
+                value={draft.desc}
+                onChange={(e) => setDraft({ ...draft, desc: e.target.value })}
+              />
+            </label>
+          </div>
+
+          {/* Package Eligibility */}
+          <div className="border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)] space-y-2">
+            <span className={labelCls}>ELIGIBLE WEBSITE PACKAGES (check all that apply)</span>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+              {WEB_PKGS.map((pkg) => {
+                const checked = draft.eligible.includes(pkg.id);
+                return (
+                  <label key={pkg.id} className="flex items-center gap-2.5 text-xs font-meta cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setDraft({ ...draft, eligible: [...draft.eligible, pkg.id] });
+                        } else {
+                          setDraft({ ...draft, eligible: draft.eligible.filter((id) => id !== pkg.id) });
+                        }
+                      }}
+                      className="accent-[var(--dept)] rounded"
+                    />
+                    <span>
+                      <strong>{pkg.short}:</strong> {pkg.name}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Rules: Quantity, Dependencies, Conflicts & Flags */}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)]">
+            <div>
+              <label className="flex items-center gap-2 text-xs font-meta cursor-pointer font-bold">
+                <input
+                  type="checkbox"
+                  checked={draft.qtyEnabled}
+                  onChange={(e) => setDraft({ ...draft, qtyEnabled: e.target.checked })}
+                  className="accent-[var(--dept)] rounded"
+                />
+                <span>Enable Quantity Selector</span>
+              </label>
+              {draft.qtyEnabled && (
+                <div className="mt-2">
+                  <label className={labelCls}>MAX QUANTITY</label>
+                  <input
+                    type="number"
+                    min="1"
+                    className={`${inputCls} mt-0.5`}
+                    value={draft.maxQty}
+                    onChange={(e) => setDraft({ ...draft, maxQty: e.target.value })}
+                  />
+                </div>
+              )}
+            </div>
+
+            <label className={labelCls}>
+              DEPENDENCIES (requires add-on IDs, comma-separated)
+              <input
+                className={`${inputCls} mt-1 font-mono text-xs`}
+                placeholder="e.g. whatsapp_integration"
+                value={draft.requires}
+                onChange={(e) => setDraft({ ...draft, requires: e.target.value })}
+              />
+            </label>
+
+            <label className={labelCls}>
+              MUTUAL EXCLUSIONS (conflicts with IDs, comma-separated)
+              <input
+                className={`${inputCls} mt-1 font-mono text-xs`}
+                placeholder="e.g. speed_boost, performance_pro"
+                value={draft.conflicts}
+                onChange={(e) => setDraft({ ...draft, conflicts: e.target.value })}
+              />
+            </label>
+
+            <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap gap-6 pt-2 border-t border-[var(--line)]">
+              <label className="flex items-center gap-2 text-xs font-meta cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draft.popular}
+                  onChange={(e) => setDraft({ ...draft, popular: e.target.checked })}
+                  className="accent-[var(--dept)] rounded"
+                />
+                <span className="font-bold text-amber-500">★ Highlight as "Popular" badge</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-meta cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draft.active}
+                  onChange={(e) => setDraft({ ...draft, active: e.target.checked })}
+                  className="accent-[var(--dept)] rounded"
+                />
+                <span className="font-bold text-emerald-500">✓ Active (visible in configurator)</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={cancelEdit} className="btn btn-ghost !py-2 !px-4 font-meta text-[10px]">
+              Cancel
+            </button>
+            <button type="button" onClick={submitForm} className="btn btn-dept !py-2 !px-6 font-meta text-[10px] font-bold">
+              {editingId ? "Save & Publish Changes →" : "Create Add-On →"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Filter & Search Bar */}
+      <div className="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]">
+        <div className="flex-1 min-w-[200px]">
+          <input
+            className={inputCls}
+            placeholder="🔍 Search add-ons by title, ID, or description..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        <select
+          className={`${inputCls} !w-auto text-xs`}
+          value={catFilter}
+          onChange={(e) => setCatFilter(e.target.value)}
+        >
+          <option value="all">All Categories ({categories.length})</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+
+        <select
+          className={`${inputCls} !w-auto text-xs`}
+          value={billingFilter}
+          onChange={(e) => setBillingFilter(e.target.value as "all" | "one_time" | "monthly")}
+        >
+          <option value="all">All Billing Types</option>
+          <option value="one_time">One-Time Only</option>
+          <option value="monthly">Monthly Retainers</option>
+        </select>
+
+        <select
+          className={`${inputCls} !w-auto text-xs`}
+          value={pkgFilter}
+          onChange={(e) => setPkgFilter(e.target.value as "all" | WebPackageId)}
+        >
+          <option value="all">All Packages</option>
+          {WEB_PKGS.map((p) => (
+            <option key={p.id} value={p.id}>{p.name} ({p.short})</option>
+          ))}
+        </select>
+
+        {(search || catFilter !== "all" || billingFilter !== "all" || pkgFilter !== "all") && (
+          <button
+            onClick={() => { setSearch(""); setCatFilter("all"); setBillingFilter("all"); setPkgFilter("all"); }}
+            className="font-meta text-[9px] text-[var(--muted)] hover:text-[var(--ink)] underline px-2"
+          >
+            Reset Filters
+          </button>
+        )}
+      </div>
+
+      {/* Add-ons List Table */}
+      <div className="overflow-x-auto border border-[var(--line)] rounded-2xl bg-[var(--panel)]">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-[var(--line)] bg-[var(--bg)] font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">
+              <th className="p-3.5">Add-On & ID</th>
+              <th className="p-3.5">Category</th>
+              <th className="p-3.5">Price & Billing (Inline Edit)</th>
+              <th className="p-3.5">Eligibility</th>
+              <th className="p-3.5">Flags</th>
+              <th className="p-3.5 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--line)]">
+            {filtered.map((a) => {
+              const catObj = categories.find((c) => c.id === a.categoryId);
+              const isActive = (a as never)["active"] !== false;
+              const isOverridden = managedIdById.has(a.id);
+              const pendingVal = inlinePrices[a.id];
+              const isSavingPrice = inlineSaving === a.id;
+
+              return (
+                <tr
+                  key={a.id}
+                  className={`hover:bg-[var(--bg)]/70 transition-colors ${!isActive ? "opacity-50" : ""}`}
+                >
+                  {/* Name & ID */}
+                  <td className="p-3.5 max-w-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-xs">{a.name}</span>
+                      {a.popular && (
+                        <span className="font-meta text-[8px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 font-bold border border-amber-500/30">
+                          ★ POPULAR
+                        </span>
+                      )}
+                      {isOverridden && (
+                        <span className="font-meta text-[8px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 font-bold border border-purple-500/20" title="Customized in Firestore database">
+                          OVERRIDE
+                        </span>
+                      )}
+                    </div>
+                    <p className="font-meta text-[9px] text-[var(--muted)] font-mono mt-0.5 truncate">{a.id}</p>
+                    <p className="text-[11px] text-[var(--muted)] mt-1 line-clamp-2">{a.desc}</p>
+                  </td>
+
+                  {/* Category */}
+                  <td className="p-3.5 font-meta text-[10px]">
+                    <span className="px-2.5 py-1 rounded-lg border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] font-semibold inline-block">
+                      {catObj?.name ?? a.categoryId}
+                    </span>
+                  </td>
+
+                  {/* Price & Billing */}
+                  <td className="p-3.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[var(--muted)]">$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-20 bg-[var(--bg)] border border-[var(--line)] px-2 py-1 text-xs font-mono font-bold rounded-lg outline-none focus:border-[var(--dept)]"
+                        value={pendingVal !== undefined ? pendingVal : a.price}
+                        onChange={(e) => setInlinePrices({ ...inlinePrices, [a.id]: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === "Enter") void quickSavePrice(a); }}
+                      />
+                      {pendingVal !== undefined && Number(pendingVal) !== a.price && (
+                        <button
+                          onClick={() => void quickSavePrice(a)}
+                          disabled={isSavingPrice}
+                          className="btn btn-dept !py-1 !px-2 font-meta text-[9px]"
+                        >
+                          {isSavingPrice ? "..." : "Save"}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <span className={`font-meta text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                        a.billing === "monthly"
+                          ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30"
+                          : "bg-sky-500/10 text-sky-500 border border-sky-500/30"
+                      }`}>
+                        {a.billing === "monthly" ? "Monthly Retainer" : "One-Time"}
+                      </span>
+                      {a.pricePrefix && <span className="font-meta text-[8px] text-[var(--muted)]">{a.pricePrefix}</span>}
+                      {a.priceSuffix && <span className="font-meta text-[8px] text-[var(--muted)]">{a.priceSuffix}</span>}
+                    </div>
+                  </td>
+
+                  {/* Eligibility */}
+                  <td className="p-3.5">
+                    <div className="flex flex-wrap gap-1">
+                      {a.eligible?.map((pid) => {
+                        const pkg = WEB_PKGS.find((p) => p.id === pid);
+                        return (
+                          <span
+                            key={pid}
+                            className="font-meta text-[8px] px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--line)] text-[var(--muted)] font-semibold"
+                            title={pkg?.name}
+                          >
+                            {pkg?.short ?? pid}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </td>
+
+                  {/* Flags */}
+                  <td className="p-3.5 font-meta text-[9px]">
+                    <div className="flex flex-col gap-1">
+                      {a.qtyEnabled && <span className="text-purple-400">Qty (max {a.maxQty ?? 100})</span>}
+                      {(a.requires?.length ?? 0) > 0 && (
+                        <span className="text-amber-400" title={`Requires: ${a.requires?.join(", ")}`}>
+                          Requires {a.requires?.length}
+                        </span>
+                      )}
+                      {(a.conflicts?.length ?? 0) > 0 && (
+                        <span className="text-red-400" title={`Conflicts: ${a.conflicts?.join(", ")}`}>
+                          Conflicts {a.conflicts?.length}
+                        </span>
+                      )}
+                      {!isActive && <span className="text-rose-500 font-bold">INACTIVE</span>}
+                    </div>
+                  </td>
+
+                  {/* Actions */}
+                  <td className="p-3.5 text-right">
+                    <div className="flex items-center justify-end gap-2.5 font-meta text-[10px]">
+                      <button
+                        onClick={() => startEdit(a)}
+                        className="text-[var(--muted)] hover:text-[var(--dept)] font-bold transition-colors"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => void quickTogglePopular(a)}
+                        className={`transition-colors ${a.popular ? "text-amber-500 font-bold" : "text-[var(--muted)] hover:text-amber-500"}`}
+                        title={a.popular ? "Unmark as popular" : "Mark as popular"}
+                      >
+                        ★
+                      </button>
+                      <button
+                        onClick={() => duplicate(a)}
+                        className="text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+                      >
+                        Dupe
+                      </button>
+                      <button
+                        onClick={() => void quickToggleActive(a)}
+                        className={`transition-colors font-bold ${isActive ? "text-rose-400 hover:text-rose-600" : "text-emerald-400 hover:text-emerald-600"}`}
+                      >
+                        {isActive ? "Disable" : "Enable"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-8 text-center font-meta text-xs text-[var(--muted)]">
+                  No website add-ons match the current search or filters.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /* ============ STUDIO SHELL ============ */
 
-const SUBS = ["Services", "Categories", "Sizes", "Options", "Packages", "Discounts", "Audit"] as const;
+const SUBS = ["Services", "Categories", "Sizes", "Options", "Power Up", "Agency Services", "Packages", "Discounts", "Audit"] as const;
 
 export function DesignStudio() {
   const [sub, setSub] = useState<(typeof SUBS)[number]>("Services");
@@ -2358,7 +3334,7 @@ export function DesignStudio() {
     <div className="space-y-6">
       <div className="border-b border-[var(--line)] pb-4">
         <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
-          Graphic Design commerce control (PRD §32) — every service, category, size preset, production add-on, bundle package, and discount tier is database-driven. Changes go live instantly site-wide.
+          Graphic Design &amp; Website commerce control (PRD §32) — every service, category, size preset, production add-on, website Power Up add-on, bundle package, and discount tier is database-driven. Changes go live instantly site-wide.
         </p>
         <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar pt-3" role="tablist" aria-label="Design studio sections">
           {SUBS.map((s) => (
@@ -2383,9 +3359,12 @@ export function DesignStudio() {
       {sub === "Categories" && <CategoriesManager />}
       {sub === "Sizes" && <SizesManager />}
       {sub === "Options" && <OptionsManager />}
+      {sub === "Power Up" && <PowerUpManager />}
+      {sub === "Agency Services" && <AgencyServicesManager />}
       {sub === "Packages" && <PackagesManager />}
       {sub === "Discounts" && <DiscountsManager />}
       {sub === "Audit" && <AuditLog />}
     </div>
   );
 }
+

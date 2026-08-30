@@ -343,10 +343,10 @@ function Process() {
 function PackagesTeaser() {
   const { currency } = useShop();
   const cards = [
-    { name: "Logo Design", price: 750, unit: "fixed", note: "3 concepts · 2 revisions · full files", to: "/services/logo-design" },
-    { name: "Brand Identity", price: 2500, unit: "fixed", note: "Logo system · palette · guidelines", to: "/services/brand-identity" },
-    { name: "Social Management", price: 1200, unit: "/mo", note: `Starter · Growth ${formatMoney(2200, currency)}/mo`, to: "/services/social-media-management" },
-    { name: "Business Website", price: 3500, unit: "fixed", note: "Up to 6 pages · SEO · mobile-first", to: "/services/business-website" },
+    { name: "Logo Design", price: 750, unit: "fixed", note: "3 concepts · 2 revisions · full files", to: "/design-services/logo-design-project" },
+    { name: "Brand Identity", price: 2500, unit: "fixed", note: "Logo system · palette · guidelines", to: "/design-services/brand-identity-project" },
+    { name: "Social Management", price: 1200, unit: "/mo", note: `Starter · Growth ${formatMoney(2200, currency)}/mo`, to: "/design-services/social-media-management" },
+    { name: "Business Website", price: 3500, unit: "fixed", note: "Up to 6 pages · SEO · mobile-first", to: "/design-services/business-website-project" },
   ];
   return (
     <section className="rule-t" aria-label="Packages">

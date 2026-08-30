@@ -860,7 +860,10 @@ export type ManagedKind =
   | "templates" | "templateCategories" | "templateBundles"
   | "templateReviews" | "downloadRecords"
   // Kon10 Editor customer designs (Editor PRD §26/§58)
-  | "customerDesigns";
+  | "customerDesigns"
+  // website add-on configurator ("Power Up") — admin-editable catalog
+  | "websiteAddons" | "websiteAddonCategories"
+  | "agencyServices";
 
 export interface ManagedItem { id: string; [k: string]: unknown }
 
