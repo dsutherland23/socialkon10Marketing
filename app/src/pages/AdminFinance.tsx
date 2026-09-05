@@ -2334,13 +2334,17 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
   const docByNumber = useMemo(() => new Map(docs.map((d) => [d.number, d])), [docs]);
 
-  // Robust parent resolver: matches by ID, by document number, or by referenced doc number in notes
+  // Robust parent resolver: matches by ID, by document number, or by referenced doc number in notes.
+  // Prevents cycles: a receipt/credit_note cannot be the parent of another receipt/credit_note.
   const getParentOfDoc = useCallback((d: FinDocument): FinDocument | null => {
     if (d.convertedFromId) {
       const parent = docById.get(d.convertedFromId) || docByNumber.get(d.convertedFromId);
+      // Guard against self-reference and same-type cycles (e.g. CN pointing to CN)
       if (parent && parent.id !== d.id) return parent;
     }
     // Legacy / fallback: Check notes or internalNotes for referenced doc number (e.g. "Invoice INV-2026-0001")
+    // Only match ancestor types (invoice/quote) to avoid creating sibling/cycle links
+    const ancestorTypes: FinDocType[] = ["invoice", "quote"];
     const text = `${d.notes || ""} ${d.internalNotes || ""}`;
     const matches = text.match(/\b(INV|QTE|RCT|CN)-\d{4}-\d{4}\b/gi);
     if (matches) {
@@ -2348,7 +2352,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
         const num = m.toUpperCase();
         if (num !== d.number) {
           const parent = docByNumber.get(num);
-          if (parent && parent.id !== d.id) return parent;
+          if (parent && parent.id !== d.id && ancestorTypes.includes(parent.type)) return parent;
         }
       }
     }
@@ -2546,8 +2550,10 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   const convertToInvoice = async (d: FinDocument) => {
     const number = await getNextDocNumber("INV");
     const now = new Date().toISOString();
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id: _id, convertedFromId: _cfi, ...rest } = d;
     const newDoc: Omit<FinDocument, "id"> = {
-      ...d,
+      ...rest,
       type: "invoice",
       status: "draft",
       number,
@@ -2570,8 +2576,10 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
       const now = new Date().toISOString();
       const paidDate = d.paidDate || today();
       const amountPaid = d.amountPaidCents > 0 ? d.amountPaidCents : d.totalCents;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id: _id, convertedFromId: _cfi, ...rest } = d;
       const receiptDoc: Omit<FinDocument, "id"> = {
-        ...d,
+        ...rest,
         type: "receipt",
         status: "paid",
         number,
@@ -2620,8 +2628,10 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     try {
       const number = await getNextDocNumber("CN");
       const now = new Date().toISOString();
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id: _id, convertedFromId: _cfi, ...rest } = d;
       const creditNoteDoc: Omit<FinDocument, "id"> = {
-        ...d,
+        ...rest,
         type: "credit_note",
         status: "paid",
         number,
