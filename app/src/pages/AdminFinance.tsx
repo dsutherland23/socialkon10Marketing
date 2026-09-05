@@ -289,15 +289,26 @@ async function saveDoc(finDoc: Omit<FinDocument, "id">): Promise<string> {
 }
 
 async function patchDoc(id: string, data: Partial<FinDocument>): Promise<void> {
-  if (!firebaseReady || !db) return;
-  const clean = sanitizeForFirestore({ ...data, updatedAt: new Date().toISOString() });
-  await updateDoc(doc(db, "financeDocuments", id), clean);
+  if (!firebaseReady || !db || id.startsWith("local-") || id.startsWith("demo-")) return;
+  try {
+    const clean = sanitizeForFirestore({ ...data, updatedAt: new Date().toISOString() });
+    await updateDoc(doc(db, "financeDocuments", id), clean);
+  } catch (err) {
+    console.warn("patchDoc failed:", err);
+    throw err;
+  }
 }
 
 async function savePayment(payment: Omit<FinPayment, "id">): Promise<string> {
   if (!firebaseReady || !db) return `local-${Date.now()}`;
-  const ref = await addDoc(collection(db, "financePayments"), payment);
-  return ref.id;
+  try {
+    const clean = sanitizeForFirestore(payment);
+    const ref = await addDoc(collection(db, "financePayments"), clean);
+    return ref.id;
+  } catch (err) {
+    console.warn("savePayment to financePayments failed (falling back to local):", err);
+    return `local-${Date.now()}`;
+  }
 }
 
 async function loadClients(): Promise<FinClient[]> {
@@ -847,9 +858,21 @@ interface DocumentPreviewProps {
   onClose?: () => void;
   onEdit?: () => void;
   onDownloadPdf?: () => void;
+  onConvertToInvoice?: (d: FinDocument) => void;
+  onConvertToReceipt?: (d: FinDocument) => void;
+  onConvertToCreditNote?: (d: FinDocument) => void;
 }
 
-function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: DocumentPreviewProps) {
+function DocumentPreview({
+  finDoc,
+  profile,
+  onClose,
+  onEdit,
+  onDownloadPdf,
+  onConvertToInvoice,
+  onConvertToReceipt,
+  onConvertToCreditNote,
+}: DocumentPreviewProps) {
   const [copied, setCopied] = useState(false);
 
   // Keyboard shortcut: Press Escape to exit preview
@@ -865,7 +888,6 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
   }, [onClose, onEdit]);
 
   const bankNote = finDoc.notes?.trim() || profile.bankingDetails;
-
   const copyBankDetails = () => {
     navigator.clipboard.writeText(bankNote);
     setCopied(true);
@@ -899,8 +921,41 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
           </span>
         </div>
 
-        {/* Quick action buttons */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* Quick action buttons & Standard Conversion Flow */}
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+          {finDoc.type === "quote" && onConvertToInvoice && (
+            <button
+              type="button"
+              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs shadow-xs"
+              onClick={() => onConvertToInvoice(finDoc)}
+              title="Convert Quote to Invoice"
+            >
+              <span>→</span> <span>Convert to Invoice</span>
+            </button>
+          )}
+
+          {finDoc.type === "invoice" && onConvertToReceipt && (
+            <button
+              type="button"
+              className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs shadow-xs"
+              onClick={() => onConvertToReceipt(finDoc)}
+              title="Convert Invoice to Official Payment Receipt"
+            >
+              <span>🧾</span> <span>Generate Receipt</span>
+            </button>
+          )}
+
+          {finDoc.type === "invoice" && onConvertToCreditNote && (
+            <button
+              type="button"
+              className="px-2.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs shadow-xs"
+              onClick={() => onConvertToCreditNote(finDoc)}
+              title="Convert Invoice to Credit Note"
+            >
+              <span>↩️</span> <span className="hidden sm:inline">Credit Note</span>
+            </button>
+          )}
+
           <button
             type="button"
             className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs"
@@ -1144,11 +1199,17 @@ function DocumentPreviewModal({
   profile,
   onClose,
   onEdit,
+  onConvertToInvoice,
+  onConvertToReceipt,
+  onConvertToCreditNote,
 }: {
   finDoc: FinDocument;
   profile: FinanceProfile;
   onClose: () => void;
   onEdit: () => void;
+  onConvertToInvoice?: (d: FinDocument) => void;
+  onConvertToReceipt?: (d: FinDocument) => void;
+  onConvertToCreditNote?: (d: FinDocument) => void;
 }) {
   // Close on Escape key
   useEffect(() => {
@@ -1183,6 +1244,9 @@ function DocumentPreviewModal({
           onClose={onClose}
           onEdit={onEdit}
           onDownloadPdf={() => generatePDF(finDoc, profile)}
+          onConvertToInvoice={onConvertToInvoice}
+          onConvertToReceipt={onConvertToReceipt}
+          onConvertToCreditNote={onConvertToCreditNote}
         />
       </div>
     </div>
@@ -1283,6 +1347,7 @@ function PaymentModal({ finDoc, actor, onClose, onSaved }: PaymentModalProps) {
   const [reference, setReference] = useState("");
   const [paidDate, setPaidDate] = useState(today());
   const [notes, setNotes] = useState("");
+  const [autoReceipt, setAutoReceipt] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
@@ -1295,9 +1360,9 @@ function PaymentModal({ finDoc, actor, onClose, onSaved }: PaymentModalProps) {
         documentNumber: finDoc.number,
         amountCents,
         method,
-        reference: reference.trim() || undefined,
+        reference: reference.trim() || (null as any),
         paidDate,
-        notes: notes.trim() || undefined,
+        notes: notes.trim() || (null as any),
         recordedBy: actor,
         recordedAt: new Date().toISOString(),
       };
@@ -1312,19 +1377,71 @@ function PaymentModal({ finDoc, actor, onClose, onSaved }: PaymentModalProps) {
         ...(newBalance === 0 ? { paidDate } : {}),
       };
       await patchDoc(finDoc.id, patch);
+
+      let rctNumber: string | null = null;
+      if (autoReceipt) {
+        rctNumber = await getNextDocNumber("RCT");
+        const receiptDoc: Omit<FinDocument, "id"> = {
+          number: rctNumber,
+          type: "receipt",
+          status: "paid",
+          clientId: finDoc.clientId || (null as any),
+          clientName: finDoc.clientName,
+          clientEmail: finDoc.clientEmail,
+          clientPhone: finDoc.clientPhone || (null as any),
+          clientAddress: finDoc.clientAddress || (null as any),
+          clientCity: finDoc.clientCity || (null as any),
+          issueDate: paidDate,
+          paidDate,
+          items: finDoc.items,
+          subtotalCents: finDoc.subtotalCents,
+          discountCents: finDoc.discountCents || 0,
+          taxRatePercent: finDoc.taxRatePercent,
+          taxCents: finDoc.taxCents,
+          totalCents: finDoc.totalCents,
+          amountPaidCents: amountCents,
+          balanceDueCents: newBalance,
+          convertedFromId: finDoc.id,
+          notes: [
+            `Official Payment Receipt for Invoice ${finDoc.number}.`,
+            `Payment received via ${method.replace("_", " ").toUpperCase()}${reference.trim() ? ` (Ref: ${reference.trim()})` : ""}.`,
+            notes.trim() ? `Note: ${notes.trim()}` : "",
+            `Status: ${newBalance === 0 ? "Paid in full" : `Partial payment (Balance remaining: ${centsToDisplay(newBalance)})`}. Thank you for choosing Socialkon10 Jamaica!`
+          ].filter(Boolean).join("\n"),
+          terms: finDoc.terms,
+          currency: "USD",
+          createdBy: actor,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const rctId = await saveDoc(receiptDoc);
+        await logFinanceAudit({
+          documentId: rctId,
+          documentNumber: rctNumber,
+          action: "receipt_generated_from_invoice",
+          actor,
+          before: { invoiceId: finDoc.id, invoiceNumber: finDoc.number },
+          after: { amountCents, method, paidDate },
+        });
+      }
+
       await logFinanceAudit({
         documentId: finDoc.id,
         documentNumber: finDoc.number,
         action: "payment_recorded",
         actor,
-        after: { amountCents, method, paidDate },
+        after: { amountCents, method, paidDate, generatedReceipt: rctNumber },
       });
       const updated = { ...finDoc, ...patch };
-      toast.success(`Payment of ${centsToDisplay(amountCents)} recorded.`);
+      if (rctNumber) {
+        toast.success(`Payment of ${centsToDisplay(amountCents)} recorded & Receipt #${rctNumber} generated!`);
+      } else {
+        toast.success(`Payment of ${centsToDisplay(amountCents)} recorded.`);
+      }
       onSaved(updated);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to record payment.");
+    } catch (err: any) {
+      console.error("Payment recording error:", err);
+      toast.error(err?.message ? `Failed to record payment: ${err.message}` : "Failed to record payment.");
     } finally {
       setBusy(false);
     }
@@ -1364,6 +1481,20 @@ function PaymentModal({ finDoc, actor, onClose, onSaved }: PaymentModalProps) {
           <div>
             <label className={labelCls}>Notes</label>
             <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+
+          <div className="pt-2">
+            <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-neutral-900 dark:text-white p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xs">
+              <input
+                type="checkbox"
+                checked={autoReceipt}
+                onChange={(e) => setAutoReceipt(e.target.checked)}
+                className="rounded-xs border-[var(--line)] text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+              />
+              <span className="flex items-center gap-1.5">
+                <span>🧾</span> Automatically generate official Payment Receipt (RCT)
+              </span>
+            </label>
           </div>
         </div>
         <div className="flex gap-3 mt-5">
@@ -2249,6 +2380,100 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     onRefresh();
   };
 
+  const convertToReceipt = async (d: FinDocument, paymentMethod = "Bank Transfer", paymentRef = "") => {
+    try {
+      const number = await getNextDocNumber("RCT");
+      const now = new Date().toISOString();
+      const paidDate = d.paidDate || today();
+      const amountPaid = d.amountPaidCents > 0 ? d.amountPaidCents : d.totalCents;
+      const receiptDoc: Omit<FinDocument, "id"> = {
+        ...d,
+        type: "receipt",
+        status: "paid",
+        number,
+        issueDate: paidDate,
+        paidDate,
+        amountPaidCents: amountPaid,
+        balanceDueCents: 0,
+        convertedFromId: d.id,
+        notes: [
+          `Official Payment Receipt for Invoice ${d.number}.`,
+          `Payment received via ${paymentMethod}${paymentRef ? ` (Ref: ${paymentRef})` : ""}.`,
+          `Status: Paid in full. Thank you for choosing Socialkon10 Jamaica!`,
+        ].join("\n"),
+        createdAt: now,
+        updatedAt: now,
+      };
+      const id = await saveDoc(receiptDoc);
+      if (d.status !== "paid") {
+        await patchDoc(d.id, {
+          status: "paid",
+          paidDate,
+          amountPaidCents: d.totalCents,
+          balanceDueCents: 0,
+        });
+      }
+      await logFinanceAudit({
+        documentId: id,
+        documentNumber: number,
+        action: "converted_invoice_to_receipt",
+        actor,
+        before: { invoiceId: d.id, invoiceNumber: d.number },
+      });
+      toast.success(`Receipt ${number} created from invoice ${d.number}.`);
+      onRefresh();
+      return number;
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to generate receipt.");
+      return null;
+    }
+  };
+
+  const convertToCreditNote = async (d: FinDocument) => {
+    if (!confirm(`Create a Credit Note for Invoice ${d.number} (${centsToDisplay(d.totalCents)})?\n\nThis will generate an official Credit Note (CN) to officially cancel or reduce the amount owed, and mark invoice ${d.number} as credited/void.`)) return;
+    try {
+      const number = await getNextDocNumber("CN");
+      const now = new Date().toISOString();
+      const creditNoteDoc: Omit<FinDocument, "id"> = {
+        ...d,
+        type: "credit_note",
+        status: "paid",
+        number,
+        issueDate: today(),
+        paidDate: today(),
+        amountPaidCents: d.totalCents,
+        balanceDueCents: 0,
+        convertedFromId: d.id,
+        notes: [
+          `Credit Note issued for Invoice ${d.number}.`,
+          `Credits / cancels ${centsToDisplay(d.totalCents)} USD on ${d.number}.`,
+          `Reason: Customer return, billing adjustment, or cancellation.`,
+        ].join("\n"),
+        createdAt: now,
+        updatedAt: now,
+      };
+      const id = await saveDoc(creditNoteDoc);
+      await patchDoc(d.id, {
+        status: "void",
+        balanceDueCents: 0,
+        internalNotes: [d.internalNotes, `[${today()}] Credited in full via Credit Note ${number}`].filter(Boolean).join("\n"),
+      });
+      await logFinanceAudit({
+        documentId: id,
+        documentNumber: number,
+        action: "converted_invoice_to_credit_note",
+        actor,
+        before: { invoiceId: d.id, invoiceNumber: d.number },
+      });
+      toast.success(`Credit Note ${number} issued for invoice ${d.number}.`);
+      onRefresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to generate credit note.");
+    }
+  };
+
   const copyClientLink = (d: FinDocument) => {
     const url = `${window.location.origin}/invoice/${d.number}`;
     navigator.clipboard.writeText(url);
@@ -2603,7 +2828,31 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
                         </button>
                       )}
                       {d.type === "quote" && d.status !== "void" && (
-                        <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => convertToInvoice(d)}>→ Invoice</button>
+                        <button
+                          className="text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 border border-blue-200 transition-colors cursor-pointer"
+                          onClick={() => convertToInvoice(d)}
+                          title="Convert Quote to Invoice"
+                        >
+                          → Invoice
+                        </button>
+                      )}
+                      {d.type === "invoice" && d.status !== "void" && (
+                        <>
+                          <button
+                            className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 border border-emerald-200 transition-colors cursor-pointer"
+                            onClick={() => convertToReceipt(d)}
+                            title="Convert Invoice to Official Payment Receipt"
+                          >
+                            🧾 → Receipt
+                          </button>
+                          <button
+                            className="text-[10px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2 py-1 border border-purple-200 transition-colors cursor-pointer"
+                            onClick={() => convertToCreditNote(d)}
+                            title="Convert Invoice to Credit Note (Cancel / Adjust)"
+                          >
+                            ↩️ → Credit Note
+                          </button>
+                        </>
                       )}
                       {d.status !== "void" && (
                         <button className="text-[10px] text-[var(--muted)] hover:text-blue-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => sendDoc(d)}>Send</button>
@@ -2650,7 +2899,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
         />
       )}
 
-      {/* Full-Screen Document Preview Modal */}
+      {/* Full-Screen Document Preview Modal with Standard Conversion Flow */}
       {previewTarget && (
         <DocumentPreviewModal
           finDoc={previewTarget}
@@ -2660,6 +2909,18 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
             const target = previewTarget;
             setPreviewTarget(null);
             onEdit(target);
+          }}
+          onConvertToInvoice={async (d) => {
+            setPreviewTarget(null);
+            await convertToInvoice(d);
+          }}
+          onConvertToReceipt={async (d) => {
+            setPreviewTarget(null);
+            await convertToReceipt(d);
+          }}
+          onConvertToCreditNote={async (d) => {
+            setPreviewTarget(null);
+            await convertToCreditNote(d);
           }}
         />
       )}
