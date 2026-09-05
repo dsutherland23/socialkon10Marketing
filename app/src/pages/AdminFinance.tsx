@@ -735,6 +735,18 @@ interface DocumentPreviewProps {
 function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: DocumentPreviewProps) {
   const [copied, setCopied] = useState(false);
 
+  // Keyboard shortcut: Press Escape to exit preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (onClose) onClose();
+        else if (onEdit) onEdit();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, onEdit]);
+
   const bankNote = finDoc.notes?.trim() || profile.bankingDetails;
 
   const copyBankDetails = () => {
@@ -748,74 +760,95 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
   const waUrl = `https://wa.me/18762554848?text=${waReceiptText}`;
 
   return (
-    <div className="bg-white text-neutral-900 shadow-2xl rounded-sm border border-neutral-200 max-w-3xl mx-auto overflow-hidden font-sans">
-      {/* Top Action Ribbon (Only on Screen, Hidden on Print) */}
-      <div className="bg-neutral-900 text-white px-6 py-3 flex items-center justify-between gap-3 text-xs print:hidden">
-        <span className="font-mono text-neutral-300">
-          Previewing {DOC_TYPE_LABELS[finDoc.type]} #{finDoc.number}
-        </span>
+    <div className="bg-white text-neutral-900 shadow-2xl rounded-sm border border-neutral-200 max-w-3xl mx-auto overflow-hidden font-sans w-full">
+      {/* Top Action Ribbon (Sticky on Screen, Responsive on Mobile, Hidden on Print) */}
+      <div className="sticky top-0 z-40 bg-neutral-900 text-white px-3 sm:px-6 py-2.5 sm:py-3 border-b border-neutral-800 shadow-md flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
+        {/* Prominent Exit Button (Always visible on mobile & desktop) */}
         <div className="flex items-center gap-2">
+          {(onClose || onEdit) && (
+            <button
+              type="button"
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold rounded-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+              onClick={onClose || onEdit}
+              title="Exit preview (Esc)"
+              aria-label="Exit preview"
+            >
+              <span>✕</span>
+              <span>Exit Preview</span>
+            </button>
+          )}
+          <span className="font-mono text-[11px] text-neutral-300 hidden md:inline">
+            {DOC_TYPE_LABELS[finDoc.type]} #{finDoc.number}
+          </span>
+        </div>
+
+        {/* Quick action buttons */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <button
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors flex items-center gap-1"
+            type="button"
+            className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs"
             onClick={() => {
               const url = `${window.location.origin}/invoice/${finDoc.number}`;
               navigator.clipboard.writeText(url);
               toast.success(`Client link copied: ${url}`);
             }}
+            title="Copy client share link"
           >
-            <span>🔗</span> Client Link
+            <span>🔗</span> <span className="hidden sm:inline">Client Link</span>
           </button>
           {onEdit && (
-            <button className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors" onClick={onEdit}>
-              ✏️ Edit
+            <button
+              type="button"
+              className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs"
+              onClick={onEdit}
+            >
+              <span>✏️</span> <span className="hidden sm:inline">Edit</span>
             </button>
           )}
           <button
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors"
+            type="button"
+            className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs"
             onClick={onDownloadPdf ?? (() => generatePDF(finDoc, profile))}
+            title="Download PDF document"
           >
-            📥 PDF
+            <span>📥</span> <span className="hidden sm:inline">PDF</span>
           </button>
           <button
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors"
+            type="button"
+            className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xs transition-colors hidden md:flex items-center gap-1 cursor-pointer text-xs"
             onClick={() => window.print()}
           >
-            🖨 Print
+            <span>🖨</span> Print
           </button>
-          {onClose && (
-            <button className="px-2 py-1 text-neutral-400 hover:text-white" onClick={onClose} aria-label="Close preview">
-              ✕
-            </button>
-          )}
         </div>
       </div>
 
       {/* Printable Sheet Body */}
-      <div className="p-8 sm:p-12 space-y-8">
+      <div className="p-4 sm:p-8 md:p-12 space-y-6 sm:space-y-8">
         {/* Header: Logo + Business Info + Document Number */}
-        <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b border-neutral-200 pb-8">
-          <div>
+        <div className="flex flex-col sm:flex-row justify-between items-start gap-4 sm:gap-6 border-b border-neutral-200 pb-6 sm:pb-8">
+          <div className="w-full sm:w-auto">
             {profile.logoUrl ? (
               <img
                 src={profile.logoUrl}
                 alt={profile.businessName}
-                className="h-12 w-auto max-w-[200px] object-contain mb-3"
+                className="h-10 sm:h-12 w-auto max-w-[180px] sm:max-w-[200px] object-contain mb-3"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = "none";
                 }}
               />
             ) : null}
-            <h1 className="text-xl font-bold tracking-tight text-neutral-950 uppercase">{profile.businessName}</h1>
-            <p className="text-xs text-neutral-500 mt-1">{profile.location}</p>
-            <p className="text-xs text-neutral-500">{profile.email} · {profile.phone}</p>
-            <p className="text-xs text-neutral-400 mt-0.5">{profile.website.replace(/^https?:\/\//, "")}</p>
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-neutral-950 uppercase break-words">{profile.businessName}</h1>
+            <p className="text-xs text-neutral-500 mt-1 break-words">{profile.location}</p>
+            <p className="text-xs text-neutral-500 break-words">{profile.email} · {profile.phone}</p>
+            <p className="text-xs text-neutral-400 mt-0.5 break-words">{profile.website.replace(/^https?:\/\//, "")}</p>
           </div>
 
-          <div className="sm:text-right">
+          <div className="w-full sm:w-auto sm:text-right pt-3 sm:pt-0 border-t sm:border-t-0 border-neutral-100">
             <span className={`inline-block text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full mb-2 ${STATUS_COLORS[finDoc.status]}`}>
               {STATUS_LABELS[finDoc.status]}
             </span>
-            <h2 className="text-2xl font-black tracking-tight text-neutral-950 uppercase">
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-neutral-950 uppercase">
               {DOC_TYPE_LABELS[finDoc.type]}
             </h2>
             <p className="font-mono text-sm text-neutral-600 font-semibold mt-1">#{finDoc.number}</p>
@@ -828,21 +861,21 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
         </div>
 
         {/* Bill To */}
-        <div className="bg-neutral-50 p-5 rounded-sm border border-neutral-200/70">
+        <div className="bg-neutral-50 p-4 sm:p-5 rounded-sm border border-neutral-200/70">
           <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 mb-2">Billed To</p>
-          <p className="text-base font-bold text-neutral-950">{finDoc.clientName || "Valued Client"}</p>
-          {finDoc.clientEmail && <p className="text-xs text-neutral-600 mt-0.5">{finDoc.clientEmail}</p>}
-          {finDoc.clientPhone && <p className="text-xs text-neutral-600">{finDoc.clientPhone}</p>}
+          <p className="text-base font-bold text-neutral-950 break-words">{finDoc.clientName || "Valued Client"}</p>
+          {finDoc.clientEmail && <p className="text-xs text-neutral-600 mt-0.5 break-words">{finDoc.clientEmail}</p>}
+          {finDoc.clientPhone && <p className="text-xs text-neutral-600 break-words">{finDoc.clientPhone}</p>}
           {(finDoc.clientAddress || finDoc.clientCity) && (
-            <p className="text-xs text-neutral-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1 break-words">
               {[finDoc.clientAddress, finDoc.clientCity].filter(Boolean).join(", ")}
             </p>
           )}
         </div>
 
-        {/* Line Items Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+        {/* Line Items Table with smooth touch scrolling */}
+        <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+          <table className="w-full text-left border-collapse text-xs min-w-[460px]">
             <thead>
               <tr className="border-b-2 border-neutral-950 text-[10px] font-bold uppercase text-neutral-500">
                 <th className="py-2.5 px-2">Description</th>
@@ -868,7 +901,7 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
 
         {/* Totals Breakdown */}
         <div className="flex justify-end pt-4 border-t border-neutral-200">
-          <div className="w-64 space-y-2 text-xs">
+          <div className="w-full sm:w-80 space-y-2 text-xs">
             <div className="flex justify-between text-neutral-600">
               <span>Subtotal</span>
               <span className="font-mono">{centsToDisplay(finDoc.subtotalCents)}</span>
@@ -906,16 +939,16 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
         </div>
 
         {/* Payment Instructions & CIBC Caribbean Details Card */}
-        <div className="bg-amber-50/50 border border-amber-200/80 rounded-sm p-6 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="bg-amber-50/50 border border-amber-200/80 rounded-sm p-4 sm:p-6 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
               <span>🏦</span> CIBC Caribbean Bank Transfer & Payment Details
             </span>
-            <div className="flex items-center gap-2 print:hidden">
+            <div className="flex flex-wrap items-center gap-2 print:hidden">
               <button
                 type="button"
                 onClick={copyBankDetails}
-                className="text-[11px] font-semibold bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 px-2.5 py-1 rounded transition-colors shadow-xs"
+                className="text-[11px] font-semibold bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 px-2.5 py-1.5 rounded transition-colors shadow-xs cursor-pointer"
               >
                 {copied ? "✓ Copied!" : "📋 Copy Bank Details"}
               </button>
@@ -923,14 +956,14 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
                 href={waUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded transition-colors flex items-center gap-1 shadow-xs"
+                className="text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded transition-colors flex items-center gap-1 shadow-xs"
               >
                 <span>💬</span> WhatsApp Receipt
               </a>
             </div>
           </div>
 
-          <pre className="text-xs text-neutral-800 font-sans whitespace-pre-wrap leading-relaxed">
+          <pre className="text-xs text-neutral-800 font-sans whitespace-pre-wrap break-words leading-relaxed">
             {bankNote}
           </pre>
         </div>
@@ -947,6 +980,35 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
         <div className="text-center pt-8 border-t border-neutral-100 text-[11px] text-neutral-400">
           <p>Thank you for choosing {profile.businessName} — we appreciate your business!</p>
           <p className="mt-0.5">{profile.website} · {profile.email} · {profile.phone}</p>
+        </div>
+      </div>
+
+      {/* Bottom Action Ribbon (Always reachable on mobile & desktop) */}
+      <div className="bg-neutral-100 border-t border-neutral-200 p-4 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-3 print:hidden">
+        {(onClose || onEdit) && (
+          <button
+            type="button"
+            className="w-full sm:w-auto px-5 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs rounded transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+            onClick={onClose || onEdit}
+          >
+            ← Back to Editor / Exit Preview
+          </button>
+        )}
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <button
+            type="button"
+            className="flex-1 sm:flex-initial px-3 py-2 bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 font-semibold text-xs rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+            onClick={onDownloadPdf ?? (() => generatePDF(finDoc, profile))}
+          >
+            📥 Download PDF
+          </button>
+          <button
+            type="button"
+            className="flex-1 sm:flex-initial px-3 py-2 bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 font-semibold text-xs rounded transition-colors hidden sm:flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+            onClick={() => window.print()}
+          >
+            🖨 Print
+          </button>
         </div>
       </div>
     </div>
@@ -968,9 +1030,33 @@ function DocumentPreviewModal({
   onClose: () => void;
   onEdit: () => void;
 }) {
+  // Close on Escape key
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4 sm:p-6 flex items-center justify-center backdrop-blur-xs">
-      <div className="relative w-full max-w-3xl my-8">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-2 sm:p-4 md:p-6 flex items-start justify-center backdrop-blur-xs"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="relative w-full max-w-3xl my-2 sm:my-6">
+        {/* Floating Close Button */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute -top-3 -right-1 sm:-top-4 sm:-right-4 z-50 w-9 h-9 rounded-full bg-neutral-900 text-white border-2 border-white flex items-center justify-center font-bold text-sm shadow-xl hover:bg-red-600 transition-colors cursor-pointer"
+          title="Close preview (Esc)"
+          aria-label="Close preview"
+        >
+          ✕
+        </button>
         <DocumentPreview
           finDoc={finDoc}
           profile={profile}
@@ -1446,13 +1532,58 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
 
       {/* When in Live Preview Mode */}
       {showPreview ? (
-        <div className="py-4">
+        <div className="space-y-4 py-2">
+          {/* Quick Sticky Back Bar */}
+          <div className="sticky top-2 z-30 flex items-center justify-between gap-2 p-3 bg-[var(--dept)] text-[var(--on-dept)] rounded-sm shadow-lg">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-xs">👁 Live Document Preview</span>
+              <span className="text-[10px] opacity-80 font-mono">({previewDoc.number})</span>
+            </div>
+            <button
+              type="button"
+              className="px-3 py-1.5 bg-black/30 hover:bg-black/50 text-white font-bold text-xs rounded transition-colors flex items-center gap-1.5 cursor-pointer"
+              onClick={() => setShowPreview(false)}
+            >
+              ← Exit Preview & Edit Form
+            </button>
+          </div>
+
           <DocumentPreview
             finDoc={previewDoc}
             profile={profile}
+            onClose={() => setShowPreview(false)}
             onEdit={() => setShowPreview(false)}
             onDownloadPdf={() => generatePDF(previewDoc, profile)}
           />
+
+          {/* Bottom Back / Action Bar */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 pb-6 border-t border-[var(--line)]">
+            <button
+              type="button"
+              className="w-full sm:w-auto btn btn-dept px-6 py-2.5 text-xs font-bold inline-flex items-center justify-center gap-2 shadow-md cursor-pointer"
+              onClick={() => setShowPreview(false)}
+            >
+              ← Back to Editor & Make Changes
+            </button>
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <button
+                type="button"
+                className="w-full sm:w-auto btn btn-ghost px-4 py-2.5 text-xs font-semibold"
+                onClick={() => save(false)}
+                disabled={busy}
+              >
+                {busy ? "Saving…" : "Save Draft"}
+              </button>
+              <button
+                type="button"
+                className="w-full sm:w-auto btn btn-dept px-4 py-2.5 text-xs font-semibold"
+                onClick={() => save(true)}
+                disabled={busy}
+              >
+                {busy ? "…" : "Save & Send"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : (
         /* Edit Form */

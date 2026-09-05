@@ -330,25 +330,25 @@ export default function InvoicePublicView() {
         )}
 
         {/* Main Printable White Sheet */}
-        <div className="bg-white text-neutral-900 shadow-xl rounded-sm border border-neutral-200 p-8 sm:p-12 space-y-8 font-sans">
+        <div className="bg-white text-neutral-900 shadow-xl rounded-sm border border-neutral-200 p-4 sm:p-8 md:p-12 space-y-6 sm:space-y-8 font-sans">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b border-neutral-200 pb-8">
-            <div>
+          <div className="flex flex-col sm:flex-row justify-between items-start gap-4 sm:gap-6 border-b border-neutral-200 pb-6 sm:pb-8">
+            <div className="w-full sm:w-auto">
               {p.logoUrl && (
                 <img
                   src={p.logoUrl}
                   alt={p.businessName}
-                  className="h-12 w-auto max-w-[200px] object-contain mb-3"
+                  className="h-10 sm:h-12 w-auto max-w-[180px] sm:max-w-[200px] object-contain mb-3"
                   onError={(e) => { (e.currentTarget as HTMLElement).style.display = "none"; }}
                 />
               )}
-              <h1 className="text-xl font-bold tracking-tight text-neutral-950 uppercase">{p.businessName}</h1>
-              <p className="text-xs text-neutral-500 mt-1">{p.location}</p>
-              <p className="text-xs text-neutral-500">{p.email} · {p.phone}</p>
-              <p className="text-xs text-neutral-400 mt-0.5">{p.website.replace(/^https?:\/\//, "")}</p>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-neutral-950 uppercase break-words">{p.businessName}</h1>
+              <p className="text-xs text-neutral-500 mt-1 break-words">{p.location}</p>
+              <p className="text-xs text-neutral-500 break-words">{p.email} · {p.phone}</p>
+              <p className="text-xs text-neutral-400 mt-0.5 break-words">{p.website.replace(/^https?:\/\//, "")}</p>
             </div>
 
-            <div className="sm:text-right">
+            <div className="w-full sm:w-auto sm:text-right pt-3 sm:pt-0 border-t sm:border-t-0 border-neutral-100">
               <span className={`inline-block text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full mb-2 ${
                 finDoc.status === "paid" ? "bg-green-100 text-green-700" :
                 finDoc.status === "overdue" ? "bg-red-100 text-red-700" :
@@ -356,7 +356,7 @@ export default function InvoicePublicView() {
               }`}>
                 {finDoc.status.toUpperCase()}
               </span>
-              <h2 className="text-2xl font-black tracking-tight text-neutral-950 uppercase">
+              <h2 className="text-xl sm:text-2xl font-black tracking-tight text-neutral-950 uppercase">
                 {finDoc.type.toUpperCase()}
               </h2>
               <p className="font-mono text-sm text-neutral-600 font-semibold mt-1">#{finDoc.number}</p>
@@ -369,21 +369,21 @@ export default function InvoicePublicView() {
           </div>
 
           {/* Billed To */}
-          <div className="bg-neutral-50 p-5 rounded-sm border border-neutral-200/70">
+          <div className="bg-neutral-50 p-4 sm:p-5 rounded-sm border border-neutral-200/70">
             <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 mb-2">Billed To</p>
-            <p className="text-base font-bold text-neutral-950">{finDoc.clientName || "Valued Client"}</p>
-            {finDoc.clientEmail && <p className="text-xs text-neutral-600 mt-0.5">{finDoc.clientEmail}</p>}
-            {finDoc.clientPhone && <p className="text-xs text-neutral-600">{finDoc.clientPhone}</p>}
+            <p className="text-base font-bold text-neutral-950 break-words">{finDoc.clientName || "Valued Client"}</p>
+            {finDoc.clientEmail && <p className="text-xs text-neutral-600 mt-0.5 break-words">{finDoc.clientEmail}</p>}
+            {finDoc.clientPhone && <p className="text-xs text-neutral-600 break-words">{finDoc.clientPhone}</p>}
             {(finDoc.clientAddress || finDoc.clientCity) && (
-              <p className="text-xs text-neutral-500 mt-1">
+              <p className="text-xs text-neutral-500 mt-1 break-words">
                 {[finDoc.clientAddress, finDoc.clientCity].filter(Boolean).join(", ")}
               </p>
             )}
           </div>
 
           {/* Line Items Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+          <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+            <table className="w-full text-left border-collapse text-xs min-w-[460px]">
               <thead>
                 <tr className="border-b-2 border-neutral-950 text-[10px] font-bold uppercase text-neutral-500">
                   <th className="py-2.5 px-2">Description</th>
@@ -409,7 +409,7 @@ export default function InvoicePublicView() {
 
           {/* Totals Breakdown (with JMD estimate) */}
           <div className="flex justify-end pt-4 border-t border-neutral-200">
-            <div className="w-72 space-y-2 text-xs">
+            <div className="w-full sm:w-80 space-y-2 text-xs">
               <div className="flex justify-between text-neutral-600">
                 <span>Subtotal</span>
                 <span className="font-mono">{centsToDisplay(finDoc.subtotalCents)}</span>
@@ -449,16 +449,16 @@ export default function InvoicePublicView() {
           </div>
 
           {/* CIBC Caribbean Bank Transfer Card */}
-          <div className="bg-amber-50/50 border border-amber-200/80 rounded-sm p-6 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="bg-amber-50/50 border border-amber-200/80 rounded-sm p-4 sm:p-6 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
                 <span>🏦</span> CIBC Caribbean Bank Transfer Instructions
               </span>
-              <div className="flex items-center gap-2 print:hidden">
+              <div className="flex flex-wrap items-center gap-2 print:hidden">
                 <button
                   type="button"
                   onClick={copyBankDetails}
-                  className="text-[11px] font-semibold bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 px-2.5 py-1 rounded transition-colors shadow-xs"
+                  className="text-[11px] font-semibold bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 px-2.5 py-1.5 rounded transition-colors shadow-xs cursor-pointer"
                 >
                   {copied ? "✓ Copied!" : "📋 Copy Bank Info"}
                 </button>
@@ -466,14 +466,14 @@ export default function InvoicePublicView() {
                   href={waUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded transition-colors flex items-center gap-1 shadow-xs"
+                  className="text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded transition-colors flex items-center gap-1 shadow-xs"
                 >
                   <span>💬</span> WhatsApp Receipt
                 </a>
               </div>
             </div>
 
-            <pre className="text-xs text-neutral-800 font-sans whitespace-pre-wrap leading-relaxed">
+            <pre className="text-xs text-neutral-800 font-sans whitespace-pre-wrap break-words leading-relaxed">
               {bankNote}
             </pre>
           </div>
