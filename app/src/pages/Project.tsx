@@ -86,7 +86,7 @@ export default function ProjectPage() {
                 onOpen={() => setPreviewOpen(true)}
               />
             ) : (
-              <ProjectCover seed={project.coverSeed} hue={project.hue} title={project.title} image={project.image} className="!h-full" />
+              <ProjectCover seed={project.coverSeed} hue={project.hue} title={project.title} image={project.image} fit={project.imageFit ?? "contain"} className="!h-full" />
             )}
           </div>
         </Reveal>

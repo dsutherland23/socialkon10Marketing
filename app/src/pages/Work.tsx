@@ -122,7 +122,7 @@ export default function Work() {
                     </div>
                   ) : (
                     <Link to={`/work/${p.slug}`} className={`relative block media-frame ${aspect}`}>
-                      <ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} />
+                      <ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} fit={p.imageFit ?? "contain"} />
                       {isWeb && <WebChrome label={p.slug} />}
                     </Link>
                   )}

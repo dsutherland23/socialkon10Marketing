@@ -152,7 +152,7 @@ export default function ServicePage() {
                 {related.map((p) => (
                   <Reveal key={p.slug}>
                     <Link to={`/work/${p.slug}`} className="group block media-hover">
-                      <div className="media-frame aspect-[4/3]"><ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} /></div>
+                      <div className="media-frame aspect-[4/3]"><ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} fit={p.imageFit ?? "contain"} /></div>
                       <span className="font-meta text-[9px] text-[var(--muted)] block mt-2">/PROJECT_{p.id}</span>
                       <span className="font-display text-base font-bold uppercase group-hover:text-[var(--dept)] transition-colors">{p.title}</span>
                     </Link>

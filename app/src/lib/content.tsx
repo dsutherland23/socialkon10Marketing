@@ -153,6 +153,7 @@ export function ContentProvider({ children }: { children: ReactNode }) {
             hue: Number(p.hue ?? 210),
             summary: String(p.summary ?? ""),
             image: p.image ? String(p.image) : undefined,
+            imageFit: (p.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
             liveUrl: p.liveUrl && /^https:\/\//.test(String(p.liveUrl)) ? String(p.liveUrl) : undefined,
             featured: p.featured === true || p.featured === "true",
             caseStudy: {

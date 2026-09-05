@@ -865,7 +865,7 @@ export default function DepartmentPage({ deptId }: { deptId: DeptId }) {  const 
             {work.map((p, i) => (
               <Reveal key={p.slug} delay={i * 80}>
                 <Link to={`/work/${p.slug}`} className="group block media-hover">
-                  <div className="media-frame aspect-[4/5]"><ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} /></div>
+                  <div className="media-frame aspect-[4/5]"><ProjectCover seed={p.coverSeed} hue={p.hue} title={p.title} image={p.image} fit={p.imageFit ?? "contain"} /></div>
                   <span className="font-meta text-[9px] text-[var(--muted)] block mt-3">/PROJECT_{p.id}</span>
                   <h3 className="font-display text-lg font-bold uppercase mt-1 group-hover:text-[var(--dept)] transition-colors">{p.title}</h3>
                 </Link>

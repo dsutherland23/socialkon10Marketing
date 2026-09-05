@@ -22,12 +22,14 @@ export function ProjectCover({
   hue,
   title,
   image,
+  fit = "contain",
   className = "",
 }: {
   seed: number;
   hue: number;
   title: string;
   image?: string;   // uploaded cover (admin CMS) — takes precedence over generative art
+  fit?: "cover" | "contain"; // "contain" shows 100% full design without clipping; "cover" crops to fill
   className?: string;
 }) {
   const kind = seed % 3;
@@ -78,6 +80,8 @@ export function ProjectCover({
     return els;
   }, [seed, hue, kind]);
 
+  const isContain = fit === "contain";
+
   return (
     <svg
       viewBox="0 0 800 1000"
@@ -87,8 +91,38 @@ export function ProjectCover({
       preserveAspectRatio="xMidYMid slice"
       style={{ display: "block", width: "100%", height: "100%", background: `hsl(${hue} 45% 8%)` }}
     >
+      <defs>
+        <filter id={`blur-bg-${seed}`}>
+          <feGaussianBlur stdDeviation="30" />
+          <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.4 0" />
+        </filter>
+      </defs>
+
       {image ? (
-        <image href={image} x="0" y="0" width="800" height="1000" preserveAspectRatio="xMidYMid slice" />
+        <>
+          {/* If contain, render blurred ambient backdrop so aspect ratio differences look intentional and polished */}
+          {isContain && (
+            <image
+              href={image}
+              x="-40"
+              y="-40"
+              width="880"
+              height="1080"
+              preserveAspectRatio="xMidYMid slice"
+              filter={`url(#blur-bg-${seed})`}
+              opacity="0.65"
+            />
+          )}
+          {/* Main Artwork: preserveAspectRatio meet ensures 100% full design is visible */}
+          <image
+            href={image}
+            x={isContain ? "20" : "0"}
+            y={isContain ? "20" : "0"}
+            width={isContain ? "760" : "800"}
+            height={isContain ? "960" : "1000"}
+            preserveAspectRatio={isContain ? "xMidYMid meet" : "xMidYMid slice"}
+          />
+        </>
       ) : (
         nodes
       )}

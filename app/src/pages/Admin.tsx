@@ -2666,6 +2666,7 @@ interface UnifiedProject {
   summary: string;
   liveUrl?: string;
   image?: string;
+  imageFit?: "cover" | "contain";
   featured?: boolean;
   enabled: boolean;
   isBuiltIn: boolean;
@@ -2687,6 +2688,8 @@ function PortfolioManager() {
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
   const [showCaseStudy, setShowCaseStudy] = useState(false);
+  const [hoveredImage, setHoveredImage] = useState<{ src: string; title: string; client: string; fit: string; x: number; y: number } | null>(null);
+  const [inspectProject, setInspectProject] = useState<UnifiedProject | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = () => listManaged("portfolio").then(setManagedItems);
@@ -2719,6 +2722,7 @@ function PortfolioManager() {
           summary: String(cmsOverride.summary ?? bp.summary),
           liveUrl: cmsOverride.liveUrl !== undefined ? String(cmsOverride.liveUrl) : bp.liveUrl,
           image: cmsOverride.image ? String(cmsOverride.image) : bp.image,
+          imageFit: (cmsOverride.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
           featured: cmsOverride.featured !== undefined ? !!cmsOverride.featured : bp.featured,
           enabled: cmsOverride.enabled !== false,
           isBuiltIn: true,
@@ -2745,6 +2749,7 @@ function PortfolioManager() {
           summary: bp.summary,
           liveUrl: bp.liveUrl,
           image: bp.image,
+          imageFit: (bp.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
           featured: bp.featured,
           enabled: true,
           isBuiltIn: true,
@@ -2773,6 +2778,7 @@ function PortfolioManager() {
           summary: String(m.summary ?? ""),
           liveUrl: m.liveUrl ? String(m.liveUrl) : undefined,
           image: m.image ? String(m.image) : undefined,
+          imageFit: (m.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
           featured: !!m.featured,
           enabled: m.enabled !== false,
           isBuiltIn: false,
@@ -2822,6 +2828,7 @@ function PortfolioManager() {
       summary: "",
       liveUrl: "https://",
       image: "",
+      imageFit: "contain",
       featured: false,
       challenge: "",
       strategy: "",
@@ -2849,6 +2856,7 @@ function PortfolioManager() {
       summary: p.summary,
       liveUrl: p.liveUrl ?? "",
       image: p.image ?? "",
+      imageFit: p.imageFit ?? "contain",
       featured: !!p.featured,
       challenge: p.caseStudy?.challenge ?? "",
       strategy: p.caseStudy?.strategy ?? "",
@@ -2868,8 +2876,8 @@ function PortfolioManager() {
       const url = await uploadImage(file, "portfolio");
       setDraft((d) => ({ ...d, image: url }));
       toast.success(firebaseReady ? "Cover image uploaded" : "Image attached (demo preview)");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } catch {
+      toast.error("Image upload failed");
     }
     setUploading(false);
   };
@@ -2895,6 +2903,7 @@ function PortfolioManager() {
       summary: draft.summary || "",
       liveUrl: live && live !== "https://" ? live : "",
       image: draft.image || "",
+      imageFit: draft.imageFit === "cover" ? "cover" : "contain",
       featured: !!draft.featured,
       enabled: true,
       challenge: draft.challenge || "",
@@ -3050,9 +3059,43 @@ function PortfolioManager() {
                 <input className={`${inputCls} !py-1 text-xs`} value={draft.image ?? ""} onChange={(e) => setDraft((d) => ({ ...d, image: e.target.value }))} placeholder="/covers/pinstripes-rentals.webp or https://..." />
               </div>
               {draft.image && (
-                <div className="mt-3 flex items-center gap-4">
-                  <img src={draft.image} alt="Cover preview" className="w-32 h-20 object-cover border border-[var(--line)]" />
-                  <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors" onClick={() => setDraft((d) => ({ ...d, image: "" }))}>Remove image</button>
+                <div className="mt-3 space-y-3">
+                  <div className="flex items-center gap-4">
+                    <img src={draft.image} alt="Cover preview" className={`w-32 h-20 border border-[var(--line)] ${draft.imageFit === "cover" ? "object-cover" : "object-contain bg-black/40"}`} />
+                    <div>
+                      <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors block" onClick={() => setDraft((d) => ({ ...d, image: "" }))}>Remove image</button>
+                      <span className="font-meta text-[9px] text-[var(--muted)] block mt-1">Preview shows {draft.imageFit === "cover" ? "Crop to Fill" : "Fit Full Artwork"}</span>
+                    </div>
+                  </div>
+
+                  {/* DISPLAY FIT OPTION */}
+                  <div className="p-3 border border-[var(--line)] rounded bg-[var(--panel)]">
+                    <span className="font-meta text-[10px] font-bold uppercase tracking-wider block mb-1.5 text-[var(--ink)]">Artwork Display Mode on Website:</span>
+                    <div className="flex flex-wrap gap-4 font-meta text-[10px]">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="imageFit"
+                          value="contain"
+                          checked={draft.imageFit !== "cover"}
+                          onChange={() => setDraft((d) => ({ ...d, imageFit: "contain" }))}
+                          className="accent-[var(--dept)]"
+                        />
+                        <span><strong>Fit Design (100% Full View)</strong> — Recommended for flyers, logos & graphics (no cutoff)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="imageFit"
+                          value="cover"
+                          checked={draft.imageFit === "cover"}
+                          onChange={() => setDraft((d) => ({ ...d, imageFit: "cover" }))}
+                          className="accent-[var(--dept)]"
+                        />
+                        <span><strong>Fill Card (Crop)</strong> — Standard bleed cover style</span>
+                      </label>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -3134,7 +3177,36 @@ function PortfolioManager() {
           >
             <div className="flex items-start gap-4 grow min-w-0">
               {p.image ? (
-                <img src={p.image} alt="" className="w-16 h-12 object-cover border border-[var(--line)] shrink-0 rounded-sm" />
+                <div
+                  className="relative group/thumb cursor-zoom-in shrink-0"
+                  onClick={() => setInspectProject(p)}
+                  onMouseEnter={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setHoveredImage({
+                      src: p.image!,
+                      title: p.title,
+                      client: p.client,
+                      fit: p.imageFit || "contain",
+                      x: rect.right + 12,
+                      y: Math.max(10, rect.top - 40),
+                    });
+                  }}
+                  onMouseMove={(e) => {
+                    if (hoveredImage) {
+                      setHoveredImage((h) => h ? ({ ...h, y: Math.min(window.innerHeight - 340, Math.max(10, e.clientY - 120)) }) : null);
+                    }
+                  }}
+                  onMouseLeave={() => setHoveredImage(null)}
+                >
+                  <img
+                    src={p.image}
+                    alt=""
+                    className="w-16 h-12 object-cover border border-[var(--line)] rounded-sm group-hover/thumb:border-[var(--dept)] transition-colors"
+                  />
+                  <span className="absolute inset-0 bg-black/40 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center font-meta text-[8px] text-white transition-opacity">
+                    🔍 ZOOM
+                  </span>
+                </div>
               ) : (
                 <div className="w-16 h-12 border border-[var(--line)] bg-[var(--dept-soft)] flex items-center justify-center font-meta text-[9px] shrink-0">
                   {p.dept.toUpperCase()}
@@ -3154,6 +3226,11 @@ function PortfolioManager() {
                   )}
                   {!p.enabled && (
                     <span className="font-meta text-[8px] px-1.5 py-0.5 bg-red-600/20 text-red-500 border border-red-500/30">HIDDEN FROM WORK</span>
+                  )}
+                  {p.image && (
+                    <span className={`font-meta text-[8px] px-1.5 py-0.5 border ${p.imageFit === "cover" ? "border-amber-500/40 text-amber-400" : "border-emerald-500/40 text-emerald-400"}`}>
+                      {p.imageFit === "cover" ? "CROP / FILL" : "100% FULL FIT"}
+                    </span>
                   )}
                   {p.liveUrl && (
                     <span className="font-meta text-[8px] px-1.5 py-0.5 border border-cyan-500/40 text-cyan-400">🌐 LIVE PREVIEW</span>
@@ -3183,6 +3260,15 @@ function PortfolioManager() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-center">
+              {p.image && (
+                <button
+                  className="btn btn-ghost !py-1 !px-2.5 text-xs text-[var(--dept)] hover:border-[var(--dept)]"
+                  onClick={() => setInspectProject(p)}
+                  title="Inspect full image in modal"
+                >
+                  🔍 Inspect
+                </button>
+              )}
               <a
                 href={`/work/${p.slug}`}
                 target="_blank"
@@ -3221,6 +3307,115 @@ function PortfolioManager() {
           </div>
         )}
       </div>
+
+      {/* FLOATING HOVER LOUPE POPOVER (Instantly shows full artwork on mouse hover without clicking) */}
+      {hoveredImage && (
+        <div
+          className="fixed z-[120] pointer-events-none w-72 sm:w-80 border border-[var(--dept)] shadow-2xl p-3 backdrop-blur-md rounded-lg transition-all duration-75"
+          style={{
+            top: `${hoveredImage.y}px`,
+            left: `${Math.min(window.innerWidth - 340, hoveredImage.x)}px`,
+            background: "rgba(10, 10, 12, 0.95)",
+          }}
+        >
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10 font-meta text-[9px] text-zinc-300">
+            <span className="font-bold text-white truncate max-w-[180px]">{hoveredImage.title}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[8px] font-mono ${hoveredImage.fit === "cover" ? "bg-amber-500/20 text-amber-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+              {hoveredImage.fit === "cover" ? "CROP / FILL" : "FULL FIT"}
+            </span>
+          </div>
+          <div className="w-full aspect-[4/3] bg-zinc-900/80 border border-white/10 rounded flex items-center justify-center overflow-hidden">
+            <img
+              src={hoveredImage.src}
+              alt={hoveredImage.title}
+              className={`w-full h-full ${hoveredImage.fit === "cover" ? "object-cover" : "object-contain"}`}
+            />
+          </div>
+          <p className="font-meta text-[8.5px] text-zinc-400 mt-2 text-center">
+            Click thumbnail or "Inspect" to view full resolution modal
+          </p>
+        </div>
+      )}
+
+      {/* FULL-SCREEN ARTWORK INSPECTION MODAL (Stay in Admin without leaving) */}
+      {inspectProject && inspectProject.image && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center p-4 sm:p-8 bg-black/85 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setInspectProject(null)}
+        >
+          <div
+            className="relative w-full max-w-4xl max-h-[90vh] flex flex-col border border-[var(--line-strong)] shadow-2xl rounded-lg overflow-hidden"
+            style={{ background: "var(--bg)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--line)] shrink-0" style={{ background: "var(--panel)" }}>
+              <div>
+                <span className="idx">PORTFOLIO ARTWORK INSPECTION</span>
+                <h3 className="font-display text-lg font-bold uppercase mt-0.5">{inspectProject.title}</h3>
+                <p className="font-meta text-[10px] text-[var(--muted)]">
+                  Client: {inspectProject.client || "Self"} · Category: {inspectProject.categories.join(", ")}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <a
+                  href={inspectProject.image}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-ghost !py-1 !px-3 text-xs"
+                >
+                  Open Original ↗
+                </a>
+                <button
+                  className="w-8 h-8 flex items-center justify-center border border-[var(--line)] hover:border-[var(--dept)] transition-colors text-sm font-bold"
+                  onClick={() => setInspectProject(null)}
+                  aria-label="Close modal"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Image Body with Checkerboard background for transparency & crisp rendering */}
+            <div className="grow overflow-auto p-6 flex items-center justify-center bg-black/50 min-h-[380px]">
+              <div className="relative max-h-[65vh] flex items-center justify-center border border-[var(--line)] p-2 bg-black/70 rounded">
+                <img
+                  src={inspectProject.image}
+                  alt={inspectProject.title}
+                  className="max-h-[60vh] max-w-full object-contain rounded"
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer Controls */}
+            <div className="px-6 py-3 border-t border-[var(--line)] flex flex-wrap items-center justify-between gap-4 font-meta text-[10px]" style={{ background: "var(--panel)" }}>
+              <div className="flex items-center gap-3">
+                <span>Display mode on website: <strong>{inspectProject.imageFit === "cover" ? "Fill Card (Crop)" : "Fit Design (100% Full View)"}</strong></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn btn-dept !py-1.5 !px-4 text-xs"
+                  onClick={() => {
+                    const p = inspectProject;
+                    setInspectProject(null);
+                    startEdit(p);
+                  }}
+                >
+                  Edit Project Settings
+                </button>
+                <button
+                  className="btn btn-ghost !py-1.5 !px-4 text-xs"
+                  onClick={() => setInspectProject(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

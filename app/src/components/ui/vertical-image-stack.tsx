@@ -13,6 +13,7 @@ export interface StackImageItem {
   client?: string;
   category?: string;
   slug?: string;
+  fit?: "cover" | "contain";
 }
 
 const DEFAULT_PORTFOLIO_IMAGES: StackImageItem[] = [
@@ -281,13 +282,31 @@ export function VerticalImageStack({
                 }}
               >
                 {/* Image Cover */}
-                <img
-                  src={image.src}
-                  alt={image.alt}
-                  className="w-full h-full object-cover select-none pointer-events-none"
-                  loading={isCurrent ? "eager" : "lazy"}
-                  draggable={false}
-                />
+                {image.fit === "contain" ? (
+                  <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-black/40">
+                    <img
+                      src={image.src}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 w-full h-full object-cover blur-xl opacity-50 scale-110 select-none pointer-events-none"
+                    />
+                    <img
+                      src={image.src}
+                      alt={image.alt}
+                      className="relative z-1 max-w-[92%] max-h-[85%] object-contain drop-shadow-2xl select-none pointer-events-none"
+                      loading={isCurrent ? "eager" : "lazy"}
+                      draggable={false}
+                    />
+                  </div>
+                ) : (
+                  <img
+                    src={image.src}
+                    alt={image.alt}
+                    className="w-full h-full object-cover select-none pointer-events-none"
+                    loading={isCurrent ? "eager" : "lazy"}
+                    draggable={false}
+                  />
+                )}
 
                 {/* Top Badge: Category & Year */}
                 <div className="absolute top-3 inset-x-3 flex items-center justify-between pointer-events-none z-10">

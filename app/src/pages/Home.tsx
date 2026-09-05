@@ -42,6 +42,7 @@ function Hero() {
       client: p.client,
       category: p.categories?.join(" · ") || (p.dept ? p.dept.toUpperCase() : "PORTFOLIO"),
       slug: p.slug,
+      fit: p.imageFit ?? "contain",
     }));
   }, [projects, dept]);
 
