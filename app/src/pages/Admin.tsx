@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "sonner";
-import { CONTACT, FAQS, PROJECTS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, CURRENCIES, type CurrencyCode } from "../lib/data";
+import { CONTACT, FAQS, PROJECTS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, CURRENCIES, WORK_FILTERS, type CurrencyCode } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useSEO } from "../lib/seo";
 import { useAuth } from "../lib/auth";
@@ -2958,6 +2958,64 @@ function PortfolioManager() {
     }
   };
 
+  const duplicateProject = (p: UnifiedProject) => {
+    const newSlug = `${p.slug}-copy-${Date.now().toString(36).slice(-4)}`;
+    setDraft({
+      title: `${p.title} (Copy)`,
+      client: p.client,
+      slug: newSlug,
+      dept: p.dept,
+      categories: p.categories.join(", "),
+      industry: p.industry,
+      year: p.year,
+      services: p.services.join(", "),
+      summary: p.summary,
+      challenge: p.caseStudy?.challenge ?? "",
+      strategy: p.caseStudy?.strategy ?? "",
+      creative: p.caseStudy?.creative ?? "",
+      execution: p.caseStudy?.execution ?? "",
+      result: p.caseStudy?.result ?? "",
+      liveUrl: p.liveUrl,
+      image: p.image,
+      imageFit: p.imageFit || "contain",
+      enabled: true,
+      isCustomized: true,
+      isBuiltIn: false,
+    });
+    setEditingSlug("new");
+    window.scrollTo({ top: 120, behavior: "smooth" });
+    toast.info(`Cloned "${p.title}". Review details and click Save.`);
+  };
+
+  const quickToggleCategory = async (p: UnifiedProject, cat: string) => {
+    const currentCats = p.categories.map((c) => c.toUpperCase().trim()).filter(Boolean);
+    const targetCat = cat.toUpperCase().trim();
+    const nextCats = currentCats.includes(targetCat)
+      ? currentCats.filter((c) => c !== targetCat)
+      : [...currentCats, targetCat];
+
+    if (p.cmsId) {
+      await mutate(() => updateManaged("portfolio", p.cmsId!, { categories: nextCats.join(", ") }), `Updated categories for "${p.title}"`);
+    } else {
+      await mutate(() => addManaged("portfolio", {
+        slug: p.slug,
+        title: p.title,
+        client: p.client,
+        dept: p.dept,
+        categories: nextCats.join(", "),
+        industry: p.industry,
+        year: p.year,
+        services: p.services.join(", "),
+        summary: p.summary,
+        liveUrl: p.liveUrl || "",
+        image: p.image || "",
+        imageFit: p.imageFit || "contain",
+        enabled: p.enabled,
+      }), `Updated categories for "${p.title}"`);
+    }
+    reload();
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -3011,9 +3069,76 @@ function PortfolioManager() {
                 <option value="social" className="text-black">Social Media & Marketing (social)</option>
               </select>
             </div>
-            <div>
-              <label className={labelCls}>CATEGORIES (COMMA-SEPARATED)</label>
-              <input className={`${inputCls} mt-1`} value={draft.categories ?? ""} onChange={(e) => setDraft((d) => ({ ...d, categories: e.target.value }))} placeholder="e.g. WEB, BRANDING, ECOMMERCE" />
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between">
+                <label className={labelCls}>CATEGORIES & WORK FILTERS</label>
+                <span className="font-meta text-[9px] text-[var(--muted)]">Click pills to toggle on/off</span>
+              </div>
+              {/* Interactive Quick-Toggle Pills for the exact website filter buttons */}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {WORK_FILTERS.filter((f) => f !== "ALL").map((cat) => {
+                  const currentCats = (draft.categories ?? "")
+                    .split(",")
+                    .map((c: string) => c.trim().toUpperCase())
+                    .filter(Boolean);
+                  const isSelected = currentCats.includes(cat);
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        let next: string[];
+                        if (isSelected) {
+                          next = currentCats.filter((c: string) => c !== cat);
+                        } else {
+                          next = [...currentCats, cat];
+                        }
+                        setDraft((d) => ({ ...d, categories: next.join(", ") }));
+                      }}
+                      className={`font-meta text-[10px] px-2.5 py-1 border rounded transition-all ${
+                        isSelected
+                          ? "bg-[var(--dept)] border-[var(--dept)] text-[var(--on-dept)] font-bold shadow-sm"
+                          : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-white bg-[var(--panel)]"
+                      }`}
+                    >
+                      {isSelected ? "✓ " : "+ "}
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Fallback / Custom text input for extra specialized tags */}
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  className={`${inputCls} !py-1 text-xs`}
+                  value={draft.categories ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, categories: e.target.value }))}
+                  placeholder="Selected: BRANDING, GRAPHIC..."
+                />
+                <select
+                  className={`${inputCls} !py-1 text-xs !w-auto cursor-pointer shrink-0`}
+                  value=""
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    const currentCats = (draft.categories ?? "")
+                      .split(",")
+                      .map((c: string) => c.trim().toUpperCase())
+                      .filter(Boolean);
+                    if (!currentCats.includes(e.target.value)) {
+                      setDraft((d) => ({ ...d, categories: [...currentCats, e.target.value].join(", ") }));
+                    }
+                  }}
+                >
+                  <option value="" className="text-black">+ Quick Add Category ▾</option>
+                  {WORK_FILTERS.filter((f) => f !== "ALL").map((f) => (
+                    <option key={f} value={f} className="text-black">{f}</option>
+                  ))}
+                  <option value="ECOMMERCE" className="text-black">ECOMMERCE</option>
+                  <option value="PACKAGING" className="text-black">PACKAGING</option>
+                  <option value="PRINT" className="text-black">PRINT</option>
+                  <option value="VIDEO" className="text-black">VIDEO</option>
+                </select>
+              </div>
             </div>
             <div>
               <label className={labelCls}>INDUSTRY & YEAR</label>
@@ -3241,8 +3366,6 @@ function PortfolioManager() {
                   <span>Client: {p.client || "Self"}</span>
                   <span>·</span>
                   <span>Dept: {p.dept}</span>
-                  <span>·</span>
-                  <span>Categories: {p.categories.join(", ")}</span>
                   {p.liveUrl && (
                     <>
                       <span>·</span>
@@ -3253,8 +3376,46 @@ function PortfolioManager() {
                   )}
                 </div>
 
+                {/* Direct category chips + quick-tag dropdown */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className="font-meta text-[9px] text-[var(--muted)] mr-0.5">Categories:</span>
+                  {p.categories.map((cat) => (
+                    <span
+                      key={cat}
+                      className="font-meta text-[9px] px-2 py-0.5 border border-[var(--dept)] text-[var(--dept)] rounded bg-[var(--dept-soft)] flex items-center gap-1 font-bold"
+                    >
+                      {cat}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); quickToggleCategory(p, cat); }}
+                        className="text-[var(--muted)] hover:text-red-500 ml-0.5 font-bold cursor-pointer"
+                        title={`Remove ${cat} tag`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <select
+                    className={`${inputCls} !py-0.5 !px-1.5 text-[9px] !w-auto cursor-pointer`}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) quickToggleCategory(p, e.target.value);
+                    }}
+                    title="Quick tag into category"
+                  >
+                    <option value="" className="text-black">+ Add Filter Tag ▾</option>
+                    {WORK_FILTERS.filter((f) => f !== "ALL" && !p.categories.map((c) => c.toUpperCase().trim()).includes(f)).map((f) => (
+                      <option key={f} value={f} className="text-black">{f}</option>
+                    ))}
+                    <option value="ECOMMERCE" className="text-black">ECOMMERCE</option>
+                    <option value="PACKAGING" className="text-black">PACKAGING</option>
+                    <option value="PRINT" className="text-black">PRINT</option>
+                    <option value="VIDEO" className="text-black">VIDEO</option>
+                  </select>
+                </div>
+
                 {p.summary && (
-                  <p className="text-xs text-[var(--muted)] mt-1 line-clamp-1">{p.summary}</p>
+                  <p className="text-xs text-[var(--muted)] mt-1.5 line-clamp-1">{p.summary}</p>
                 )}
               </div>
             </div>
@@ -3277,6 +3438,13 @@ function PortfolioManager() {
               >
                 View ↗
               </a>
+              <button
+                className="btn btn-ghost !py-1 !px-2.5 text-xs text-[var(--ink)]"
+                onClick={() => duplicateProject(p)}
+                title="Duplicate / clone this project to create a new one faster"
+              >
+                📑 Clone
+              </button>
               <button
                 className="btn btn-dept !py-1 !px-3 text-xs"
                 onClick={() => startEdit(p)}

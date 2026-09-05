@@ -51,9 +51,9 @@ export default function Work() {
     let xs = allProjects;
     if (deptParam && ["brand", "social", "web"].includes(deptParam)) {
       const map: Record<string, string[]> = { brand: ["BRANDING", "GRAPHIC", "EVENTS"], social: ["SOCIAL", "CAMPAIGNS"], web: ["WEB"] };
-      xs = xs.filter((p) => p.categories.some((c) => map[deptParam].includes(c)));
+      xs = xs.filter((p) => p.categories.some((c) => map[deptParam].includes(c.toUpperCase().trim())));
     }
-    if (filter !== "ALL") xs = xs.filter((p) => p.categories.includes(filter));
+    if (filter !== "ALL") xs = xs.filter((p) => p.categories.some((c) => c.toUpperCase().trim() === filter.toUpperCase()));
     return xs;
   }, [filter, deptParam, allProjects]);
 
