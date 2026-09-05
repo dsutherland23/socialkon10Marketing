@@ -11,7 +11,7 @@ import {
   getNextDocNumber, logFinanceAudit,
   listManaged, addManaged, updateManaged, removeManaged,
   getSettings, saveSettings, type SiteSettings,
-  listAllOrders, listLeads,
+  listAllOrders, listLeads, uploadImage,
 } from "../lib/backend";
 import { sendEmail } from "../lib/email";
 import { CONTACT, SERVICES } from "../lib/data";
@@ -447,10 +447,81 @@ async function loadTaxRates(): Promise<FinTaxRate[]> {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────────
-   PDF GENERATION (Branded with Admin Business Info & Banking Notes)
+   LOGO LOADER & PDF GENERATION (Branded with Official Logo & Banking Notes)
 ────────────────────────────────────────────────────────────────────────────── */
 
-function generatePDF(finDoc: FinDocument, profile?: FinanceProfile): void {
+/**
+ * Loads a logo image as a PNG data URL with its natural dimensions for embedding into jsPDF documents.
+ * Checks DOM cache first for instant 0ms extraction, then loads via Image/Canvas, with fallback to official logo assets.
+ */
+export async function getLogoImageForPdf(
+  logoUrl?: string
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  const primaryUrl = logoUrl?.trim() || "/assets/sk-logo-full.png";
+
+  const canvasFromImg = (img: HTMLImageElement): { dataUrl: string; width: number; height: number } | null => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width || 300;
+      canvas.height = img.naturalHeight || img.height || 200;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        return { dataUrl: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
+      }
+    } catch {
+      // tainted canvas or security exception
+    }
+    return null;
+  };
+
+  // 1. Fast path: check DOM for already loaded logo img
+  if (typeof document !== "undefined") {
+    const existingImgs = Array.from(document.querySelectorAll<HTMLImageElement>("img"));
+    const match = existingImgs.find(
+      (img) =>
+        img.complete &&
+        img.naturalWidth > 0 &&
+        (img.src.includes(primaryUrl) || (primaryUrl.startsWith("/") && img.src.endsWith(primaryUrl)))
+    );
+    if (match) {
+      const res = canvasFromImg(match);
+      if (res) return res;
+    }
+  }
+
+  // 2. Offscreen Image Loader with crossOrigin
+  const loadViaImage = (src: string): Promise<{ dataUrl: string; width: number; height: number } | null> => {
+    return new Promise((resolve) => {
+      if (typeof window === "undefined") {
+        resolve(null);
+        return;
+      }
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        resolve(canvasFromImg(img));
+      };
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  };
+
+  let result = await loadViaImage(primaryUrl);
+  if (!result && primaryUrl !== "/assets/sk-logo-full.png") {
+    result = await loadViaImage("/assets/sk-logo-full.png");
+  }
+  if (!result && primaryUrl !== "/assets/socialkon10-logo.png") {
+    result = await loadViaImage("/assets/socialkon10-logo.png");
+  }
+  if (!result) {
+    result = await loadViaImage("/assets/sk-mark.png");
+  }
+
+  return result;
+}
+
+async function generatePDF(finDoc: FinDocument, profile?: FinanceProfile): Promise<void> {
   const p = profile ?? {
     businessName: "Socialkon10 Jamaica",
     email: "socialkon10@gmail.com",
@@ -469,18 +540,51 @@ function generatePDF(finDoc: FinDocument, profile?: FinanceProfile): void {
   const margin = 44;
   let y = 0;
 
-  // Header bar
+  // Load official logo image
+  const logo = await getLogoImageForPdf(p.logoUrl);
+
+  // Top sleek accent bar
   pdf.setFillColor(17, 17, 17);
-  pdf.rect(0, 0, W, 58, "F");
+  pdf.rect(0, 0, W, 4, "F");
+
+  // Render logo on top left
+  if (logo) {
+    const maxLogoW = 125;
+    const maxLogoH = 48;
+    const aspect = logo.width / logo.height;
+    let w = maxLogoW;
+    let h = w / aspect;
+    if (h > maxLogoH) {
+      h = maxLogoH;
+      w = h * aspect;
+    }
+    pdf.addImage(logo.dataUrl, "PNG", margin, 16, w, h);
+  } else {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(14);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text(p.businessName.toUpperCase(), margin, 36);
+  }
+
+  // Right-aligned business contact details
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(12);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text(p.businessName.toUpperCase(), margin, 32);
+  pdf.setFontSize(11);
+  pdf.setTextColor(17, 17, 17);
+  pdf.text(p.businessName.toUpperCase(), W - margin, 26, { align: "right" });
+
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
-  pdf.text(`${p.email}  ·  ${p.website.replace(/^https?:\/\//, "")}  ·  ${p.phone}`, W - margin, 32, { align: "right" });
-  pdf.text(p.location, W - margin, 46, { align: "right" });
-  y = 85;
+  pdf.setTextColor(90, 90, 90);
+  pdf.text(p.location, W - margin, 38, { align: "right" });
+  pdf.text(`${p.email}  ·  ${p.phone}`, W - margin, 50, { align: "right" });
+  pdf.text(p.website.replace(/^https?:\/\//, ""), W - margin, 62, { align: "right" });
+
+  // Divider line under header
+  pdf.setDrawColor(225, 222, 215);
+  pdf.setLineWidth(1);
+  pdf.line(margin, 76, W - margin, 76);
+
+  y = 102;
 
   // Document type & number
   pdf.setTextColor(17, 17, 17);
@@ -670,13 +774,26 @@ function buildFinanceEmail(finDoc: FinDocument, profile?: FinanceProfile): { sub
 
   const waReceiptText = encodeURIComponent(`Hi, here is the payment confirmation receipt for ${finDoc.number} (${centsToDisplay(finDoc.totalCents)}).`);
   const waUrl = `https://wa.me/18762554848?text=${waReceiptText}`;
+  const absoluteLogoUrl = p.logoUrl.startsWith("http")
+    ? p.logoUrl
+    : `https://socialkon10.com/${p.logoUrl.replace(/^\/+/, "")}`;
 
   const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f2ee">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f2ee;padding:24px 0">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e3ded6">
-        <tr><td style="background:#111111;padding:18px 28px">
-          <span style="font-family:Arial,sans-serif;font-size:13px;font-weight:bold;letter-spacing:3px;color:#ffffff">${p.businessName.toUpperCase()}</span>
+        <tr><td style="background:#ffffff;padding:22px 28px;border-bottom:2px solid #111111">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td valign="middle">
+                <img src="${absoluteLogoUrl}" alt="${p.businessName}" height="40" style="height:40px;max-width:180px;display:block;border:0;object-fit:contain" />
+              </td>
+              <td align="right" valign="middle" style="font-family:Arial,sans-serif;font-size:11px;color:#666666;line-height:1.4">
+                <strong style="color:#111111;font-size:12px;display:block">${p.businessName.toUpperCase()}</strong>
+                ${p.location}<br/>${p.phone}
+              </td>
+            </tr>
+          </table>
         </td></tr>
         <tr><td style="padding:32px 28px;font-family:Arial,sans-serif;color:#222222">
           <h1 style="font-size:20px;margin:0 0 8px">${typeLabel} ${finDoc.number}</h1>
@@ -828,16 +945,19 @@ function DocumentPreview({ finDoc, profile, onClose, onEdit, onDownloadPdf }: Do
         {/* Header: Logo + Business Info + Document Number */}
         <div className="flex flex-col sm:flex-row justify-between items-start gap-4 sm:gap-6 border-b border-neutral-200 pb-6 sm:pb-8">
           <div className="w-full sm:w-auto">
-            {profile.logoUrl ? (
-              <img
-                src={profile.logoUrl}
-                alt={profile.businessName}
-                className="h-10 sm:h-12 w-auto max-w-[180px] sm:max-w-[200px] object-contain mb-3"
-                onError={(e) => {
-                  (e.currentTarget as HTMLElement).style.display = "none";
-                }}
-              />
-            ) : null}
+            <img
+              src={profile.logoUrl || "/assets/sk-logo-full.png"}
+              alt={profile.businessName}
+              className="h-12 sm:h-16 w-auto max-w-[200px] sm:max-w-[240px] object-contain mb-3 block print:block print:max-h-16"
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                if (!target.src.includes("sk-logo-full.png")) {
+                  target.src = "/assets/sk-logo-full.png";
+                } else if (!target.src.includes("sk-mark.png")) {
+                  target.src = "/assets/sk-mark.png";
+                }
+              }}
+            />
             <h1 className="text-lg sm:text-xl font-bold tracking-tight text-neutral-950 uppercase break-words">{profile.businessName}</h1>
             <p className="text-xs text-neutral-500 mt-1 break-words">{profile.location}</p>
             <p className="text-xs text-neutral-500 break-words">{profile.email} · {profile.phone}</p>
@@ -1587,7 +1707,41 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
         </div>
       ) : (
         /* Edit Form */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-4">
+          {/* Document Branding Header Banner */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-neutral-900 text-white rounded-xs border border-neutral-800">
+            <div className="flex items-center gap-3">
+              <div className="bg-white p-1 rounded-xs flex items-center justify-center h-10 w-24 shrink-0 shadow-xs">
+                <img
+                  src={profile.logoUrl || "/assets/sk-logo-full.png"}
+                  alt={profile.businessName}
+                  className="max-h-8 max-w-full object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = "/assets/sk-logo-full.png";
+                  }}
+                />
+              </div>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider">{profile.businessName}</div>
+                <div className="text-[10px] text-neutral-400">{profile.location} · {profile.phone}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-[10px] uppercase font-mono tracking-wider text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
+                Official Logo Attached
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowPreview(true)}
+                className="text-[11px] font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-2.5 py-1 rounded-xs transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                <span>👁</span> Live Preview
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left column — Type, Status, Dates, Tax */}
           <div className="lg:col-span-1 space-y-4">
             {/* Document type */}
@@ -1885,6 +2039,7 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
               </div>
             </div>
           </div>
+        </div>
         </div>
       )}
 
@@ -2533,6 +2688,25 @@ function BusinessSettingsManager({
   const [defaultTerms, setDefaultTerms] = useState(profile.defaultTerms);
   const [jmdExchangeRate, setJmdExchangeRate] = useState(profile.jmdExchangeRate);
   const [busy, setBusy] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingLogo(true);
+    try {
+      const url = await uploadImage(file, "branding");
+      setLogoUrl(url);
+      toast.success("Logo uploaded! Remember to click 'Save Business Settings'.");
+    } catch (err) {
+      console.error("Logo upload failed:", err);
+      toast.error("Failed to upload logo image.");
+    } finally {
+      setUploadingLogo(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -2586,9 +2760,59 @@ function BusinessSettingsManager({
             <label className={labelCls}>Business Name</label>
             <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Socialkon10 Jamaica" />
           </div>
-          <div>
-            <label className={labelCls}>Logo Image URL</label>
-            <input className={inputCls} value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="/assets/sk-logo-full.png" />
+          <div className="sm:col-span-2 space-y-2 p-3 bg-neutral-100/60 dark:bg-neutral-900/60 border border-[var(--line)] rounded-xs">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <label className={labelCls}>Official Business Logo</label>
+                <p className="text-[11px] text-[var(--muted)]">
+                  Embedded automatically on all Quotes, Invoices, Receipts, Credit Notes, downloaded PDFs, and client links.
+                </p>
+              </div>
+              {/* Logo Preview */}
+              <div className="bg-white border border-neutral-300 p-2 rounded-xs flex items-center justify-center h-14 w-36 shrink-0 shadow-2xs">
+                <img
+                  src={logoUrl || "/assets/sk-logo-full.png"}
+                  alt="Logo Preview"
+                  className="max-h-10 max-w-full object-contain"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/assets/sk-logo-full.png"; }}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <input
+                type="text"
+                className={`${inputCls} flex-1 min-w-[200px]`}
+                value={logoUrl}
+                onChange={(e) => setLogoUrl(e.target.value)}
+                placeholder="/assets/sk-logo-full.png"
+              />
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
+              <button
+                type="button"
+                className="btn btn-dept px-3 py-1.5 text-xs font-semibold"
+                onClick={() => logoInputRef.current?.click()}
+                disabled={uploadingLogo}
+              >
+                {uploadingLogo ? "Uploading…" : "📁 Upload Logo"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost px-2.5 py-1.5 text-xs"
+                onClick={() => {
+                  setLogoUrl("/assets/sk-logo-full.png");
+                  toast.info("Reset logo to official Socialkon10 logo.");
+                }}
+              >
+                Reset Default
+              </button>
+            </div>
           </div>
           <div>
             <label className={labelCls}>Email</label>

@@ -8,6 +8,7 @@ import {
   type FinanceProfile,
   getFinanceProfile,
   DEFAULT_BANKING_NOTE,
+  getLogoImageForPdf,
 } from "./AdminFinance";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
@@ -38,30 +39,32 @@ export default function InvoicePublicView() {
         const prof = getFinanceProfile(s);
         setProfile(prof);
 
-        if (firebaseReady && db) {
-          // 1. Try fetching by doc ID
-          const docRef = doc(db, "financeDocuments", id);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            setFinDoc({ id: snap.id, ...snap.data() } as FinDocument);
-            setLoading(false);
-            return;
-          }
+        if (!firebaseReady || !db) {
+          setLoading(false);
+          return;
+        }
 
-          // 2. Try fetching by document number (e.g. INV-2026-0001)
-          const q = query(collection(db, "financeDocuments"), where("number", "==", id.toUpperCase()));
-          const qSnap = await getDocs(q);
-          if (!qSnap.empty) {
-            const first = qSnap.docs[0];
-            setFinDoc({ id: first.id, ...first.data() } as FinDocument);
-            setLoading(false);
-            return;
-          }
+        // Try direct doc ID match first
+        const directRef = doc(db, "financeDocuments", id);
+        const directSnap = await getDoc(directRef);
+        if (directSnap.exists()) {
+          setFinDoc({ id: directSnap.id, ...directSnap.data() } as FinDocument);
+          setLoading(false);
+          return;
+        }
+
+        // Otherwise query by document number (e.g. INV-2026-0001)
+        const q = query(collection(db, "financeDocuments"), where("number", "==", id));
+        const qSnap = await getDocs(q);
+        if (!qSnap.empty) {
+          const first = qSnap.docs[0];
+          setFinDoc({ id: first.id, ...first.data() } as FinDocument);
         }
       } catch (err) {
-        console.error("Failed to load invoice:", err);
+        console.error("Failed to load invoice public view:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     load();
   }, [id]);
@@ -74,7 +77,7 @@ export default function InvoicePublicView() {
     setTimeout(() => setCopied(false), 2500);
   };
 
-  const downloadPdf = () => {
+  const downloadPdf = async () => {
     if (!finDoc) return;
     const p = profile ?? {
       businessName: "Socialkon10 Jamaica",
@@ -93,18 +96,51 @@ export default function InvoicePublicView() {
     const margin = 44;
     let y = 0;
 
-    // Header bar
+    // Load official logo image
+    const logo = await getLogoImageForPdf(p.logoUrl);
+
+    // Top sleek accent bar
     pdf.setFillColor(17, 17, 17);
-    pdf.rect(0, 0, W, 58, "F");
+    pdf.rect(0, 0, W, 4, "F");
+
+    // Render logo on top left
+    if (logo) {
+      const maxLogoW = 125;
+      const maxLogoH = 48;
+      const aspect = logo.width / logo.height;
+      let w = maxLogoW;
+      let h = w / aspect;
+      if (h > maxLogoH) {
+        h = maxLogoH;
+        w = h * aspect;
+      }
+      pdf.addImage(logo.dataUrl, "PNG", margin, 16, w, h);
+    } else {
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(14);
+      pdf.setTextColor(17, 17, 17);
+      pdf.text(p.businessName.toUpperCase(), margin, 36);
+    }
+
+    // Right-aligned business contact details
     pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(12);
-    pdf.setTextColor(255, 255, 255);
-    pdf.text(p.businessName.toUpperCase(), margin, 32);
+    pdf.setFontSize(11);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text(p.businessName.toUpperCase(), W - margin, 26, { align: "right" });
+
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8.5);
-    pdf.text(`${p.email} · ${p.phone}`, W - margin, 32, { align: "right" });
-    pdf.text(p.location, W - margin, 46, { align: "right" });
-    y = 85;
+    pdf.setTextColor(90, 90, 90);
+    pdf.text(p.location, W - margin, 38, { align: "right" });
+    pdf.text(`${p.email} · ${p.phone}`, W - margin, 50, { align: "right" });
+    pdf.text(p.website.replace(/^https?:\/\//, ""), W - margin, 62, { align: "right" });
+
+    // Divider line under header
+    pdf.setDrawColor(225, 222, 215);
+    pdf.setLineWidth(1);
+    pdf.line(margin, 76, W - margin, 76);
+
+    y = 102;
 
     // Document type & number
     pdf.setTextColor(17, 17, 17);
@@ -334,14 +370,19 @@ export default function InvoicePublicView() {
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start gap-4 sm:gap-6 border-b border-neutral-200 pb-6 sm:pb-8">
             <div className="w-full sm:w-auto">
-              {p.logoUrl && (
-                <img
-                  src={p.logoUrl}
-                  alt={p.businessName}
-                  className="h-10 sm:h-12 w-auto max-w-[180px] sm:max-w-[200px] object-contain mb-3"
-                  onError={(e) => { (e.currentTarget as HTMLElement).style.display = "none"; }}
-                />
-              )}
+              <img
+                src={p.logoUrl || "/assets/sk-logo-full.png"}
+                alt={p.businessName}
+                className="h-12 sm:h-16 w-auto max-w-[200px] sm:max-w-[240px] object-contain mb-3 block print:block print:max-h-16"
+                onError={(e) => {
+                  const target = e.currentTarget as HTMLImageElement;
+                  if (!target.src.includes("sk-logo-full.png")) {
+                    target.src = "/assets/sk-logo-full.png";
+                  } else if (!target.src.includes("sk-mark.png")) {
+                    target.src = "/assets/sk-mark.png";
+                  }
+                }}
+              />
               <h1 className="text-lg sm:text-xl font-bold tracking-tight text-neutral-950 uppercase break-words">{p.businessName}</h1>
               <p className="text-xs text-neutral-500 mt-1 break-words">{p.location}</p>
               <p className="text-xs text-neutral-500 break-words">{p.email} · {p.phone}</p>
