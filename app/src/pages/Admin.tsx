@@ -29,6 +29,7 @@ import {
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
+import { FinanceManager } from "./AdminFinance";
 import { listAllCustomerDesigns, deleteDesign, deleteDesigns, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
 import { useTemplates } from "../lib/templates";
 import {
@@ -7276,9 +7277,15 @@ const ADMIN_SECTIONS = [
     icon: "⚙️",
     tabs: ["Homepage", "Promos", "Testimonials", "FAQs", "Settings"] as const,
   },
+  {
+    id: "finance",
+    label: "Finance",
+    icon: "💰",
+    tabs: ["Finance"] as const,
+  },
 ] as const;
 
-const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Intakes", "Analytics", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings"] as const;
+const TABS = ["Orders", "Client Designs", "Communications", "Leads", "Intakes", "Analytics", "Portfolio", "Design", "Templates", "Promos", "Testimonials", "FAQs", "Homepage", "Settings", "Finance"] as const;
 
 const inputCls2 = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
 const labelCls2 = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
@@ -7642,6 +7649,7 @@ export default function Admin() {
           {tab === "Templates" && <TemplateStudio />}
           {tab === "Homepage" && <HomepageManager />}
           {tab === "Settings" && <SettingsManager />}
+          {tab === "Finance" && <FinanceManager />}
         </>
       )}
     </section>

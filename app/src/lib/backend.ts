@@ -1,6 +1,7 @@
 import {
   addDoc, collection, doc, getDocs, getDoc, orderBy, query,
   serverTimestamp, setDoc, updateDoc, where, deleteDoc, onSnapshot,
+  runTransaction,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, getBytes, deleteObject } from "firebase/storage";
 import type { User } from "firebase/auth";
@@ -863,7 +864,10 @@ export type ManagedKind =
   | "customerDesigns"
   // website add-on configurator ("Power Up") — admin-editable catalog
   | "websiteAddons" | "websiteAddonCategories"
-  | "agencyServices";
+  | "agencyServices"
+  // Finance & Document Management (Finance PRD Phase 1)
+  | "financeDocuments" | "financePayments" | "financeTaxRates"
+  | "financeDocSequences" | "financeClients" | "financeAuditLog";
 
 export interface ManagedItem { id: string; [k: string]: unknown }
 
@@ -1173,6 +1177,19 @@ export interface SiteSettings {
   location?: string;
   socials?: { id: string; label: string; href: string }[];
   catchDiscountPct?: number;   // "Catch me" easter egg — % off, 0/blank disables the egg
+  /** Business details & banking info for invoices, quotes, receipts (Finance PRD) */
+  financeSettings?: {
+    businessName?: string;
+    businessEmail?: string;
+    businessPhone?: string;
+    businessAddress?: string;
+    websiteUrl?: string;
+    logoUrl?: string;
+    bankingDetails?: string;
+    defaultNotes?: string;
+    defaultTerms?: string;
+    jmdExchangeRate?: number;
+  };
   /** Preview watermark controls (Templates PRD §39). */
   watermark?: {
     enabled?: boolean;   // default true
@@ -1568,3 +1585,98 @@ export function cartToOrderItems(items: CartItem[]) {
 }
 
 export { getDoc, doc };
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FINANCE MODULE — Document Sequencing & Audit (Finance PRD Phase 1)
+   Document numbering is concurrency-safe via Firestore runTransaction.
+   All prices are stored and computed in integer cents to avoid float bugs.
+───────────────────────────────────────────────────────────────────────────── */
+
+export type FinanceDocType = "QT" | "INV" | "RCT" | "CN";
+
+/**
+ * Atomically increments the document sequence counter for the given type+year
+ * and returns a formatted document number like "INV-2026-0042".
+ * Falls back to timestamp-based ID when Firebase is unavailable (demo mode).
+ */
+export async function getNextDocNumber(type: FinanceDocType, year?: number): Promise<string> {
+  const y = year ?? new Date().getFullYear();
+  const seqId = `${type}-${y}`;
+  const localKey = `sk_seq_${seqId}`;
+
+  const findHighestExisting = async (): Promise<number> => {
+    if (!firebaseReady || !db) return 0;
+    try {
+      const snap = await getDocs(collection(db, "financeDocuments"));
+      let max = 0;
+      const prefix = `${type}-${y}-`;
+      snap.docs.forEach((d) => {
+        const num = String(d.data().number || "");
+        if (num.startsWith(prefix)) {
+          const val = parseInt(num.slice(prefix.length), 10);
+          if (!isNaN(val) && val > max) max = val;
+        }
+      });
+      return max;
+    } catch {
+      return 0;
+    }
+  };
+
+  if (firebaseReady && db) {
+    try {
+      const seqRef = doc(db, "financeDocSequences", seqId);
+      const next = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(seqRef);
+        let last = snap.exists() ? (Number(snap.data().lastSeq) || 0) : 0;
+        if (last === 0) {
+          const highestExisting = await findHighestExisting();
+          if (highestExisting > last) last = highestExisting;
+        }
+        const nextSeq = last + 1;
+        tx.set(seqRef, { lastSeq: nextSeq, updatedAt: new Date().toISOString() }, { merge: true });
+        return nextSeq;
+      });
+      localStorage.setItem(localKey, String(next));
+      return `${type}-${y}-${String(next).padStart(4, "0")}`;
+    } catch (err) {
+      console.warn("getNextDocNumber transaction error, attempting fallback sequence lookup:", err);
+      try {
+        const highest = await findHighestExisting();
+        const nextSeq = highest + 1;
+        try {
+          await setDoc(doc(db, "financeDocSequences", seqId), { lastSeq: nextSeq, updatedAt: new Date().toISOString() }, { merge: true });
+        } catch {}
+        localStorage.setItem(localKey, String(nextSeq));
+        return `${type}-${y}-${String(nextSeq).padStart(4, "0")}`;
+      } catch {}
+    }
+  }
+
+  // Fallback sequential counter (never random)
+  const current = parseInt(localStorage.getItem(localKey) || "0", 10);
+  const next = current + 1;
+  localStorage.setItem(localKey, String(next));
+  return `${type}-${y}-${String(next).padStart(4, "0")}`;
+}
+
+export interface FinanceAuditEntry {
+  documentId: string;
+  documentNumber: string;
+  action: string;
+  actor: string;
+  before?: unknown;
+  after?: unknown;
+  at: string;
+}
+
+/** Writes an immutable audit entry to financeAuditLog. Never throws. */
+export async function logFinanceAudit(entry: Omit<FinanceAuditEntry, "at">): Promise<void> {
+  const full: FinanceAuditEntry = { ...entry, at: new Date().toISOString() };
+  if (!firebaseReady || !db) return; // demo mode — skip
+  try {
+    await addDoc(collection(db, "financeAuditLog"), full);
+  } catch (err) {
+    console.warn("financeAuditLog write failed:", err);
+  }
+}

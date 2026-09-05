@@ -282,6 +282,32 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
+    // ── Finance & Document Management (Finance PRD Phase 1) ──────────────────
+    // Documents are viewable via direct client share links; writes are strictly admin-only.
+    // Audit log is append-only (immutable).
+
+    match /financeDocuments/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /financePayments/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /financeTaxRates/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /financeDocSequences/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /financeClients/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /financeAuditLog/{id} {
+      // Immutable audit trail: admins can read and create, but never update or delete
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+
     // Fallback block
     match /{document=**} {
       allow read, write: if false;
