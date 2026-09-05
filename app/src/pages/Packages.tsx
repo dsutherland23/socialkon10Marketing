@@ -203,9 +203,9 @@ function PremiumBundles() {
   return (
     <section className="py-20 md:py-28">
       <SectionHead
-        idx="/bundles"
-        title="Premium bundles."
-        sub="Complete solutions, scoped and priced. Each bundle saves you compared to booking services individually."
+        index="/bundles"
+        title={["Premium bundles."]}
+        meta="Complete solutions, scoped and priced. Each bundle saves you compared to booking services individually."
       />
       <div className="mt-12 grid md:grid-cols-2 xl:grid-cols-3 gap-px" style={{ background: "var(--line)" }}>
         {PREMIUM_BUNDLES.map((bundle, i) => (

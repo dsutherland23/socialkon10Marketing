@@ -503,22 +503,40 @@ function resolveClientGeo(): { code: string; name: string; flag: string; city: s
       }
     }
 
-    // Generic timezone prefix matching
-    if (tz.startsWith("America/")) {
-      return { code: "US", name: "United States", flag: "🇺🇸", city: tz.replace("America/", "").replace(/_/g, " ") };
+    // Try Intl.Locale to derive the real country code from the timezone
+    // e.g. "Europe/Vilnius" → region "LT" (Lithuania), "Asia/Tehran" → "IR" (Iran)
+    if (tz) {
+      try {
+        // Intl.Locale with timeZone is supported in all modern browsers
+        const locale = new Intl.Locale("und", { timeZone: tz } as Intl.LocaleOptions);
+        const region: string | undefined = (locale as { region?: string; maximize?: () => { region?: string } }).region ?? (locale as { maximize?: () => { region?: string } }).maximize?.()?.region;
+        if (region && region.length === 2) {
+          const code = region.toUpperCase();
+          const city = tz.split("/").pop()?.replace(/_/g, " ") || code;
+          if (COUNTRY_REGISTRY[code]) {
+            return { code, name: COUNTRY_REGISTRY[code].name, flag: COUNTRY_REGISTRY[code].flag, city };
+          }
+          // Country not in our registry yet — resolve display name via Intl.DisplayNames
+          try {
+            const dn = new Intl.DisplayNames(["en"], { type: "region" });
+            const name = dn.of(code) || code;
+            // Build a flag emoji from the country code (regional indicator symbols)
+            const flag = code.split("").map((c) => String.fromCodePoint(c.charCodeAt(0) + 127397)).join("");
+            return { code, name, flag, city };
+          } catch {
+            return { code, name: code, flag: "🌐", city };
+          }
+        }
+      } catch { /* Intl.Locale with timeZone not available — continue */ }
     }
-    if (tz.startsWith("Europe/")) {
-      return { code: "GB", name: "United Kingdom", flag: "🇬🇧", city: tz.replace("Europe/", "").replace(/_/g, " ") };
-    }
-    if (tz.startsWith("Asia/")) {
-      return { code: "JP", name: "Japan", flag: "🇯🇵", city: tz.replace("Asia/", "").replace(/_/g, " ") };
-    }
-    if (tz.startsWith("Africa/")) {
-      return { code: "NG", name: "Nigeria", flag: "🇳🇬", city: tz.replace("Africa/", "").replace(/_/g, " ") };
-    }
-    if (tz.startsWith("Australia/") || tz.startsWith("Pacific/")) {
-      return { code: "AU", name: "Australia", flag: "🇦🇺", city: tz.split("/").pop()?.replace(/_/g, " ") || "Sydney" };
-    }
+
+    // Last-resort continent-level prefix matching (broad, but still better than wrong)
+    const city = tz ? tz.split("/").pop()?.replace(/_/g, " ") || "Unknown" : "Unknown";
+    if (tz.startsWith("America/")) return { code: "US", name: "United States", flag: "🇺🇸", city };
+    if (tz.startsWith("Europe/")) return { code: "EU", name: "Europe", flag: "🌍", city };
+    if (tz.startsWith("Asia/")) return { code: "AS", name: "Asia", flag: "🌏", city };
+    if (tz.startsWith("Africa/")) return { code: "AF", name: "Africa", flag: "🌍", city };
+    if (tz.startsWith("Australia/") || tz.startsWith("Pacific/")) return { code: "AU", name: "Australia", flag: "🇦🇺", city };
   } catch { /* fallback */ }
 
   return { code: "JM", name: "Jamaica", flag: "🇯🇲", city: "Kingston" };
@@ -531,8 +549,22 @@ function resolveClientGeo(): { code: string; name: string; flag: string; city: s
 async function enrichSessionWithIpGeo(): Promise<void> {
   if (typeof window === "undefined" || !_sessionData) return;
 
+  /** Resolve country name + flag for any ISO-3166-1 alpha-2 code */
+  function resolveCountryMeta(code: string): { name: string; flag: string } {
+    if (COUNTRY_REGISTRY[code]) return COUNTRY_REGISTRY[code];
+    // Build flag emoji from regional indicator symbols (works for all ISO codes)
+    const flag = code.split("").map((c) => String.fromCodePoint(c.charCodeAt(0) + 127397)).join("");
+    try {
+      const dn = new Intl.DisplayNames(["en"], { type: "region" });
+      const name = dn.of(code) || code;
+      return { name, flag };
+    } catch {
+      return { name: code, flag };
+    }
+  }
+
   try {
-    // Free, zero-auth, high-availability IP country resolver
+    // Primary: Free, zero-auth, high-availability IP country resolver
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3500);
 
@@ -542,41 +574,49 @@ async function enrichSessionWithIpGeo(): Promise<void> {
     if (res.ok) {
       const data = await res.json();
       const countryCode = (data.country || "").toUpperCase();
-      if (countryCode && COUNTRY_REGISTRY[countryCode]) {
-        const reg = COUNTRY_REGISTRY[countryCode];
-        // Only update if country changed or city wasn't set
+      if (countryCode && countryCode.length === 2) {
+        const meta = resolveCountryMeta(countryCode);
+        // Update if the IP-resolved country differs from the TZ-guessed one
         if (_sessionData.country_code !== countryCode) {
           _sessionData.country_code = countryCode;
-          _sessionData.country_name = reg.name;
-          _sessionData.country_flag = reg.flag;
+          _sessionData.country_name = meta.name;
+          _sessionData.country_flag = meta.flag;
           persistSession();
           void upsertSessionInFirestore(_sessionData);
           notifyAnalyticsUpdated();
         }
       }
     }
-  } catch {
-    // Non-blocking fallback to ipapi if primary timed out
-    try {
-      const res2 = await fetch("https://ipapi.co/json/");
-      if (res2.ok) {
-        const data2 = await res2.json();
-        const code = (data2.country_code || "").toUpperCase();
-        if (code && (COUNTRY_REGISTRY[code] || data2.country_name)) {
-          const name = COUNTRY_REGISTRY[code]?.name || data2.country_name;
-          const flag = COUNTRY_REGISTRY[code]?.flag || "🌐";
-          const city = data2.city || _sessionData.city;
-          _sessionData.country_code = code;
-          _sessionData.country_name = name;
-          _sessionData.country_flag = flag;
+  } catch { /* country.is timed out or errored — fall through to ipapi */ }
+
+  // Secondary pass: ipapi.co for city-level enrichment (always attempt, non-blocking)
+  try {
+    const res2 = await fetch("https://ipapi.co/json/");
+    if (res2.ok) {
+      const data2 = await res2.json();
+      const code = (data2.country_code || "").toUpperCase();
+      const city = data2.city as string | undefined;
+      if (code && code.length === 2) {
+        const meta = resolveCountryMeta(code);
+        const name = meta.name;
+        const flag = meta.flag;
+        // Only update country if we still have the TZ-guessed one or if ipapi gives a better city
+        const countryChanged = _sessionData.country_code !== code;
+        const cityChanged = city && _sessionData.city !== city;
+        if (countryChanged || cityChanged) {
+          if (countryChanged) {
+            _sessionData.country_code = code;
+            _sessionData.country_name = name;
+            _sessionData.country_flag = flag;
+          }
           if (city) _sessionData.city = city;
           persistSession();
           void upsertSessionInFirestore(_sessionData);
           notifyAnalyticsUpdated();
         }
       }
-    } catch { /* ignore */ }
-  }
+    }
+  } catch { /* ignore */ }
 }
 
 function getUtmFromUrl(url: string): Record<string, string | null> {
@@ -1490,8 +1530,34 @@ export async function getSessionEvents(sessionId: string): Promise<AnalyticsEven
  */
 export async function getGeographicDistribution(days = 30): Promise<GeoDistributionRecord[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const sessions = await getRecentSessions(500);
-  const filtered = sessions.filter((s) => s.started_at >= since);
+
+  // Query sessions directly with date filter — do NOT go through getRecentSessions()
+  // which applies a 500-row cap BEFORE date filtering, hiding international visitors.
+  let filtered: SessionData[] = [];
+
+  if (canQueryFirestoreAnalytics()) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db!, "analytics_sessions"),
+          where("started_at", ">=", since),
+          orderBy("started_at", "desc"),
+          fsLimit(2000)
+        )
+      );
+      if (!snap.empty) {
+        filtered = snap.docs.map((d) => ({ ...d.data() } as SessionData));
+      }
+    } catch (err) {
+      handleFirestoreAnalyticsError(err);
+    }
+  }
+
+  // Local IndexedDB fallback
+  if (filtered.length === 0) {
+    const local = await getLocalSessions();
+    filtered = local.filter((s) => s.started_at >= since);
+  }
 
   const countryMap = new Map<string, {
     country_name: string;

@@ -2371,7 +2371,7 @@ function IntakesManager() {
 
 const blankService = { name: "", dept: "brand", price: "", billing: "one_time", depositPct: "50", timeline: "", revisions: "3", tagline: "", description: "", deliverables: "" };
 
-function Products() {
+export function Products() {
   const [overrides, setOverrides] = useState<Record<string, ServiceOverride>>({});
   const [custom, setCustom] = useState<ManagedItem[]>([]);
   const [openSlug, setOpenSlug] = useState<string | null>(null);

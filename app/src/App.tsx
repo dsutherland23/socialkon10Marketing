@@ -9,7 +9,7 @@ import { DesignCatalogProvider, DesignPackageProvider } from "./lib/design-shop"
 import { WebsiteAddonsCatalogProvider } from "./lib/website-addons-provider";
 import { TemplateCatalogProvider } from "./lib/templates";
 import { AgencyServicesProvider } from "./lib/agency-services-provider";
-import { trackPageView } from "./lib/analytics";
+import { trackPageView, initTracking } from "./lib/analytics";
 import { SiteHeader } from "./components/header";
 import { SiteFooter } from "./components/footer";
 import { CommandPalette } from "./components/command";
@@ -84,6 +84,12 @@ import { MeetingProximityAlert } from "./components/MeetingProximityAlert";
 
 function ScrollAndTrack() {
   const { pathname } = useLocation();
+
+  // ── One-time engine startup: initialises session, geo-enrichment, scroll & click listeners ──
+  useEffect(() => {
+    initTracking();
+  }, []);
+
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
     void trackPageView(pathname); // First-party dual-persistence + GA4/Pixel/dataLayer mirroring

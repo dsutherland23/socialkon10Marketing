@@ -15,7 +15,6 @@ import { useWebsiteAddonsCatalog } from "../lib/website-addons-provider";
 import {
   type WebAddon,
   type WebPackageId,
-  addonPriceLabel,
 } from "../lib/website-addons";
 import { useMoney } from "../lib/money";
 import { useAgencyServices } from "../lib/agency-services-provider";
@@ -2611,7 +2610,6 @@ function AgencyServicesManager() {
 
 function PowerUpManager() {
   const { user } = useAuth();
-  const money = useMoney();
   const { categories, allAddons } = useWebsiteAddonsCatalog();
   const [managed, setManaged] = useState<ManagedItem[]>([]);
   const [draft, setDraft] = useState<WebAddonDraft>(defaultWebAddonDraft);
