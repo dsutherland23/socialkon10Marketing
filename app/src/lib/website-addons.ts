@@ -55,6 +55,9 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
       { id: "testimonials_system", name: "Testimonials / Reviews System", desc: "Create a structured testimonial or customer review section.", categoryId: "website_expansion", price: 100, billing: "one_time", eligible: ALL3 },
       { id: "faq_system", name: "FAQ / Knowledge Section", desc: "Add a structured FAQ system with expandable answers.", categoryId: "website_expansion", price: 100, billing: "one_time", eligible: ALL3 },
       { id: "team_directory", name: "Team / Staff Directory", desc: "Display staff members, leadership or team profiles.", categoryId: "website_expansion", price: 150, billing: "one_time", eligible: STD_UP },
+      { id: "client_portal", name: "Client Portal / Member Dashboard", desc: "Secure password-protected client dashboard for document sharing, order history, project updates, and account management.", categoryId: "website_expansion", price: 1500, billing: "one_time", eligible: STD_UP, popular: true },
+      { id: "multi_language", name: "Multi-Language & Localization", desc: "Full multi-lingual translation setup with language switcher, regional currency support, and localized international SEO.", categoryId: "website_expansion", price: 1500, billing: "one_time", eligible: STD_UP },
+      { id: "turnkey_launch_pack", name: "Complete Turnkey Launch Suite", desc: "All-in-one execution: full professional copywriting across all pages, custom visual assets, advanced technical SEO rollout, and 30-day dedicated post-launch support.", categoryId: "website_expansion", price: 1500, billing: "one_time", eligible: STD_UP, popular: true },
     ],
   },
   {
@@ -63,8 +66,10 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
     addons: [
       { id: "advanced_lead_capture", name: "Advanced Lead Capture", desc: "Upgrade the standard contact form into a more powerful lead capture experience.", categoryId: "lead_generation", price: 150, billing: "one_time", eligible: ALL3, popular: true },
       { id: "quote_request_system", name: "Quote Request System", desc: "Let customers submit structured quote requests.", categoryId: "lead_generation", price: 250, billing: "one_time", eligible: ALL3 },
+      { id: "instant_quote_calculator", name: "Interactive Scope & Price Calculator", desc: "Custom dynamic price estimator widget allowing visitors to select features and calculate instant quotes on-page.", categoryId: "lead_generation", price: 450, billing: "one_time", eligible: ALL3, popular: true },
       { id: "booking_system", name: "Booking System", desc: "Allow customers to request or schedule appointments online.", categoryId: "lead_generation", price: 300, billing: "one_time", eligible: ALL3, popular: true },
       { id: "booking_payment", name: "Advanced Booking + Payments", desc: "Booking, availability, deposits and online payment functionality.", categoryId: "lead_generation", price: 500, billing: "one_time", eligible: STD_UP },
+      { id: "custom_booking_platform", name: "Enterprise Dispatch & Booking Platform", desc: "Complete customized multi-calendar booking platform with staff assignments, route/dispatch logic, automated WhatsApp/SMS reminders, and deposit payments.", categoryId: "lead_generation", price: 1500, billing: "one_time", eligible: STD_UP },
     ],
   },
   {
@@ -72,6 +77,7 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
     desc: "Make it easier for customers to contact and engage with the business.",
     addons: [
       { id: "whatsapp_integration", name: "WhatsApp Integration", desc: "Add a professional click-to-chat WhatsApp experience.", categoryId: "communication", price: 100, billing: "one_time", eligible: ALL3, popular: true },
+      { id: "live_chat_widget", name: "Floating Omnichannel Chat Widget", desc: "Unified interactive floating chat bubble with instant WhatsApp, Messenger, phone, and inquiry triggers with custom greeting.", categoryId: "communication", price: 150, billing: "one_time", eligible: ALL3, popular: true },
       { id: "whatsapp_lead_capture", name: "WhatsApp Lead Capture", desc: "Route structured customer inquiries into WhatsApp.", categoryId: "communication", price: 200, billing: "one_time", eligible: ALL3 },
       { id: "whatsapp_automation", name: "WhatsApp Automation", desc: "Automate qualifying, notifications and customer communication.", categoryId: "communication", price: 350, pricePrefix: "from", billing: "one_time", eligible: STD_UP, requires: ["whatsapp_integration"] },
     ],
@@ -111,6 +117,7 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
       { id: "copywriting", name: "Professional Copywriting", desc: "Conversion-focused copywriting for website pages.", categoryId: "content", price: 150, priceSuffix: " / page", billing: "one_time", eligible: ALL3, qtyEnabled: true, conflicts: ["website_copy_package"] },
       { id: "website_copy_package", name: "Website Copy Package", desc: "Professional copywriting for up to 5 pages.", categoryId: "content", price: 600, billing: "one_time", eligible: STD_UP, conflicts: ["copywriting"] },
       { id: "visual_content_pack", name: "Visual Content Pack", desc: "Custom graphics, image sourcing and website visual support.", categoryId: "content", price: 400, billing: "one_time", eligible: ALL3 },
+      { id: "video_motion_showcase", name: "Video & Motion Media Showcase", desc: "Interactive video hero reels, before/after comparison sliders, and dynamic animated media sections.", categoryId: "content", price: 350, billing: "one_time", eligible: ALL3, popular: true },
     ],
   },
   {
@@ -140,6 +147,7 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
       { id: "automation_workflow", name: "Marketing Automation", desc: "Automate lead capture, notifications and follow-up workflows.", categoryId: "integrations_automation", price: 500, pricePrefix: "from", billing: "one_time", eligible: STD_UP },
       { id: "zapier_make", name: "Zapier / Make Automation", desc: "Connect website actions to external business workflows.", categoryId: "integrations_automation", price: 250, pricePrefix: "from", billing: "one_time", eligible: STD_UP },
       { id: "custom_api", name: "Custom API Integration", desc: "Connect the website to a third-party service or custom API.", categoryId: "integrations_automation", price: 500, pricePrefix: "from", billing: "one_time", eligible: STD_UP },
+      { id: "enterprise_crm_erp", name: "Enterprise CRM & ERP Bi-Directional Integration", desc: "Full 2-way real-time data sync connecting website leads and orders to Salesforce, HubSpot, Zoho, QuickBooks, or custom internal ERPs.", categoryId: "integrations_automation", price: 1500, billing: "one_time", eligible: STD_UP, popular: true },
     ],
   },
   {
@@ -153,9 +161,11 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
   },
   {
     id: "security", name: "Security", icon: "shield", advanced: true,
-    desc: "Add additional protection and monitoring.",
+    desc: "Add additional protection, privacy compliance, and accessibility monitoring.",
     addons: [
       { id: "security_pro", name: "Security PRO", desc: "Security hardening, bot protection, spam protection and monitoring setup.", categoryId: "security", price: 200, billing: "one_time", eligible: ALL3 },
+      { id: "cookie_consent_privacy", name: "GDPR & CCPA Privacy Consent Suite", desc: "Compliant geo-targeted cookie banner, user preference center, consent logs, and auto-updated legal policy integration.", categoryId: "security", price: 175, billing: "one_time", eligible: ALL3, popular: true },
+      { id: "ada_accessibility", name: "ADA & WCAG 2.1 Accessibility Hardening", desc: "Full accessibility compliance overhaul with high-contrast toggle, screen-reader markup, keyboard focus flow, and accessibility statement.", categoryId: "security", price: 350, billing: "one_time", eligible: ALL3 },
     ],
   },
   {
@@ -166,6 +176,7 @@ export const WEB_ADDON_CATEGORIES: AddonCategory[] = [
       { id: "priority_bug_fixes", name: "Priority Bug Fixing", desc: "Fast-response bug investigation and resolution with documented fixes.", categoryId: "maintenance_support", price: 100, priceSuffix: " / hr", billing: "one_time" as const, eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03", "SK-WEB-04"] as WebPackageId[] },
       { id: "emergency_support", name: "Emergency Support", desc: "Same-day emergency response for critical website issues.", categoryId: "maintenance_support", price: 200, pricePrefix: "from" as const, billing: "one_time" as const, eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03", "SK-WEB-04"] as WebPackageId[] },
       { id: "third_party_integrations", name: "Third-Party Integration", desc: "Connect and configure third-party tools, services and APIs.", categoryId: "maintenance_support", price: 250, pricePrefix: "from" as const, billing: "one_time" as const, eligible: ["SK-WEB-02", "SK-WEB-03"] as WebPackageId[] },
+      { id: "monthly_security_maintenance_retainer", name: "Monthly Maintenance & Security Retainer", desc: "Comprehensive continuous care: scheduled CMS/plugin core updates, weekly off-site cloud backups, malware/security scanning, and 2 dedicated support hours every month.", categoryId: "maintenance_support", price: 250, billing: "monthly" as const, eligible: ["SK-WEB-01", "SK-WEB-02", "SK-WEB-03", "SK-WEB-04"] as WebPackageId[], popular: true },
     ],
   },
   {
