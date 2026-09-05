@@ -2691,6 +2691,10 @@ function PortfolioManager() {
   const [hoveredImage, setHoveredImage] = useState<{ src: string; title: string; client: string; fit: string; x: number; y: number } | null>(null);
   const [inspectProject, setInspectProject] = useState<UnifiedProject | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const masterCheckRef = useRef<HTMLInputElement>(null);
+  const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set());
+  const [lastSelectedSlug, setLastSelectedSlug] = useState<string | null>(null);
+  const [batchActionLoading, setBatchActionLoading] = useState(false);
 
   const reload = () => listManaged("portfolio").then(setManagedItems);
   useEffect(() => { reload(); }, []);
@@ -3016,6 +3020,279 @@ function PortfolioManager() {
     reload();
   };
 
+  // Sync indeterminate state for master checkbox
+  useEffect(() => {
+    if (!masterCheckRef.current) return;
+    const count = filtered.filter((p) => selectedSlugs.has(p.slug)).length;
+    const total = filtered.length;
+    if (count === 0) {
+      masterCheckRef.current.checked = false;
+      masterCheckRef.current.indeterminate = false;
+    } else if (count === total && total > 0) {
+      masterCheckRef.current.checked = true;
+      masterCheckRef.current.indeterminate = false;
+    } else {
+      masterCheckRef.current.checked = false;
+      masterCheckRef.current.indeterminate = true;
+    }
+  }, [selectedSlugs, filtered]);
+
+  // Keyboard shortcuts: Esc to clear selection, Cmd/Ctrl+A to select all filtered
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+      if (e.key === "Escape" && selectedSlugs.size > 0) {
+        setSelectedSlugs(new Set());
+        setLastSelectedSlug(null);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        const next = new Set<string>();
+        filtered.forEach((p) => next.add(p.slug));
+        setSelectedSlugs(next);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedSlugs.size, filtered]);
+
+  // Shift + Click range selection helper
+  const toggleSelect = (slug: string, shiftKey: boolean) => {
+    setSelectedSlugs((prev) => {
+      const next = new Set(prev);
+      if (shiftKey && lastSelectedSlug && lastSelectedSlug !== slug) {
+        const lastIdx = filtered.findIndex((p) => p.slug === lastSelectedSlug);
+        const currIdx = filtered.findIndex((p) => p.slug === slug);
+        if (lastIdx !== -1 && currIdx !== -1) {
+          const [start, end] = lastIdx < currIdx ? [lastIdx, currIdx] : [currIdx, lastIdx];
+          const shouldSelect = !prev.has(slug);
+          for (let i = start; i <= end; i++) {
+            if (shouldSelect) {
+              next.add(filtered[i].slug);
+            } else {
+              next.delete(filtered[i].slug);
+            }
+          }
+          return next;
+        }
+      }
+
+      if (next.has(slug)) {
+        next.delete(slug);
+      } else {
+        next.add(slug);
+      }
+      return next;
+    });
+    setLastSelectedSlug(slug);
+  };
+
+  const selectAllFiltered = () => {
+    const allSelected = filtered.length > 0 && filtered.every((p) => selectedSlugs.has(p.slug));
+    if (allSelected) {
+      setSelectedSlugs(new Set());
+    } else {
+      const next = new Set(selectedSlugs);
+      filtered.forEach((p) => next.add(p.slug));
+      setSelectedSlugs(next);
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedSlugs(new Set());
+    setLastSelectedSlug(null);
+  };
+
+  // Bulk Actions
+  const batchAddCategory = async (cat: string) => {
+    if (selectedSlugs.size === 0) return;
+    const targetCat = cat.toUpperCase().trim();
+    setBatchActionLoading(true);
+    let count = 0;
+    for (const p of projects) {
+      if (selectedSlugs.has(p.slug)) {
+        const cur = p.categories.map((c) => c.toUpperCase().trim()).filter(Boolean);
+        if (!cur.includes(targetCat)) {
+          const nextCats = [...cur, targetCat].join(", ");
+          if (p.cmsId) {
+            await updateManaged("portfolio", p.cmsId, { categories: nextCats });
+          } else {
+            await addManaged("portfolio", {
+              slug: p.slug,
+              title: p.title,
+              client: p.client,
+              dept: p.dept,
+              categories: nextCats,
+              industry: p.industry,
+              year: p.year,
+              services: p.services.join(", "),
+              summary: p.summary,
+              liveUrl: p.liveUrl || "",
+              image: p.image || "",
+              imageFit: p.imageFit || "contain",
+              enabled: p.enabled,
+            });
+          }
+          count++;
+        }
+      }
+    }
+    toast.success(`Tagged ${count} project(s) with ${targetCat}`);
+    setBatchActionLoading(false);
+    reload();
+  };
+
+  const batchRemoveCategory = async (cat: string) => {
+    if (selectedSlugs.size === 0) return;
+    const targetCat = cat.toUpperCase().trim();
+    setBatchActionLoading(true);
+    let count = 0;
+    for (const p of projects) {
+      if (selectedSlugs.has(p.slug)) {
+        const cur = p.categories.map((c) => c.toUpperCase().trim()).filter(Boolean);
+        if (cur.includes(targetCat)) {
+          const nextCats = cur.filter((c) => c !== targetCat).join(", ");
+          if (p.cmsId) {
+            await updateManaged("portfolio", p.cmsId, { categories: nextCats });
+          } else {
+            await addManaged("portfolio", {
+              slug: p.slug,
+              title: p.title,
+              client: p.client,
+              dept: p.dept,
+              categories: nextCats,
+              industry: p.industry,
+              year: p.year,
+              services: p.services.join(", "),
+              summary: p.summary,
+              liveUrl: p.liveUrl || "",
+              image: p.image || "",
+              imageFit: p.imageFit || "contain",
+              enabled: p.enabled,
+            });
+          }
+          count++;
+        }
+      }
+    }
+    toast.success(`Removed ${targetCat} from ${count} project(s)`);
+    setBatchActionLoading(false);
+    reload();
+  };
+
+  const batchSetImageFit = async (fit: "contain" | "cover") => {
+    if (selectedSlugs.size === 0) return;
+    setBatchActionLoading(true);
+    for (const p of projects) {
+      if (selectedSlugs.has(p.slug)) {
+        if (p.cmsId) {
+          await updateManaged("portfolio", p.cmsId, { imageFit: fit });
+        } else {
+          await addManaged("portfolio", {
+            slug: p.slug,
+            title: p.title,
+            client: p.client,
+            dept: p.dept,
+            categories: p.categories.join(", "),
+            industry: p.industry,
+            year: p.year,
+            services: p.services.join(", "),
+            summary: p.summary,
+            liveUrl: p.liveUrl || "",
+            image: p.image || "",
+            imageFit: fit,
+            enabled: p.enabled,
+          });
+        }
+      }
+    }
+    toast.success(`Set ${selectedSlugs.size} project(s) to ${fit === "contain" ? "100% Full Fit" : "Crop / Fill"}`);
+    setBatchActionLoading(false);
+    reload();
+  };
+
+  const batchSetVisibility = async (enabled: boolean) => {
+    if (selectedSlugs.size === 0) return;
+    setBatchActionLoading(true);
+    for (const p of projects) {
+      if (selectedSlugs.has(p.slug)) {
+        if (p.cmsId) {
+          await updateManaged("portfolio", p.cmsId, { enabled });
+        } else {
+          await addManaged("portfolio", {
+            slug: p.slug,
+            title: p.title,
+            client: p.client,
+            dept: p.dept,
+            categories: p.categories.join(", "),
+            industry: p.industry,
+            year: p.year,
+            services: p.services.join(", "),
+            summary: p.summary,
+            liveUrl: p.liveUrl || "",
+            image: p.image || "",
+            imageFit: p.imageFit || "contain",
+            enabled,
+          });
+        }
+      }
+    }
+    toast.success(`${enabled ? "Made visible" : "Hidden"} ${selectedSlugs.size} project(s) on Work`);
+    setBatchActionLoading(false);
+    reload();
+  };
+
+  const batchSetDept = async (dept: "web" | "brand" | "social") => {
+    if (selectedSlugs.size === 0) return;
+    setBatchActionLoading(true);
+    for (const p of projects) {
+      if (selectedSlugs.has(p.slug)) {
+        if (p.cmsId) {
+          await updateManaged("portfolio", p.cmsId, { dept });
+        } else {
+          await addManaged("portfolio", {
+            slug: p.slug,
+            title: p.title,
+            client: p.client,
+            dept,
+            categories: p.categories.join(", "),
+            industry: p.industry,
+            year: p.year,
+            services: p.services.join(", "),
+            summary: p.summary,
+            liveUrl: p.liveUrl || "",
+            image: p.image || "",
+            imageFit: p.imageFit || "contain",
+            enabled: p.enabled,
+          });
+        }
+      }
+    }
+    toast.success(`Moved ${selectedSlugs.size} project(s) to ${dept.toUpperCase()}`);
+    setBatchActionLoading(false);
+    reload();
+  };
+
+  const batchDeleteOrReset = async () => {
+    if (selectedSlugs.size === 0) return;
+    const confirmMsg = `Are you sure you want to delete/reset ${selectedSlugs.size} selected project(s)?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setBatchActionLoading(true);
+    let count = 0;
+    for (const p of projects) {
+      if (selectedSlugs.has(p.slug) && p.cmsId) {
+        await removeManaged("portfolio", p.cmsId);
+        count++;
+      }
+    }
+    toast.success(`Removed/reset ${count} project(s)`);
+    clearSelection();
+    setBatchActionLoading(false);
+    reload();
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -3292,15 +3569,65 @@ function PortfolioManager() {
         />
       </div>
 
+      {/* 2026 BATCH SELECT-ALL BAR */}
+      <div className="flex items-center justify-between px-3.5 py-2.5 border border-[var(--line)] rounded-sm mb-3 bg-[var(--panel)]">
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              ref={masterCheckRef}
+              type="checkbox"
+              className="w-4 h-4 rounded border-[var(--line)] text-[var(--dept)] focus:ring-[var(--dept)] accent-[var(--dept)] cursor-pointer"
+              onChange={selectAllFiltered}
+              aria-label="Select all filtered projects"
+            />
+            <span className="font-meta text-[11px] font-bold tracking-wide">
+              {selectedSlugs.size > 0
+                ? `${selectedSlugs.size} of ${filtered.length} selected`
+                : `Select All (${filtered.length})`}
+            </span>
+          </label>
+          <span className="font-meta text-[9px] text-[var(--muted)] hidden sm:inline">
+            • Tip: Click a checkbox, hold <strong>Shift</strong>, and click another to select a range
+          </span>
+        </div>
+
+        {selectedSlugs.size > 0 && (
+          <button
+            onClick={clearSelection}
+            className="font-meta text-[10px] text-[var(--muted)] hover:text-red-500 transition-colors"
+          >
+            Deselect All (Esc)
+          </button>
+        )}
+      </div>
+
       {/* PROJECTS LIST */}
       <div className="flex flex-col gap-3">
-        {filtered.map((p: UnifiedProject) => (
-          <div
-            key={p.slug}
-            className={`border border-[var(--line)] p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors ${!p.enabled ? "opacity-50 bg-black/10" : ""}`}
-            style={{ background: "var(--panel)" }}
-          >
-            <div className="flex items-start gap-4 grow min-w-0">
+        {filtered.map((p: UnifiedProject) => {
+          const isSelected = selectedSlugs.has(p.slug);
+          return (
+            <div
+              key={p.slug}
+              className={`border p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all ${
+                isSelected
+                  ? "border-[var(--dept)] bg-[var(--dept-soft)]/20 shadow-sm"
+                  : "border-[var(--line)] bg-[var(--panel)]"
+              } ${!p.enabled ? "opacity-50" : ""}`}
+            >
+              {/* Batch Checkbox */}
+              <div className="self-center shrink-0 pr-1">
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={(e) => {
+                    toggleSelect(p.slug, (e.nativeEvent as MouseEvent).shiftKey);
+                  }}
+                  className="w-4 h-4 rounded border-[var(--line)] text-[var(--dept)] focus:ring-[var(--dept)] accent-[var(--dept)] cursor-pointer"
+                  aria-label={`Select ${p.title}`}
+                />
+              </div>
+
+              <div className="flex items-start gap-4 grow min-w-0">
               {p.image ? (
                 <div
                   className="relative group/thumb cursor-zoom-in shrink-0"
@@ -3467,7 +3794,8 @@ function PortfolioManager() {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {filtered.length === 0 && (
           <div className="border border-[var(--line)] p-8 text-center" style={{ background: "var(--panel)" }}>
@@ -3475,6 +3803,132 @@ function PortfolioManager() {
           </div>
         )}
       </div>
+
+      {/* 2026 FLOATING HUD ACTION DOCK */}
+      {selectedSlugs.size > 0 && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-wrap items-center gap-2.5 px-5 py-3 rounded-2xl shadow-2xl border border-white/20 text-white backdrop-blur-xl animate-in fade-in slide-in-from-bottom-5 duration-200"
+          style={{
+            background: "rgba(12, 12, 16, 0.94)",
+            boxShadow: "0 20px 45px -10px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.12)",
+          }}
+        >
+          {/* Badge & Count */}
+          <div className="flex items-center gap-2 pr-2.5 border-r border-white/20 shrink-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-[var(--dept)] animate-pulse" />
+            <span className="font-display font-bold text-xs tracking-wide">
+              {selectedSlugs.size} {selectedSlugs.size === 1 ? "item" : "items"}
+            </span>
+          </div>
+
+          {/* Quick Tag Category to All */}
+          <select
+            disabled={batchActionLoading}
+            className="bg-white/10 hover:bg-white/15 text-white text-xs font-meta px-2.5 py-1.5 rounded border border-white/20 cursor-pointer transition-colors"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) batchAddCategory(e.target.value);
+            }}
+          >
+            <option value="" className="text-black">+ Add Tag to All ▾</option>
+            {WORK_FILTERS.filter((f) => f !== "ALL").map((f) => (
+              <option key={f} value={f} className="text-black">{f}</option>
+            ))}
+            <option value="ECOMMERCE" className="text-black">ECOMMERCE</option>
+            <option value="PACKAGING" className="text-black">PACKAGING</option>
+            <option value="PRINT" className="text-black">PRINT</option>
+          </select>
+
+          {/* Remove Tag from All */}
+          <select
+            disabled={batchActionLoading}
+            className="bg-white/10 hover:bg-white/15 text-white text-xs font-meta px-2.5 py-1.5 rounded border border-white/20 cursor-pointer transition-colors"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) batchRemoveCategory(e.target.value);
+            }}
+          >
+            <option value="" className="text-black">- Remove Tag ▾</option>
+            {WORK_FILTERS.filter((f) => f !== "ALL").map((f) => (
+              <option key={f} value={f} className="text-black">{f}</option>
+            ))}
+          </select>
+
+          {/* Artwork Display Mode */}
+          <div className="flex items-center gap-1 border-l border-white/20 pl-2.5 shrink-0">
+            <button
+              disabled={batchActionLoading}
+              onClick={() => batchSetImageFit("contain")}
+              className="px-2 py-1 text-xs font-meta rounded bg-white/10 hover:bg-white/20 transition-colors"
+              title="Ensure all artwork displays 100% full view without cropping"
+            >
+              🖼️ Fit Full
+            </button>
+            <button
+              disabled={batchActionLoading}
+              onClick={() => batchSetImageFit("cover")}
+              className="px-2 py-1 text-xs font-meta rounded bg-white/10 hover:bg-white/20 transition-colors"
+              title="Crop to Fill"
+            >
+              Crop
+            </button>
+          </div>
+
+          {/* Visibility */}
+          <div className="flex items-center gap-1 border-l border-white/20 pl-2.5 shrink-0">
+            <button
+              disabled={batchActionLoading}
+              onClick={() => batchSetVisibility(true)}
+              className="px-2 py-1 text-xs font-meta rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 transition-colors"
+            >
+              Show
+            </button>
+            <button
+              disabled={batchActionLoading}
+              onClick={() => batchSetVisibility(false)}
+              className="px-2 py-1 text-xs font-meta rounded bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/30 transition-colors"
+            >
+              Hide
+            </button>
+          </div>
+
+          {/* Department Move */}
+          <div className="flex items-center gap-1 border-l border-white/20 pl-2.5 shrink-0">
+            <select
+              disabled={batchActionLoading}
+              className="bg-white/10 hover:bg-white/15 text-white text-xs font-meta px-2 py-1.5 rounded border border-white/20 cursor-pointer"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) batchSetDept(e.target.value as any);
+              }}
+            >
+              <option value="" className="text-black">Dept ▾</option>
+              <option value="web" className="text-black">Web</option>
+              <option value="brand" className="text-black">Brand</option>
+              <option value="social" className="text-black">Social</option>
+            </select>
+          </div>
+
+          {/* Delete / Reset */}
+          <button
+            disabled={batchActionLoading}
+            onClick={batchDeleteOrReset}
+            className="px-2 py-1 text-xs font-meta rounded bg-red-600/30 hover:bg-red-600/60 text-red-300 border border-red-500/40 transition-colors ml-0.5 shrink-0"
+            title="Delete / reset selected projects"
+          >
+            🗑️
+          </button>
+
+          {/* Deselect */}
+          <button
+            onClick={clearSelection}
+            className="text-xs text-zinc-400 hover:text-white px-2 py-1 transition-colors border-l border-white/20 pl-2.5 shrink-0 cursor-pointer"
+            title="Clear selection (Press Esc)"
+          >
+            Esc ✕
+          </button>
+        </div>
+      )}
 
       {/* FLOATING HOVER LOUPE POPOVER (Instantly shows full artwork on mouse hover without clicking) */}
       {hoveredImage && (
