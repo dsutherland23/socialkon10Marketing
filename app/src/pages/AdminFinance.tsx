@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
 import {
@@ -861,6 +861,8 @@ interface DocumentPreviewProps {
   onConvertToInvoice?: (d: FinDocument) => void;
   onConvertToReceipt?: (d: FinDocument) => void;
   onConvertToCreditNote?: (d: FinDocument) => void;
+  allDocs?: FinDocument[];
+  onSelectDoc?: (d: FinDocument) => void;
 }
 
 function DocumentPreview({
@@ -872,8 +874,13 @@ function DocumentPreview({
   onConvertToInvoice,
   onConvertToReceipt,
   onConvertToCreditNote,
+  allDocs,
+  onSelectDoc,
 }: DocumentPreviewProps) {
   const [copied, setCopied] = useState(false);
+
+  const parentDoc = finDoc.convertedFromId ? allDocs?.find((d) => d.id === finDoc.convertedFromId) : null;
+  const childDocs = allDocs ? allDocs.filter((d) => d.convertedFromId === finDoc.id) : [];
 
   // Keyboard shortcut: Press Escape to exit preview
   useEffect(() => {
@@ -994,6 +1001,52 @@ function DocumentPreview({
           </button>
         </div>
       </div>
+
+      {/* Interactive Conversion Trail Banner (visible when parent or children exist) */}
+      {(parentDoc || childDocs.length > 0) && (
+        <div className="bg-blue-50 dark:bg-blue-950/50 border-b border-blue-200 dark:border-blue-900/60 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2 text-xs flex-wrap print:hidden">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+            <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-blue-900 dark:text-blue-200 flex items-center gap-1">
+              <span>🌳</span> Conversion Trail:
+            </span>
+            {parentDoc && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onSelectDoc?.(parentDoc)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xs bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-100 border border-neutral-300 dark:border-neutral-700 hover:border-blue-500 font-mono text-[11px] font-semibold shadow-2xs cursor-pointer transition-colors"
+                  title={`Click to view parent ${DOC_TYPE_LABELS[parentDoc.type]} #${parentDoc.number}`}
+                >
+                  <span className="text-blue-600 font-bold">↖ From</span>
+                  <span>#{parentDoc.number}</span>
+                  <span className="text-[10px] text-neutral-500 font-normal">({DOC_TYPE_LABELS[parentDoc.type]})</span>
+                </button>
+                <span className="text-neutral-400 font-bold select-none">➔</span>
+              </>
+            )}
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-xs bg-blue-600 text-white font-mono text-[11px] font-bold shadow-2xs">
+              <span>★ Current:</span>
+              <span>#{finDoc.number}</span>
+              <span className="text-[10px] text-blue-100 font-normal">({DOC_TYPE_LABELS[finDoc.type]})</span>
+            </span>
+            {childDocs.map((c) => (
+              <React.Fragment key={c.id}>
+                <span className="text-neutral-400 font-bold select-none">➔</span>
+                <button
+                  type="button"
+                  onClick={() => onSelectDoc?.(c)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xs bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-100 border border-neutral-300 dark:border-neutral-700 hover:border-emerald-500 font-mono text-[11px] font-semibold shadow-2xs cursor-pointer transition-colors"
+                  title={`Click to view converted ${DOC_TYPE_LABELS[c.type]} #${c.number}`}
+                >
+                  <span>{c.type === "receipt" ? "🧾" : c.type === "credit_note" ? "↩️" : "📄"}</span>
+                  <span>#{c.number}</span>
+                  <span className="text-[10px] text-neutral-500 font-normal">({DOC_TYPE_LABELS[c.type]})</span>
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Printable Sheet Body */}
       <div className="p-4 sm:p-8 md:p-12 space-y-6 sm:space-y-8">
@@ -1199,6 +1252,8 @@ function DocumentPreviewModal({
   profile,
   onClose,
   onEdit,
+  allDocs,
+  onSelectDoc,
   onConvertToInvoice,
   onConvertToReceipt,
   onConvertToCreditNote,
@@ -1207,6 +1262,8 @@ function DocumentPreviewModal({
   profile: FinanceProfile;
   onClose: () => void;
   onEdit: () => void;
+  allDocs?: FinDocument[];
+  onSelectDoc?: (d: FinDocument) => void;
   onConvertToInvoice?: (d: FinDocument) => void;
   onConvertToReceipt?: (d: FinDocument) => void;
   onConvertToCreditNote?: (d: FinDocument) => void;
@@ -1243,6 +1300,8 @@ function DocumentPreviewModal({
           profile={profile}
           onClose={onClose}
           onEdit={onEdit}
+          allDocs={allDocs}
+          onSelectDoc={onSelectDoc}
           onDownloadPdf={() => generatePDF(finDoc, profile)}
           onConvertToInvoice={onConvertToInvoice}
           onConvertToReceipt={onConvertToReceipt}
@@ -2224,8 +2283,44 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   const [previewTarget, setPreviewTarget] = useState<FinDocument | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copiedNum, setCopiedNum] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"tree" | "flat">("tree");
+  const [expandedDocIds, setExpandedDocIds] = useState<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const lastClickedIdx = useRef<number>(-1);
+
+  const toggleExpand = (id: string) => {
+    setExpandedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const expandAll = (ids: string[]) => {
+    setExpandedDocIds(new Set(ids));
+  };
+
+  const collapseAll = () => {
+    setExpandedDocIds(new Set());
+  };
+
+  const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
+
+  const childrenMap = useMemo(() => {
+    const map = new Map<string, FinDocument[]>();
+    for (const d of docs) {
+      if (d.convertedFromId) {
+        const list = map.get(d.convertedFromId) || [];
+        list.push(d);
+        map.set(d.convertedFromId, list);
+      }
+    }
+    return map;
+  }, [docs]);
+
+  const parentIdsWithChildren = useMemo(() => Array.from(childrenMap.keys()), [childrenMap]);
+  const totalConvertedCount = useMemo(() => docs.filter((d) => Boolean(d.convertedFromId)).length, [docs]);
 
   // Keyboard shortcut: Press '/' to jump to search, 'Esc' to clear
   useEffect(() => {
@@ -2316,6 +2411,28 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     return list;
   }, [docs, filter, search]);
 
+  // Auto-expand parents when searching so matching child items are visible
+  useEffect(() => {
+    if (search.trim()) {
+      const toExpand = new Set<string>();
+      for (const d of filtered) {
+        if (d.convertedFromId) {
+          toExpand.add(d.convertedFromId);
+        }
+      }
+      if (toExpand.size > 0) {
+        setExpandedDocIds((prev) => new Set([...prev, ...toExpand]));
+      }
+    }
+  }, [search, filtered]);
+
+  const filteredDocIdSet = useMemo(() => new Set(filtered.map((d) => d.id)), [filtered]);
+
+  const rootDocs = useMemo(() => {
+    if (viewMode === "flat") return filtered;
+    return filtered.filter((d) => !d.convertedFromId || !filteredDocIdSet.has(d.convertedFromId));
+  }, [filtered, viewMode, filteredDocIdSet]);
+
   const toggleSelect = (id: string, shiftKey: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -2376,6 +2493,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     const id = await saveDoc(newDoc);
     await patchDoc(d.id, { status: "accepted" });
     await logFinanceAudit({ documentId: id, documentNumber: number, action: "converted_from_quote", actor, before: { quoteId: d.id } });
+    setExpandedDocIds((prev) => new Set([...prev, d.id]));
     toast.success(`Invoice ${number} created from quote ${d.number}.`);
     onRefresh();
   };
@@ -2420,6 +2538,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
         actor,
         before: { invoiceId: d.id, invoiceNumber: d.number },
       });
+      setExpandedDocIds((prev) => new Set([...prev, d.id]));
       toast.success(`Receipt ${number} created from invoice ${d.number}.`);
       onRefresh();
       return number;
@@ -2466,6 +2585,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
         actor,
         before: { invoiceId: d.id, invoiceNumber: d.number },
       });
+      setExpandedDocIds((prev) => new Set([...prev, d.id]));
       toast.success(`Credit Note ${number} issued for invoice ${d.number}.`);
       onRefresh();
     } catch (err) {
@@ -2616,6 +2736,244 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     { key: "draft",       label: "📝 Drafts" },
   ];
 
+  const renderDocRow = (d: FinDocument, depth = 0): React.ReactNode => {
+    if (depth > 5) return null; // recursion safety guard
+    const children = childrenMap.get(d.id) || [];
+    const hasChildren = children.length > 0;
+    const isExpanded = expandedDocIds.has(d.id);
+    const parentDoc = d.convertedFromId ? docById.get(d.convertedFromId) : null;
+
+    return (
+      <React.Fragment key={d.id}>
+        <tr
+          className={`border-b border-[var(--line)] transition-colors ${
+            depth === 1
+              ? "bg-blue-50/25 dark:bg-blue-950/20 hover:bg-blue-50/45 dark:hover:bg-blue-950/35 border-l-4 border-l-blue-500"
+              : depth >= 2
+              ? "bg-purple-50/25 dark:bg-purple-950/20 hover:bg-purple-50/45 dark:hover:bg-purple-950/35 border-l-4 border-l-purple-500"
+              : selected.has(d.id)
+              ? "bg-[var(--dept-soft)] hover:bg-[var(--dept-soft)]"
+              : "hover:bg-[var(--dept-soft)]"
+          }`}
+        >
+          <td className="px-2 py-2">
+            <input
+              type="checkbox"
+              checked={selected.has(d.id)}
+              onChange={(e) => toggleSelect(d.id, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
+              className="accent-[var(--dept)]"
+              aria-label={`Select ${d.number}`}
+            />
+          </td>
+
+          <td className="px-3 py-2 font-mono text-xs">
+            <div className={`flex items-center gap-1.5 ${depth === 1 ? "pl-3 sm:pl-5" : depth >= 2 ? "pl-6 sm:pl-10" : ""}`}>
+              {depth > 0 && (
+                <span className="text-blue-500 font-mono text-xs select-none font-bold">
+                  {depth === 1 ? "↳" : "↳↳"}
+                </span>
+              )}
+
+              {hasChildren ? (
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(d.id)}
+                  className={`w-5 h-5 flex items-center justify-center rounded-xs transition-colors cursor-pointer ${
+                    isExpanded
+                      ? "bg-blue-600 text-white shadow-2xs"
+                      : "hover:bg-[var(--dept-soft)] text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                  title={isExpanded ? "Collapse converted documents" : `Expand ${children.length} converted document(s)`}
+                  aria-label={isExpanded ? "Collapse sub-documents" : "Expand sub-documents"}
+                >
+                  <span
+                    className="inline-block transition-transform duration-150 text-[9px]"
+                    style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                  >
+                    ▶
+                  </span>
+                </button>
+              ) : depth === 0 ? (
+                <span className="w-5" />
+              ) : null}
+
+              <button
+                type="button"
+                className="font-mono text-xs font-semibold text-[var(--ink)] hover:text-[var(--dept)] hover:underline flex items-center gap-1 cursor-pointer"
+                onClick={() => copyDocNumber(d.number)}
+                title="Click to copy document number"
+              >
+                <span>#{d.number}</span>
+                {copiedNum === d.number ? (
+                  <span className="text-[9px] text-green-600 font-bold">✓</span>
+                ) : (
+                  <span className="text-[9px] text-[var(--muted)] opacity-40">📋</span>
+                )}
+              </button>
+
+              {depth > 0 && (
+                <span
+                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded-xs uppercase tracking-wider ${
+                    d.type === "receipt"
+                      ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                      : d.type === "credit_note"
+                      ? "bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
+                      : "bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                  }`}
+                >
+                  Sub-Doc
+                </span>
+              )}
+            </div>
+
+            {/* Badges row under number */}
+            <div className={`flex flex-wrap items-center gap-1.5 mt-1 ${depth === 1 ? "pl-7 sm:pl-9" : depth >= 2 ? "pl-11 sm:pl-15" : "pl-6"}`}>
+              {hasChildren && (
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(d.id)}
+                  className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all cursor-pointer ${
+                    isExpanded
+                      ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                      : "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 hover:bg-blue-100"
+                  }`}
+                  title={isExpanded ? "Click to collapse" : `Click to view ${children.length} converted document(s)`}
+                >
+                  <span>🔗</span>
+                  <span>{children.length} converted {children.length === 1 ? "doc" : "docs"}</span>
+                  <span className="text-[8px] font-bold">{isExpanded ? "▲" : "▼"}</span>
+                </button>
+              )}
+
+              {parentDoc && (
+                <div className="inline-flex items-center gap-1 text-[10px] text-[var(--muted)]">
+                  <span className="opacity-75">↳ from</span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTarget(parentDoc)}
+                    className="font-mono font-medium text-neutral-600 dark:text-neutral-300 hover:text-[var(--dept)] hover:underline cursor-pointer"
+                    title={`Preview parent ${DOC_TYPE_LABELS[parentDoc.type]} #${parentDoc.number}`}
+                  >
+                    #{parentDoc.number}
+                  </button>
+                </div>
+              )}
+            </div>
+          </td>
+
+          <td className="px-3 py-2 text-xs text-[var(--muted)]">
+            <span className="font-medium text-[var(--ink)]">
+              {d.type === "receipt" ? "🧾 " : d.type === "credit_note" ? "↩️ " : d.type === "quote" ? "📋 " : "📄 "}
+              {DOC_TYPE_LABELS[d.type]}
+            </span>
+          </td>
+
+          <td className="px-3 py-2">
+            <div className="text-xs font-medium">{d.clientName}</div>
+            <div className="font-meta text-[9px] text-[var(--muted)]">{d.clientEmail}</div>
+          </td>
+
+          <td className="px-3 py-2 text-xs text-[var(--muted)]">{d.issueDate}</td>
+          <td className="px-3 py-2 text-xs text-right font-mono">{centsToDisplay(d.totalCents)}</td>
+          <td className="px-3 py-2 text-xs text-right font-mono">
+            {d.balanceDueCents > 0 ? (
+              <span className="text-red-600 font-semibold">{centsToDisplay(d.balanceDueCents)}</span>
+            ) : (
+              <span className="text-green-600 font-semibold">—</span>
+            )}
+          </td>
+
+          <td className="px-3 py-2">
+            <span className={`font-meta text-[9px] px-2 py-0.5 rounded-full ${STATUS_COLORS[d.status]}`}>
+              {STATUS_LABELS[d.status]}
+            </span>
+          </td>
+
+          <td className="px-3 py-2">
+            <div className="flex gap-1 justify-end flex-wrap">
+              <button
+                className="text-[10px] font-semibold text-[var(--ink)] bg-[var(--dept-soft)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] px-2.5 py-1 border border-[var(--line)] transition-colors"
+                onClick={() => setPreviewTarget(d)}
+                title="View client-facing preview"
+              >
+                👁 Preview
+              </button>
+              <button
+                className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors"
+                onClick={() => copyClientLink(d)}
+                title="Copy direct client invoice link"
+              >
+                🔗 Link
+              </button>
+              <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => onEdit(d)}>Edit</button>
+              <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => generatePDF(d, profile)}>PDF</button>
+              {d.status !== "paid" && d.status !== "void" && (
+                <button className="text-[10px] text-[var(--muted)] hover:text-green-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => setPayTarget(d)}>$ Pay</button>
+              )}
+              {d.status !== "paid" && d.status !== "void" && (
+                <button
+                  className="text-[10px] text-[var(--muted)] hover:text-amber-600 px-2 py-1 border border-[var(--line)] transition-colors"
+                  onClick={() => sendReminder(d)}
+                  title="Send polite email payment reminder"
+                >
+                  🔔 Remind
+                </button>
+              )}
+              {d.totalCents > 0 && d.status !== "paid" && d.status !== "void" && (
+                <button
+                  className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors"
+                  onClick={() => splitDepositInvoices(d)}
+                  title="Split into 50% upfront deposit and 50% final balance invoices"
+                >
+                  ⚡ 50/50
+                </button>
+              )}
+              {d.type === "quote" && d.status !== "void" && (
+                <button
+                  className="text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 border border-blue-200 transition-colors cursor-pointer"
+                  onClick={() => convertToInvoice(d)}
+                  title="Convert Quote to Invoice"
+                >
+                  → Invoice
+                </button>
+              )}
+              {d.type === "invoice" && d.status !== "void" && (
+                <>
+                  <button
+                    className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 border border-emerald-200 transition-colors cursor-pointer"
+                    onClick={() => convertToReceipt(d)}
+                    title="Convert Invoice to Official Payment Receipt"
+                  >
+                    🧾 → Receipt
+                  </button>
+                  <button
+                    className="text-[10px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2 py-1 border border-purple-200 transition-colors cursor-pointer"
+                    onClick={() => convertToCreditNote(d)}
+                    title="Convert Invoice to Credit Note (Cancel / Adjust)"
+                  >
+                    ↩️ → Credit Note
+                  </button>
+                </>
+              )}
+              {d.status !== "void" && (
+                <button className="text-[10px] text-[var(--muted)] hover:text-blue-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => sendDoc(d)}>Send</button>
+              )}
+              {d.status !== "void" && (
+                <button className="text-[10px] text-[var(--muted)] hover:text-orange-500 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => voidDoc(d)}>Void</button>
+              )}
+              <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => deleteDoc_(d)}>Del</button>
+            </div>
+          </td>
+        </tr>
+
+        {/* Recursive rendering of converted sub-documents */}
+        {hasChildren && isExpanded && viewMode === "tree" && (
+          children.map((child) => renderDocRow(child, depth + 1))
+        )}
+      </React.Fragment>
+    );
+  };
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -2624,8 +2982,8 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
         <button className={btnDept} onClick={onNew}>+ New Document</button>
       </div>
 
-      {/* Filter strip + deep search bar + CSV Export */}
-      <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+      {/* Filter strip + Tree/Flat view switcher + deep search bar + CSV Export */}
+      <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
         {/* Quick filter pills */}
         <div className="flex flex-wrap gap-1.5 items-center">
           {FILTERS.map((f) => (
@@ -2644,14 +3002,67 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
           ))}
         </div>
 
-        {/* Search input + export button */}
-        <div className="flex items-center gap-2 w-full md:w-auto">
-          <div className="relative flex-1 md:w-72">
+        {/* View Mode Toggle + Search input + export button */}
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+          {/* Tree / Flat Toggle */}
+          <div className="flex items-center gap-0.5 bg-[var(--panel)] border border-[var(--line)] p-0.5 rounded-xs">
+            <button
+              type="button"
+              onClick={() => setViewMode("tree")}
+              className={`text-[11px] px-2.5 py-1 rounded-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
+                viewMode === "tree"
+                  ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
+                  : "text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+              title="Group converted documents under their parent document"
+            >
+              <span>🌳</span>
+              <span>Tree View</span>
+              {totalConvertedCount > 0 && (
+                <span className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                  viewMode === "tree" ? "bg-white/20 text-[var(--on-dept)]" : "bg-blue-100 text-blue-800"
+                }`}>
+                  {totalConvertedCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("flat")}
+              className={`text-[11px] px-2.5 py-1 rounded-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
+                viewMode === "flat"
+                  ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
+                  : "text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+              title="Show all documents in flat chronological order"
+            >
+              <span>📄</span>
+              <span>Flat View</span>
+            </button>
+          </div>
+
+          {/* Expand / Collapse All when in Tree View */}
+          {viewMode === "tree" && parentIdsWithChildren.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (expandedDocIds.size === parentIdsWithChildren.length) collapseAll();
+                else expandAll(parentIdsWithChildren);
+              }}
+              className="text-[10px] font-medium text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1.5 border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--dept-soft)] transition-colors cursor-pointer whitespace-nowrap"
+              title="Expand or collapse all converted sub-document groups"
+            >
+              {expandedDocIds.size === parentIdsWithChildren.length ? "▲ Collapse All" : "▼ Expand All"}
+            </button>
+          )}
+
+          {/* Search bar */}
+          <div className="relative flex-1 sm:w-64">
             <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] pointer-events-none">🔍</span>
             <input
               ref={searchInputRef}
               className="w-full pl-8 pr-7 py-1.5 text-xs bg-[var(--panel)] border border-[var(--line)] text-[var(--ink)] placeholder-[var(--muted)] outline-none focus:border-[var(--dept)] focus:ring-1 focus:ring-[var(--dept)]"
-              placeholder="Search #, client, email, phone, items… (Press /)"
+              placeholder="Search #, client, items… (Press /)"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -2667,6 +3078,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
             )}
           </div>
 
+          {/* CSV Export */}
           <button
             type="button"
             className="btn btn-ghost text-[11px] px-2.5 py-1.5 whitespace-nowrap"
@@ -2679,20 +3091,25 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
       </div>
 
       {/* Results active summary bar */}
-      {(search.trim() || filter !== "all") && (
+      {(search.trim() || filter !== "all" || (viewMode === "tree" && totalConvertedCount > 0)) && (
         <div className="flex items-center justify-between text-[11px] px-3 py-2 bg-[var(--dept-soft)]/30 border border-[var(--line)] text-[var(--muted)]">
           <div>
-            Showing <strong className="text-[var(--ink)]">{filtered.length}</strong> of {docs.length} documents
+            Showing <strong className="text-[var(--ink)]">{filtered.length}</strong> {filtered.length === 1 ? "document" : "documents"}
+            {viewMode === "tree" && totalConvertedCount > 0 && (
+              <span> (<strong className="text-blue-600 font-semibold">{totalConvertedCount}</strong> converted sub-items grouped under parents)</span>
+            )}
             {search.trim() && <span> matching "<strong>{search}</strong>"</span>}
             {filter !== "all" && <span> with filter <strong>{FILTERS.find((f) => f.key === filter)?.label}</strong></span>}
           </div>
-          <button
-            type="button"
-            className="text-[10px] font-bold uppercase text-[var(--dept)] hover:underline cursor-pointer"
-            onClick={() => { setSearch(""); setFilter("all"); }}
-          >
-            ✕ Reset Filters
-          </button>
+          {(search.trim() || filter !== "all") && (
+            <button
+              type="button"
+              className="text-[10px] font-bold uppercase text-[var(--dept)] hover:underline cursor-pointer"
+              onClick={() => { setSearch(""); setFilter("all"); }}
+            >
+              ✕ Reset Filters
+            </button>
+          )}
         </div>
       )}
 
@@ -2740,131 +3157,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
               </tr>
             </thead>
             <tbody>
-              {filtered.map((d) => (
-                <tr
-                  key={d.id}
-                  className={`border-b border-[var(--line)] transition-colors hover:bg-[var(--dept-soft)] ${selected.has(d.id) ? "bg-[var(--dept-soft)]" : ""}`}
-                >
-                  <td className="px-2 py-2">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(d.id)}
-                      onChange={(e) => toggleSelect(d.id, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
-                      className="accent-[var(--dept)]"
-                      aria-label={`Select ${d.number}`}
-                    />
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs">
-                    <button
-                      type="button"
-                      className="font-mono text-xs font-semibold text-[var(--ink)] hover:text-[var(--dept)] hover:underline flex items-center gap-1 cursor-pointer"
-                      onClick={() => copyDocNumber(d.number)}
-                      title="Click to copy document number"
-                    >
-                      <span>#{d.number}</span>
-                      {copiedNum === d.number ? (
-                        <span className="text-[9px] text-green-600 font-bold">✓</span>
-                      ) : (
-                        <span className="text-[9px] text-[var(--muted)] opacity-50">📋</span>
-                      )}
-                    </button>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-[var(--muted)]">{DOC_TYPE_LABELS[d.type]}</td>
-                  <td className="px-3 py-2">
-                    <div className="text-xs font-medium">{d.clientName}</div>
-                    <div className="font-meta text-[9px] text-[var(--muted)]">{d.clientEmail}</div>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-[var(--muted)]">{d.issueDate}</td>
-                  <td className="px-3 py-2 text-xs text-right font-mono">{centsToDisplay(d.totalCents)}</td>
-                  <td className="px-3 py-2 text-xs text-right font-mono">
-                    {d.balanceDueCents > 0 ? (
-                      <span className="text-red-600 font-semibold">{centsToDisplay(d.balanceDueCents)}</span>
-                    ) : (
-                      <span className="text-green-600 font-semibold">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`font-meta text-[9px] px-2 py-0.5 rounded-full ${STATUS_COLORS[d.status]}`}>
-                      {STATUS_LABELS[d.status]}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex gap-1 justify-end flex-wrap">
-                      <button
-                        className="text-[10px] font-semibold text-[var(--ink)] bg-[var(--dept-soft)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] px-2.5 py-1 border border-[var(--line)] transition-colors"
-                        onClick={() => setPreviewTarget(d)}
-                        title="View client-facing preview"
-                      >
-                        👁 Preview
-                      </button>
-                      <button
-                        className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors"
-                        onClick={() => copyClientLink(d)}
-                        title="Copy direct client invoice link"
-                      >
-                        🔗 Link
-                      </button>
-                      <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => onEdit(d)}>Edit</button>
-                      <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => generatePDF(d, profile)}>PDF</button>
-                      {d.status !== "paid" && d.status !== "void" && (
-                        <button className="text-[10px] text-[var(--muted)] hover:text-green-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => setPayTarget(d)}>$ Pay</button>
-                      )}
-                      {d.status !== "paid" && d.status !== "void" && (
-                        <button
-                          className="text-[10px] text-[var(--muted)] hover:text-amber-600 px-2 py-1 border border-[var(--line)] transition-colors"
-                          onClick={() => sendReminder(d)}
-                          title="Send polite email payment reminder"
-                        >
-                          🔔 Remind
-                        </button>
-                      )}
-                      {d.totalCents > 0 && d.status !== "paid" && d.status !== "void" && (
-                        <button
-                          className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors"
-                          onClick={() => splitDepositInvoices(d)}
-                          title="Split into 50% upfront deposit and 50% final balance invoices"
-                        >
-                          ⚡ 50/50
-                        </button>
-                      )}
-                      {d.type === "quote" && d.status !== "void" && (
-                        <button
-                          className="text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 border border-blue-200 transition-colors cursor-pointer"
-                          onClick={() => convertToInvoice(d)}
-                          title="Convert Quote to Invoice"
-                        >
-                          → Invoice
-                        </button>
-                      )}
-                      {d.type === "invoice" && d.status !== "void" && (
-                        <>
-                          <button
-                            className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 border border-emerald-200 transition-colors cursor-pointer"
-                            onClick={() => convertToReceipt(d)}
-                            title="Convert Invoice to Official Payment Receipt"
-                          >
-                            🧾 → Receipt
-                          </button>
-                          <button
-                            className="text-[10px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2 py-1 border border-purple-200 transition-colors cursor-pointer"
-                            onClick={() => convertToCreditNote(d)}
-                            title="Convert Invoice to Credit Note (Cancel / Adjust)"
-                          >
-                            ↩️ → Credit Note
-                          </button>
-                        </>
-                      )}
-                      {d.status !== "void" && (
-                        <button className="text-[10px] text-[var(--muted)] hover:text-blue-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => sendDoc(d)}>Send</button>
-                      )}
-                      {d.status !== "void" && (
-                        <button className="text-[10px] text-[var(--muted)] hover:text-orange-500 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => voidDoc(d)}>Void</button>
-                      )}
-                      <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => deleteDoc_(d)}>Del</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {rootDocs.map((d) => renderDocRow(d, 0))}
             </tbody>
           </table>
         </div>
@@ -2893,17 +3186,22 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
           actor={actor}
           onClose={() => setPayTarget(null)}
           onSaved={(_updated) => {
+            if (payTarget) {
+              setExpandedDocIds((prev) => new Set([...prev, payTarget.id]));
+            }
             setPayTarget(null);
             onRefresh();
           }}
         />
       )}
 
-      {/* Full-Screen Document Preview Modal with Standard Conversion Flow */}
+      {/* Full-Screen Document Preview Modal with Standard Conversion Flow & Conversion Trail */}
       {previewTarget && (
         <DocumentPreviewModal
           finDoc={previewTarget}
           profile={profile}
+          allDocs={docs}
+          onSelectDoc={(d) => setPreviewTarget(d)}
           onClose={() => setPreviewTarget(null)}
           onEdit={() => {
             const target = previewTarget;
