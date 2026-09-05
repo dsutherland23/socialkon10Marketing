@@ -879,8 +879,34 @@ function DocumentPreview({
 }: DocumentPreviewProps) {
   const [copied, setCopied] = useState(false);
 
-  const parentDoc = finDoc.convertedFromId ? allDocs?.find((d) => d.id === finDoc.convertedFromId) : null;
-  const childDocs = allDocs ? allDocs.filter((d) => d.convertedFromId === finDoc.id) : [];
+  const parentDoc = useMemo(() => {
+    if (finDoc.convertedFromId) {
+      const p = allDocs?.find((d) => d.id === finDoc.convertedFromId || d.number === finDoc.convertedFromId);
+      if (p) return p;
+    }
+    const text = `${finDoc.notes || ""} ${finDoc.internalNotes || ""}`;
+    const matches = text.match(/\b(INV|QTE|RCT|CN)-\d{4}-\d{4}\b/gi);
+    if (matches && allDocs) {
+      for (const m of matches) {
+        const num = m.toUpperCase();
+        if (num !== finDoc.number) {
+          const p = allDocs.find((d) => d.number === num);
+          if (p && p.id !== finDoc.id) return p;
+        }
+      }
+    }
+    return null;
+  }, [finDoc, allDocs]);
+
+  const childDocs = useMemo(() => {
+    if (!allDocs) return [];
+    return allDocs.filter((d) => {
+      if (d.id === finDoc.id) return false;
+      if (d.convertedFromId === finDoc.id || d.convertedFromId === finDoc.number) return true;
+      const text = `${d.notes || ""} ${d.internalNotes || ""}`;
+      return text.includes(finDoc.number);
+    });
+  }, [finDoc, allDocs]);
 
   // Keyboard shortcut: Press Escape to exit preview
   useEffect(() => {
@@ -2306,21 +2332,57 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   };
 
   const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
+  const docByNumber = useMemo(() => new Map(docs.map((d) => [d.number, d])), [docs]);
+
+  // Robust parent resolver: matches by ID, by document number, or by referenced doc number in notes
+  const getParentOfDoc = useCallback((d: FinDocument): FinDocument | null => {
+    if (d.convertedFromId) {
+      const parent = docById.get(d.convertedFromId) || docByNumber.get(d.convertedFromId);
+      if (parent && parent.id !== d.id) return parent;
+    }
+    // Legacy / fallback: Check notes or internalNotes for referenced doc number (e.g. "Invoice INV-2026-0001")
+    const text = `${d.notes || ""} ${d.internalNotes || ""}`;
+    const matches = text.match(/\b(INV|QTE|RCT|CN)-\d{4}-\d{4}\b/gi);
+    if (matches) {
+      for (const m of matches) {
+        const num = m.toUpperCase();
+        if (num !== d.number) {
+          const parent = docByNumber.get(num);
+          if (parent && parent.id !== d.id) return parent;
+        }
+      }
+    }
+    return null;
+  }, [docById, docByNumber]);
 
   const childrenMap = useMemo(() => {
     const map = new Map<string, FinDocument[]>();
     for (const d of docs) {
-      if (d.convertedFromId) {
-        const list = map.get(d.convertedFromId) || [];
+      const parent = getParentOfDoc(d);
+      if (parent) {
+        const list = map.get(parent.id) || [];
         list.push(d);
-        map.set(d.convertedFromId, list);
+        map.set(parent.id, list);
       }
     }
     return map;
-  }, [docs]);
+  }, [docs, getParentOfDoc]);
 
   const parentIdsWithChildren = useMemo(() => Array.from(childrenMap.keys()), [childrenMap]);
-  const totalConvertedCount = useMemo(() => docs.filter((d) => Boolean(d.convertedFromId)).length, [docs]);
+  const totalConvertedCount = useMemo(() => docs.filter((d) => Boolean(getParentOfDoc(d))).length, [docs, getParentOfDoc]);
+
+  // Auto-expand all parent documents by default so converted sub-documents are immediately visible
+  useEffect(() => {
+    if (parentIdsWithChildren.length > 0) {
+      setExpandedDocIds((prev) => {
+        const next = new Set(prev);
+        for (const id of parentIdsWithChildren) {
+          next.add(id);
+        }
+        return next;
+      });
+    }
+  }, [parentIdsWithChildren]);
 
   // Keyboard shortcut: Press '/' to jump to search, 'Esc' to clear
   useEffect(() => {
@@ -2416,22 +2478,26 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     if (search.trim()) {
       const toExpand = new Set<string>();
       for (const d of filtered) {
-        if (d.convertedFromId) {
-          toExpand.add(d.convertedFromId);
+        const parent = getParentOfDoc(d);
+        if (parent) {
+          toExpand.add(parent.id);
         }
       }
       if (toExpand.size > 0) {
         setExpandedDocIds((prev) => new Set([...prev, ...toExpand]));
       }
     }
-  }, [search, filtered]);
+  }, [search, filtered, getParentOfDoc]);
 
   const filteredDocIdSet = useMemo(() => new Set(filtered.map((d) => d.id)), [filtered]);
 
   const rootDocs = useMemo(() => {
     if (viewMode === "flat") return filtered;
-    return filtered.filter((d) => !d.convertedFromId || !filteredDocIdSet.has(d.convertedFromId));
-  }, [filtered, viewMode, filteredDocIdSet]);
+    return filtered.filter((d) => {
+      const parent = getParentOfDoc(d);
+      return !parent || !filteredDocIdSet.has(parent.id);
+    });
+  }, [filtered, viewMode, filteredDocIdSet, getParentOfDoc]);
 
   const toggleSelect = (id: string, shiftKey: boolean) => {
     setSelected((prev) => {
@@ -2741,7 +2807,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     const children = childrenMap.get(d.id) || [];
     const hasChildren = children.length > 0;
     const isExpanded = expandedDocIds.has(d.id);
-    const parentDoc = d.convertedFromId ? docById.get(d.convertedFromId) : null;
+    const parentDoc = getParentOfDoc(d);
 
     return (
       <React.Fragment key={d.id}>
