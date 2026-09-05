@@ -9,7 +9,7 @@ service firebase.storage {
     function isAdmin() {
       return request.auth != null
         && request.auth.token.email != null
-        && request.auth.token.email.lower() in ['socialkon10@gmail.com'];
+        && request.auth.token.email.lower() in ['socialkon10@gmail.com', 'maddcre8tive@gmail.com'];
     }
 
     // Orders attachments: upload during checkout / order details / chat uploads

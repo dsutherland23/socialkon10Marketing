@@ -14,7 +14,7 @@ service cloud.firestore {
     function isAdmin() {
       return signedIn()
         && request.auth.token.email != null
-        && request.auth.token.email.lower() in ['socialkon10@gmail.com'];
+        && request.auth.token.email.lower() in ['socialkon10@gmail.com', 'maddcre8tive@gmail.com'];
     }
 
     // Orders: Anyone checking out can create, client reads own, admin manages all
@@ -189,6 +189,20 @@ service cloud.firestore {
     match /designAudit/{id} {
       allow create: if true;
       allow read, write: if isAdmin();
+    }
+
+    // Website Power Up Add-Ons (PRD §32/§35) & Agency Services
+    match /websiteAddons/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /websiteAddonCategories/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /agencyServices/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // Customer saved designs: Isolated per user/guest, protected against unauthorized access

@@ -22,7 +22,7 @@ const config = {
 
 export const firebaseReady: boolean = Boolean(config.apiKey && config.projectId && config.appId);
 
-export const ADMIN_EMAILS: string[] = (import.meta.env.VITE_ADMIN_EMAILS || "socialkon10@gmail.com")
+export const ADMIN_EMAILS: string[] = (import.meta.env.VITE_ADMIN_EMAILS || "socialkon10@gmail.com,maddcre8tive@gmail.com")
   .split(",")
   .map((s: string) => s.trim().toLowerCase())
   .filter(Boolean);
