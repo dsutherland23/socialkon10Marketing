@@ -138,7 +138,7 @@ export function ContentProvider({ children }: { children: ReactNode }) {
 
         // admin-added / edited portfolio projects (PRD §67)
         const managedProjects: Project[] = managedP
-          .filter((p) => p.enabled !== false)
+          .filter((p) => p.enabled !== false && !p.deleted && !p._deleted)
           .map((p, i) => ({
             id: String(p.pid ?? `CMS-${String(i + 1).padStart(3, "0")}`),
             slug: String(p.slug ?? p.id),

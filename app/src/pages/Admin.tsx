@@ -2701,6 +2701,7 @@ interface UnifiedProject {
   enabled: boolean;
   isBuiltIn: boolean;
   isCustomized: boolean;
+  isDeleted?: boolean;
   caseStudy?: {
     challenge?: string;
     strategy?: string;
@@ -2714,6 +2715,8 @@ function PortfolioManager() {
   const [managedItems, setManagedItems] = useState<ManagedItem[]>([]);
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState<string>("ALL");
+  const [showTrash, setShowTrash] = useState(false);
+  const [confirmDeleteSlug, setConfirmDeleteSlug] = useState<string | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null); // null | "new" | project slug
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
@@ -2742,6 +2745,7 @@ function PortfolioManager() {
     PROJECTS.forEach((bp) => {
       const cmsOverride = cmsMap.get(bp.slug) || cmsMap.get(bp.id);
       if (cmsOverride) {
+        const isDeleted = Boolean(cmsOverride.deleted || cmsOverride._deleted);
         list.push({
           id: bp.id,
           cmsId: cmsOverride.id,
@@ -2758,9 +2762,10 @@ function PortfolioManager() {
           image: cmsOverride.image ? String(cmsOverride.image) : bp.image,
           imageFit: (cmsOverride.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
           featured: cmsOverride.featured !== undefined ? !!cmsOverride.featured : bp.featured,
-          enabled: cmsOverride.enabled !== false,
+          enabled: cmsOverride.enabled !== false && !isDeleted,
           isBuiltIn: true,
           isCustomized: true,
+          isDeleted,
           caseStudy: {
             challenge: String(cmsOverride.challenge ?? bp.caseStudy?.challenge ?? ""),
             strategy: String(cmsOverride.strategy ?? bp.caseStudy?.strategy ?? ""),
@@ -2788,6 +2793,7 @@ function PortfolioManager() {
           enabled: true,
           isBuiltIn: true,
           isCustomized: false,
+          isDeleted: false,
           caseStudy: bp.caseStudy,
         });
       }
@@ -2798,6 +2804,7 @@ function PortfolioManager() {
     managedItems.forEach((m, i) => {
       const slug = String(m.slug || m.id);
       if (!builtInSlugs.has(slug)) {
+        const isDeleted = Boolean(m.deleted || m._deleted);
         list.unshift({
           id: String(m.pid ?? m.id ?? `CMS-${i + 1}`),
           cmsId: m.id,
@@ -2814,9 +2821,10 @@ function PortfolioManager() {
           image: m.image ? String(m.image) : undefined,
           imageFit: (m.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
           featured: !!m.featured,
-          enabled: m.enabled !== false,
+          enabled: m.enabled !== false && !isDeleted,
           isBuiltIn: false,
           isCustomized: false,
+          isDeleted,
           caseStudy: {
             challenge: String(m.challenge ?? ""),
             strategy: String(m.strategy ?? ""),
@@ -2832,7 +2840,7 @@ function PortfolioManager() {
   }, [managedItems]);
 
   const filtered = useMemo(() => {
-    let xs = projects;
+    let xs = projects.filter((p) => (showTrash ? p.isDeleted : !p.isDeleted));
     if (deptFilter !== "ALL") {
       xs = xs.filter((p) => p.dept.toUpperCase() === deptFilter);
     }
@@ -2847,7 +2855,7 @@ function PortfolioManager() {
       );
     }
     return xs;
-  }, [projects, search, deptFilter]);
+  }, [projects, search, deptFilter, showTrash]);
 
   const startNew = () => {
     setDraft({
@@ -2940,6 +2948,7 @@ function PortfolioManager() {
       imageFit: draft.imageFit === "cover" ? "cover" : "contain",
       featured: !!draft.featured,
       enabled: true,
+      deleted: false,
       challenge: draft.challenge || "",
       strategy: draft.strategy || "",
       creative: draft.creative || "",
@@ -2980,16 +2989,99 @@ function PortfolioManager() {
         liveUrl: p.liveUrl || "",
         image: p.image || "",
         enabled: nextState,
+        deleted: false,
       }), nextState ? "Project visible on Work" : "Project hidden from Work");
     }
     reload();
   };
 
-  const removeOrReset = async (p: UnifiedProject) => {
+  const deleteProject = async (p: UnifiedProject) => {
+    let ok = false;
+    if (p.isBuiltIn) {
+      if (p.cmsId) {
+        ok = await mutate(
+          () => updateManaged("portfolio", p.cmsId!, {
+            slug: p.slug,
+            title: p.title,
+            deleted: true,
+            enabled: false,
+          }),
+          `"${p.title}" deleted from portfolio`
+        );
+      } else {
+        ok = await mutate(
+          () => addManaged("portfolio", {
+            slug: p.slug,
+            title: p.title,
+            client: p.client,
+            dept: p.dept,
+            categories: p.categories.join(", "),
+            industry: p.industry,
+            year: p.year,
+            services: p.services.join(", "),
+            summary: p.summary,
+            liveUrl: p.liveUrl || "",
+            image: p.image || "",
+            deleted: true,
+            enabled: false,
+          }),
+          `"${p.title}" deleted from portfolio`
+        );
+      }
+    } else {
+      if (p.cmsId) {
+        ok = await mutate(
+          () => removeManaged("portfolio", p.cmsId!),
+          `"${p.title}" deleted from portfolio`
+        );
+      }
+    }
+    if (ok) {
+      setConfirmDeleteSlug(null);
+      if (editingSlug === p.slug) {
+        setEditingSlug(null);
+        setDraft({});
+      }
+      reload();
+    }
+  };
+
+  const restoreProject = async (p: UnifiedProject) => {
+    let ok = false;
+    if (p.isBuiltIn && p.cmsId) {
+      // Removing the override document completely restores the built-in default
+      ok = await mutate(
+        () => removeManaged("portfolio", p.cmsId!),
+        `"${p.title}" restored to active portfolio`
+      );
+    } else if (!p.isBuiltIn && p.cmsId) {
+      ok = await mutate(
+        () => updateManaged("portfolio", p.cmsId!, { deleted: false, enabled: true }),
+        `"${p.title}" restored to active portfolio`
+      );
+    }
+    if (ok) reload();
+  };
+
+  const resetToDefault = async (p: UnifiedProject) => {
     if (p.cmsId) {
-      const ok = await mutate(() => removeManaged("portfolio", p.cmsId!), p.isBuiltIn ? "Reset to original default" : "Project deleted");
+      const ok = await mutate(
+        () => removeManaged("portfolio", p.cmsId!),
+        `"${p.title}" reset to original default`
+      );
       if (ok) reload();
     }
+  };
+
+  const restoreAllDefaults = async () => {
+    const deletedBuiltIns = projects.filter((p) => p.isBuiltIn && p.isDeleted && p.cmsId);
+    if (deletedBuiltIns.length === 0) return;
+    if (!window.confirm(`Restore all ${deletedBuiltIns.length} default sample projects to active portfolio?`)) return;
+    for (const p of deletedBuiltIns) {
+      if (p.cmsId) await removeManaged("portfolio", p.cmsId);
+    }
+    toast.success(`Restored ${deletedBuiltIns.length} default project(s)`);
+    reload();
   };
 
   const duplicateProject = (p: UnifiedProject) => {
@@ -3306,18 +3398,65 @@ function PortfolioManager() {
 
   const batchDeleteOrReset = async () => {
     if (selectedSlugs.size === 0) return;
-    const confirmMsg = `Are you sure you want to delete/reset ${selectedSlugs.size} selected project(s)?`;
+    if (showTrash) {
+      setBatchActionLoading(true);
+      let count = 0;
+      for (const p of projects) {
+        if (selectedSlugs.has(p.slug) && p.isDeleted) {
+          if (p.isBuiltIn && p.cmsId) {
+            await removeManaged("portfolio", p.cmsId);
+          } else if (!p.isBuiltIn && p.cmsId) {
+            await updateManaged("portfolio", p.cmsId, { deleted: false, enabled: true });
+          }
+          count++;
+        }
+      }
+      toast.success(`Restored ${count} creative listing(s)`);
+      clearSelection();
+      setBatchActionLoading(false);
+      reload();
+      return;
+    }
+
+    const confirmMsg = `Are you sure you want to delete ${selectedSlugs.size} selected creative listing(s) from your portfolio?`;
     if (!window.confirm(confirmMsg)) return;
 
     setBatchActionLoading(true);
     let count = 0;
     for (const p of projects) {
-      if (selectedSlugs.has(p.slug) && p.cmsId) {
-        await removeManaged("portfolio", p.cmsId);
+      if (selectedSlugs.has(p.slug)) {
+        if (p.isBuiltIn) {
+          if (p.cmsId) {
+            await updateManaged("portfolio", p.cmsId, {
+              slug: p.slug,
+              title: p.title,
+              deleted: true,
+              enabled: false,
+            });
+          } else {
+            await addManaged("portfolio", {
+              slug: p.slug,
+              title: p.title,
+              client: p.client,
+              dept: p.dept,
+              categories: p.categories.join(", "),
+              industry: p.industry,
+              year: p.year,
+              services: p.services.join(", "),
+              summary: p.summary,
+              liveUrl: p.liveUrl || "",
+              image: p.image || "",
+              deleted: true,
+              enabled: false,
+            });
+          }
+        } else if (p.cmsId) {
+          await removeManaged("portfolio", p.cmsId);
+        }
         count++;
       }
     }
-    toast.success(`Removed/reset ${count} project(s)`);
+    toast.success(`Deleted ${count} creative listing(s)`);
     clearSelection();
     setBatchActionLoading(false);
     reload();
@@ -3565,13 +3704,29 @@ function PortfolioManager() {
             )}
           </div>
 
-          <div className="flex gap-3 mt-6 pt-4 border-t border-[var(--line)]">
-            <button className="btn btn-dept !py-2.5" onClick={save}>
-              Save & Publish to Work <span className="btn-arrow" aria-hidden>→</span>
-            </button>
-            <button className="btn btn-ghost !py-2.5" onClick={() => { setEditingSlug(null); setDraft({}); }}>
-              Cancel
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 mt-6 pt-4 border-t border-[var(--line)]">
+            <div className="flex gap-3">
+              <button className="btn btn-dept !py-2.5" onClick={save}>
+                Save & Publish to Work <span className="btn-arrow" aria-hidden>→</span>
+              </button>
+              <button className="btn btn-ghost !py-2.5" onClick={() => { setEditingSlug(null); setDraft({}); }}>
+                Cancel
+              </button>
+            </div>
+            {editingSlug && editingSlug !== "new" && (
+              <button
+                type="button"
+                className="btn btn-ghost !py-2.5 !text-red-500 hover:!border-red-500 hover:!bg-red-500/10"
+                onClick={() => {
+                  const found = projects.find((x) => x.slug === editingSlug);
+                  if (found && window.confirm(`Are you sure you want to delete "${found.title}" from your portfolio?`)) {
+                    deleteProject(found);
+                  }
+                }}
+              >
+                🗑️ Delete Listing
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -3579,17 +3734,60 @@ function PortfolioManager() {
       {/* FILTER & SEARCH BAR */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex flex-wrap items-center gap-2">
+          {/* Active vs Trash View Toggle */}
+          <button
+            onClick={() => setShowTrash(false)}
+            className={`font-meta text-[10px] px-3 py-1.5 border transition-colors rounded-sm flex items-center gap-1.5 ${
+              !showTrash
+                ? "bg-[var(--dept)] border-[var(--dept)] text-[var(--on-dept)] font-bold"
+                : "border-[var(--line)] text-[var(--muted)] hover:text-white"
+            }`}
+          >
+            <span>Active Listings</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[9px] bg-black/20 font-mono">
+              {projects.filter((p) => !p.isDeleted).length}
+            </span>
+          </button>
+
+          {(projects.some((p) => p.isDeleted) || showTrash) && (
+            <button
+              onClick={() => setShowTrash(true)}
+              className={`font-meta text-[10px] px-3 py-1.5 border transition-colors rounded-sm flex items-center gap-1.5 ${
+                showTrash
+                  ? "bg-red-600 border-red-600 text-white font-bold"
+                  : "border-red-500/40 text-red-400 hover:bg-red-500/10"
+              }`}
+            >
+              <span>🗑️ Trash / Deleted</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] bg-black/20 font-mono">
+                {projects.filter((p) => p.isDeleted).length}
+              </span>
+            </button>
+          )}
+
+          <div className="h-4 w-px bg-[var(--line)] mx-1" />
+
           {["ALL", "WEB", "BRAND", "SOCIAL"].map((d) => (
             <button
               key={d}
               onClick={() => setDeptFilter(d)}
-              className="font-meta text-[10px] px-3 py-1.5 border transition-colors"
-              style={deptFilter === d ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}
+              className="font-meta text-[10px] px-2.5 py-1 border transition-colors"
+              style={deptFilter === d ? { background: "var(--dept-soft)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}
             >
               {d}
             </button>
           ))}
-          <span className="font-meta text-[10px] text-[var(--muted)] ml-2">{filtered.length} projects</span>
+
+          {showTrash && projects.some((p) => p.isBuiltIn && p.isDeleted) && (
+            <button
+              onClick={restoreAllDefaults}
+              className="font-meta text-[10px] px-2.5 py-1 rounded border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10 transition-colors ml-2"
+            >
+              ♻️ Restore All Defaults
+            </button>
+          )}
+
+          <span className="font-meta text-[10px] text-[var(--muted)] ml-2">{filtered.length} listings</span>
         </div>
         <input
           className={`${inputCls} !w-64 !py-1.5 text-xs`}
@@ -3706,7 +3904,10 @@ function PortfolioManager() {
                   {!p.isBuiltIn && (
                     <span className="font-meta text-[8px] px-1.5 py-0.5 bg-[var(--dept)] text-[var(--on-dept)]">CUSTOM WEBSITE</span>
                   )}
-                  {!p.enabled && (
+                  {p.isDeleted && (
+                    <span className="font-meta text-[8px] px-1.5 py-0.5 bg-red-600/30 text-red-300 border border-red-500/40 font-bold">DELETED FROM WORK</span>
+                  )}
+                  {!p.isDeleted && !p.enabled && (
                     <span className="font-meta text-[8px] px-1.5 py-0.5 bg-red-600/20 text-red-500 border border-red-500/30">HIDDEN FROM WORK</span>
                   )}
                   {p.image && (
@@ -3795,32 +3996,81 @@ function PortfolioManager() {
               >
                 View ↗
               </a>
-              <button
-                className="btn btn-ghost !py-1 !px-2.5 text-xs text-[var(--ink)]"
-                onClick={() => duplicateProject(p)}
-                title="Duplicate / clone this project to create a new one faster"
-              >
-                📑 Clone
-              </button>
-              <button
-                className="btn btn-dept !py-1 !px-3 text-xs"
-                onClick={() => startEdit(p)}
-              >
-                Edit
-              </button>
-              <button
-                className={`btn btn-ghost !py-1 !px-3 text-xs ${p.enabled ? "text-amber-500" : "dept-accent"}`}
-                onClick={() => toggleVisibility(p)}
-              >
-                {p.enabled ? "Hide" : "Show"}
-              </button>
-              {p.cmsId && (
-                <button
-                  className="btn btn-ghost !py-1 !px-3 text-xs !text-red-500 hover:!border-red-500"
-                  onClick={() => removeOrReset(p)}
-                >
-                  {p.isBuiltIn ? "Reset" : "Delete"}
-                </button>
+              {!showTrash && (
+                <>
+                  <button
+                    className="btn btn-ghost !py-1 !px-2.5 text-xs text-[var(--ink)]"
+                    onClick={() => duplicateProject(p)}
+                    title="Duplicate / clone this project to create a new one faster"
+                  >
+                    📑 Clone
+                  </button>
+                  <button
+                    className="btn btn-dept !py-1 !px-3 text-xs"
+                    onClick={() => startEdit(p)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className={`btn btn-ghost !py-1 !px-3 text-xs ${p.enabled ? "text-amber-500" : "dept-accent"}`}
+                    onClick={() => toggleVisibility(p)}
+                  >
+                    {p.enabled ? "Hide" : "Show"}
+                  </button>
+                  {p.isBuiltIn && p.isCustomized && (
+                    <button
+                      className="btn btn-ghost !py-1 !px-2.5 text-xs text-amber-500 hover:!border-amber-500"
+                      onClick={() => resetToDefault(p)}
+                      title="Revert custom edits back to original default sample"
+                    >
+                      Reset Default
+                    </button>
+                  )}
+                  {confirmDeleteSlug === p.slug ? (
+                    <div className="flex items-center gap-1.5 shrink-0 animate-in fade-in duration-150">
+                      <span className="font-meta text-[10px] text-red-500 font-bold">Delete listing?</span>
+                      <button
+                        className="btn btn-ghost !py-1 !px-2.5 text-xs !bg-red-600 !text-white hover:!bg-red-700 !border-red-600 font-bold"
+                        onClick={() => deleteProject(p)}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        className="btn btn-ghost !py-1 !px-2 text-xs text-[var(--muted)]"
+                        onClick={() => setConfirmDeleteSlug(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn btn-ghost !py-1 !px-2.5 text-xs !text-red-500 hover:!border-red-500 hover:!bg-red-500/10"
+                      onClick={() => setConfirmDeleteSlug(p.slug)}
+                      title="Delete this creative listing from your portfolio"
+                    >
+                      🗑️ Delete
+                    </button>
+                  )}
+                </>
+              )}
+              {showTrash && (
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn btn-ghost !py-1 !px-3 text-xs !text-emerald-400 !border-emerald-500/40 hover:!bg-emerald-500/10"
+                    onClick={() => restoreProject(p)}
+                  >
+                    ♻️ Restore to Portfolio
+                  </button>
+                  {!p.isBuiltIn && p.cmsId && (
+                    <button
+                      className="btn btn-ghost !py-1 !px-2.5 text-xs !text-red-500 hover:!border-red-500 hover:!bg-red-500/10"
+                      onClick={() => deleteProject(p)}
+                      title="Permanently remove custom entry"
+                    >
+                      Permanent Delete
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -3939,14 +4189,18 @@ function PortfolioManager() {
             </select>
           </div>
 
-          {/* Delete / Reset */}
+          {/* Delete / Restore in Batch */}
           <button
             disabled={batchActionLoading}
             onClick={batchDeleteOrReset}
-            className="px-2 py-1 text-xs font-meta rounded bg-red-600/30 hover:bg-red-600/60 text-red-300 border border-red-500/40 transition-colors ml-0.5 shrink-0"
-            title="Delete / reset selected projects"
+            className={`px-2.5 py-1 text-xs font-meta rounded border transition-colors ml-0.5 shrink-0 flex items-center gap-1 ${
+              showTrash
+                ? "bg-emerald-600/30 hover:bg-emerald-600/60 text-emerald-300 border-emerald-500/40"
+                : "bg-red-600/30 hover:bg-red-600/60 text-red-300 border-red-500/40"
+            }`}
+            title={showTrash ? "Restore selected projects to active portfolio" : "Delete selected projects from portfolio"}
           >
-            🗑️
+            {showTrash ? "♻️ Restore" : "🗑️ Delete"}
           </button>
 
           {/* Deselect */}
