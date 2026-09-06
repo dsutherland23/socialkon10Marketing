@@ -2697,6 +2697,7 @@ interface UnifiedProject {
   liveUrl?: string;
   image?: string;
   imageFit?: "cover" | "contain";
+  gallery?: string[];
   featured?: boolean;
   enabled: boolean;
   isBuiltIn: boolean;
@@ -2720,10 +2721,12 @@ function PortfolioManager() {
   const [editingSlug, setEditingSlug] = useState<string | null>(null); // null | "new" | project slug
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
+  const [galleryUploading, setGalleryUploading] = useState(false);
   const [showCaseStudy, setShowCaseStudy] = useState(false);
   const [hoveredImage, setHoveredImage] = useState<{ src: string; title: string; client: string; fit: string; x: number; y: number } | null>(null);
   const [inspectProject, setInspectProject] = useState<UnifiedProject | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const galleryFileRef = useRef<HTMLInputElement>(null);
   const masterCheckRef = useRef<HTMLInputElement>(null);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set());
   const [lastSelectedSlug, setLastSelectedSlug] = useState<string | null>(null);
@@ -2761,6 +2764,11 @@ function PortfolioManager() {
           liveUrl: cmsOverride.liveUrl !== undefined ? String(cmsOverride.liveUrl) : bp.liveUrl,
           image: cmsOverride.image ? String(cmsOverride.image) : bp.image,
           imageFit: (cmsOverride.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
+          gallery: cmsOverride.gallery
+            ? (Array.isArray(cmsOverride.gallery)
+                ? cmsOverride.gallery.map(String)
+                : String(cmsOverride.gallery).split("\n").map((s) => s.trim()).filter(Boolean))
+            : bp.gallery,
           featured: cmsOverride.featured !== undefined ? !!cmsOverride.featured : bp.featured,
           enabled: cmsOverride.enabled !== false && !isDeleted,
           isBuiltIn: true,
@@ -2789,6 +2797,7 @@ function PortfolioManager() {
           liveUrl: bp.liveUrl,
           image: bp.image,
           imageFit: (bp.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
+          gallery: bp.gallery,
           featured: bp.featured,
           enabled: true,
           isBuiltIn: true,
@@ -2820,6 +2829,11 @@ function PortfolioManager() {
           liveUrl: m.liveUrl ? String(m.liveUrl) : undefined,
           image: m.image ? String(m.image) : undefined,
           imageFit: (m.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
+          gallery: m.gallery
+            ? (Array.isArray(m.gallery)
+                ? m.gallery.map(String)
+                : String(m.gallery).split("\n").map((s) => s.trim()).filter(Boolean))
+            : undefined,
           featured: !!m.featured,
           enabled: m.enabled !== false && !isDeleted,
           isBuiltIn: false,
@@ -2871,6 +2885,7 @@ function PortfolioManager() {
       liveUrl: "https://",
       image: "",
       imageFit: "contain",
+      gallery: "",
       featured: false,
       challenge: "",
       strategy: "",
@@ -2899,6 +2914,7 @@ function PortfolioManager() {
       liveUrl: p.liveUrl ?? "",
       image: p.image ?? "",
       imageFit: p.imageFit ?? "contain",
+      gallery: p.gallery && p.gallery.length > 0 ? p.gallery.join("\n") : "",
       featured: !!p.featured,
       challenge: p.caseStudy?.challenge ?? "",
       strategy: p.caseStudy?.strategy ?? "",
@@ -2924,6 +2940,23 @@ function PortfolioManager() {
     setUploading(false);
   };
 
+  const pickGalleryImage = async (file: File | undefined) => {
+    if (!file) return;
+    setGalleryUploading(true);
+    try {
+      const url = await uploadImage(file, "portfolio");
+      setDraft((d) => {
+        const existing = d.gallery ? String(d.gallery).trim() : "";
+        return { ...d, gallery: existing ? `${existing}\n${url}` : url };
+      });
+      toast.success(firebaseReady ? "Gallery exhibit uploaded" : "Gallery exhibit attached (demo preview)");
+    } catch {
+      toast.error("Gallery asset upload failed");
+    }
+    setGalleryUploading(false);
+    if (galleryFileRef.current) galleryFileRef.current.value = "";
+  };
+
   const save = async () => {
     if (!draft.title?.trim()) { toast.error("Project title is required."); return; }
     const slug = draft.slug?.trim() || draft.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
@@ -2932,6 +2965,13 @@ function PortfolioManager() {
       toast.error("Live preview URL must be a valid https:// address (e.g. https://pinstripesrentals.com)");
       return;
     }
+
+    const galleryUrls = draft.gallery
+      ? String(draft.gallery)
+          .split("\n")
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0)
+      : [];
 
     const payload: Record<string, any> = {
       title: draft.title.trim(),
@@ -2946,6 +2986,7 @@ function PortfolioManager() {
       liveUrl: live && live !== "https://" ? live : "",
       image: draft.image || "",
       imageFit: draft.imageFit === "cover" ? "cover" : "contain",
+      gallery: galleryUrls,
       featured: !!draft.featured,
       enabled: true,
       deleted: false,
@@ -2967,6 +3008,7 @@ function PortfolioManager() {
       setDraft({});
       setEditingSlug(null);
       if (fileRef.current) fileRef.current.value = "";
+      if (galleryFileRef.current) galleryFileRef.current.value = "";
       reload();
     }
   };
@@ -3666,6 +3708,71 @@ function PortfolioManager() {
                         <span><strong>Fill Card (Crop)</strong> — Standard bleed cover style</span>
                       </label>
                     </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* MULTI-ASSET EXHIBITS / GALLERY */}
+            <div className="sm:col-span-2 lg:col-span-3 p-4 border border-[var(--line)] rounded" style={{ background: "var(--bg)" }}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-meta text-[10px] font-bold uppercase tracking-wider text-[var(--ink)] block">
+                    Visual Deliverables & Multi-Asset Exhibits (Gallery)
+                  </span>
+                  <span className="font-meta text-[9px] text-[var(--muted)]">
+                    Add extra posters, packaging angles, branding mockups, stationery, and collateral images to showcase in high-res zoom.
+                  </span>
+                </div>
+                <label className="btn btn-ghost !py-1.5 !text-xs cursor-pointer">
+                  + Upload Exhibit Image
+                  <input
+                    ref={galleryFileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => pickGalleryImage(e.target.files?.[0])}
+                  />
+                </label>
+              </div>
+              {galleryUploading && <span className="font-meta text-[10px] text-[var(--muted)] block mt-2">Uploading gallery asset…</span>}
+              <div className="mt-3">
+                <label className={labelCls}>EXHIBIT IMAGE URLS (1 PER LINE)</label>
+                <textarea
+                  rows={3}
+                  className={`${inputCls} mt-1 font-mono text-xs`}
+                  value={draft.gallery ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, gallery: e.target.value }))}
+                  placeholder={"https://example.com/asset-1.png\nhttps://example.com/asset-2.png"}
+                />
+              </div>
+              {draft.gallery && String(draft.gallery).trim().length > 0 && (
+                <div className="mt-3">
+                  <span className="font-meta text-[9px] text-[var(--muted)] block mb-1.5">Attached Exhibits Preview:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {String(draft.gallery)
+                      .split("\n")
+                      .map((url: string) => url.trim())
+                      .filter(Boolean)
+                      .map((url: string, idx: number) => (
+                        <div key={idx} className="relative group/gitem border border-[var(--line)] bg-[var(--panel)] p-1 rounded">
+                          <img src={url} alt={`Exhibit ${idx + 1}`} className="w-16 h-16 object-contain rounded" />
+                          <button
+                            type="button"
+                            title="Remove asset"
+                            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center shadow hover:scale-110 transition-transform"
+                            onClick={() => {
+                              const filtered = String(draft.gallery)
+                                .split("\n")
+                                .map((s: string) => s.trim())
+                                .filter((s: string) => s !== url);
+                              setDraft((d) => ({ ...d, gallery: filtered.join("\n") }));
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
                   </div>
                 </div>
               )}

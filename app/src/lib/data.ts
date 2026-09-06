@@ -97,6 +97,7 @@ export interface Project {
   image?: string;          // uploaded cover image URL (admin CMS) — overrides generative art
   imageFit?: "cover" | "contain"; // "contain" shows 100% full design with studio framing; "cover" fills/crops
   liveUrl?: string;        // live site URL (admin CMS) — enables the contained Live Window preview
+  gallery?: string[];      // secondary deliverables / showcase artwork images
 }
 
 export interface Testimonial {

@@ -82,50 +82,62 @@ export function ProjectCover({
 
   const isContain = fit === "contain";
 
+  // When an uploaded artwork image is available, render via responsive high-res HTML picture
+  // with an ambient blurred color-matched backdrop instead of embedding inside an SVG.
+  if (image) {
+    return (
+      <div
+        className={`relative w-full h-full overflow-hidden flex items-center justify-center select-none ${className}`}
+        style={{ background: `hsl(${hue} 45% 7%)` }}
+      >
+        {/* Ambient blurred glow derived from the artwork itself to eliminate jarring empty bars */}
+        {isContain && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+            <img
+              src={image}
+              alt=""
+              className="w-full h-full object-cover blur-2xl scale-125 opacity-40 brightness-75"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" />
+          </div>
+        )}
+
+        {/* Foreground High-Resolution Artwork */}
+        <img
+          src={image}
+          alt={`${title} — project artwork`}
+          loading="lazy"
+          decoding="async"
+          className={`relative z-10 w-full h-full ${
+            isContain
+              ? "object-contain p-2 sm:p-3 md:p-4 drop-shadow-xl"
+              : "object-cover"
+          } transition-transform duration-500 ease-out group-hover:scale-[1.02]`}
+        />
+
+        {/* Subtle studio hairline framing */}
+        <div
+          className="absolute inset-0 pointer-events-none z-20 border"
+          style={{ borderColor: `hsl(${hue} 70% 50% / 0.25)` }}
+          aria-hidden="true"
+        />
+      </div>
+    );
+  }
+
+  // Generative procedural canvas art fallback for sample items without uploaded covers
   return (
     <svg
       viewBox="0 0 800 1000"
       role="img"
-      aria-label={`${title} — project cover artwork`}
+      aria-label={`${title} — generative cover art`}
       className={className}
       preserveAspectRatio="xMidYMid slice"
       style={{ display: "block", width: "100%", height: "100%", background: `hsl(${hue} 45% 8%)` }}
     >
-      <defs>
-        <filter id={`blur-bg-${seed}`}>
-          <feGaussianBlur stdDeviation="30" />
-          <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.4 0" />
-        </filter>
-      </defs>
-
-      {image ? (
-        <>
-          {/* If contain, render blurred ambient backdrop so aspect ratio differences look intentional and polished */}
-          {isContain && (
-            <image
-              href={image}
-              x="-40"
-              y="-40"
-              width="880"
-              height="1080"
-              preserveAspectRatio="xMidYMid slice"
-              filter={`url(#blur-bg-${seed})`}
-              opacity="0.65"
-            />
-          )}
-          {/* Main Artwork: preserveAspectRatio meet ensures 100% full design is visible */}
-          <image
-            href={image}
-            x={isContain ? "20" : "0"}
-            y={isContain ? "20" : "0"}
-            width={isContain ? "760" : "800"}
-            height={isContain ? "960" : "1000"}
-            preserveAspectRatio={isContain ? "xMidYMid meet" : "xMidYMid slice"}
-          />
-        </>
-      ) : (
-        nodes
-      )}
+      {nodes}
       <rect x="0" y="0" width="800" height="1000" fill="none" stroke={`hsl(${hue} 70% 50% / 0.35)`} strokeWidth="2" />
     </svg>
   );

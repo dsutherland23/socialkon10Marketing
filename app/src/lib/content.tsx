@@ -156,6 +156,11 @@ export function ContentProvider({ children }: { children: ReactNode }) {
             imageFit: (p.imageFit === "cover" ? "cover" : "contain") as "cover" | "contain",
             liveUrl: p.liveUrl && /^https:\/\//.test(String(p.liveUrl)) ? String(p.liveUrl) : undefined,
             featured: p.featured === true || p.featured === "true",
+            gallery: Array.isArray(p.gallery)
+              ? (p.gallery as string[])
+              : typeof p.gallery === "string" && p.gallery.trim()
+              ? p.gallery.split("\n").map((s) => s.trim()).filter(Boolean)
+              : undefined,
             caseStudy: {
               challenge: String(p.challenge ?? ""),
               strategy: String(p.strategy ?? ""),

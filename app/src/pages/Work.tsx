@@ -9,6 +9,7 @@ import { FinalCta } from "../components/blocks";
 import { ProjectCover } from "../components/cover";
 import { LiveCover } from "../components/LiveCover";
 import { LiveWindow } from "../components/LiveWindow";
+import { ArtworkLightbox } from "../components/ArtworkLightbox";
 
 /* Mini browser chrome for web projects without a live URL — makes the
    archive read as a wall of sites rather than abstract art. */
@@ -39,6 +40,7 @@ export default function Work() {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [hover, setHover] = useState<string | null>(null);
   const [preview, setPreview] = useState<Project | null>(null);
+  const [artworkPreview, setArtworkPreview] = useState<Project | null>(null);
   const { projects: allProjects } = useContent();
 
   useSEO({
@@ -132,15 +134,33 @@ export default function Work() {
                       <Link to={`/work/${p.slug}`} className="hover:text-[var(--dept)] transition-colors">{p.title}</Link>
                     </h2>
                     <p className="font-meta text-[9px] text-[var(--muted)] mt-1.5">{p.categories.join(" · ")}</p>
-                    {p.liveUrl && (
-                      <button
-                        className="mt-2.5 font-meta text-[10px] dept-accent u-line"
-                        onClick={() => setPreview(p)}
-                        aria-label={`Open contained live preview of ${p.title}`}
+                    <div className="mt-2.5 flex items-center gap-3">
+                      {p.liveUrl ? (
+                        <button
+                          className="font-meta text-[10px] dept-accent u-line"
+                          onClick={() => setPreview(p)}
+                          aria-label={`Open contained live preview of ${p.title}`}
+                        >
+                          Live preview →
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 font-meta text-[10px] text-[var(--ink)] hover:text-[var(--dept)] transition-colors u-line cursor-pointer"
+                          onClick={() => setArtworkPreview(p)}
+                          aria-label={`Inspect high-res artwork for ${p.title}`}
+                        >
+                          <span>Inspect Artwork</span>
+                          <span className="text-[10px] opacity-70">🔍</span>
+                        </button>
+                      )}
+                      <Link
+                        to={`/work/${p.slug}`}
+                        className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
                       >
-                        Live preview →
-                      </button>
-                    )}
+                        Case study →
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </Reveal>
@@ -164,13 +184,22 @@ export default function Work() {
                   <span className="hidden md:block font-meta text-[9px] text-[var(--muted)]">{p.categories.join(" · ")}</span>
                   <span className="font-meta text-[10px] dept-accent" aria-hidden>OPEN →</span>
                 </Link>
-                {p.liveUrl && (
+                {p.liveUrl ? (
                   <button
                     className="absolute right-20 md:right-24 top-1/2 -translate-y-1/2 font-meta text-[10px] dept-accent u-line"
                     onClick={() => setPreview(p)}
                     aria-label={`Open contained live preview of ${p.title}`}
                   >
                     LIVE →
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="absolute right-20 md:right-24 top-1/2 -translate-y-1/2 font-meta text-[10px] text-[var(--muted)] hover:text-[var(--ink)] transition-colors u-line cursor-pointer"
+                    onClick={() => setArtworkPreview(p)}
+                    aria-label={`Inspect artwork for ${p.title}`}
+                  >
+                    INSPECT 🔍
                   </button>
                 )}
               </div>
@@ -184,6 +213,9 @@ export default function Work() {
       <FinalCta />
       {preview?.liveUrl && (
         <LiveWindow url={preview.liveUrl} title={preview.title} onClose={() => setPreview(null)} />
+      )}
+      {artworkPreview && (
+        <ArtworkLightbox project={artworkPreview} onClose={() => setArtworkPreview(null)} />
       )}
     </>
   );
