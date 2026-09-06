@@ -1315,7 +1315,7 @@ function DocumentPreviewModal({
         <button
           type="button"
           onClick={onClose}
-          className="absolute -top-3 -right-1 sm:-top-4 sm:-right-4 z-50 w-9 h-9 rounded-full bg-neutral-900 text-white border-2 border-white flex items-center justify-center font-bold text-sm shadow-xl hover:bg-red-600 transition-colors cursor-pointer"
+          className="absolute -top-3 right-1 sm:-top-4 sm:-right-4 z-50 w-9 h-9 rounded-full bg-neutral-900 text-white border-2 border-white flex items-center justify-center font-bold text-sm shadow-xl hover:bg-red-600 transition-colors cursor-pointer active:scale-95"
           title="Close preview (Esc)"
           aria-label="Close preview"
         >
@@ -1356,9 +1356,9 @@ function LineItemRow({ item, onChange, onRemove }: LineItemRowProps) {
   };
 
   return (
-    <div className="grid gap-2 items-end border-b border-[var(--line)] pb-3 mb-3" style={{ gridTemplateColumns: "1fr 56px 110px 72px 100px 32px" }}>
-      {/* Description */}
-      <div>
+    <div className="border-b border-[var(--line)] pb-3 mb-3 space-y-2 sm:space-y-0 sm:grid sm:gap-2 sm:items-end" style={{ gridTemplateColumns: "1fr 56px 110px 72px 100px 32px" }}>
+      {/* Description (Full width on mobile, 1fr on desktop) */}
+      <div className="w-full">
         <label className={labelCls}>Description</label>
         <input
           className={inputCls}
@@ -1367,50 +1367,57 @@ function LineItemRow({ item, onChange, onRemove }: LineItemRowProps) {
           placeholder="Service or item description"
         />
       </div>
-      {/* Qty */}
-      <div>
-        <label className={labelCls}>Qty</label>
-        <input
-          type="number" min="1" step="1"
-          className={inputCls}
-          value={item.qty}
-          onChange={(e) => update({ qty: Math.max(1, parseInt(e.target.value) || 1) })}
-        />
-      </div>
-      {/* Unit Price */}
-      <div>
-        <label className={labelCls}>Unit Price ($)</label>
-        <input
-          className={inputCls}
-          value={(item.unitPriceCents / 100).toFixed(2)}
-          onChange={(e) => update({ unitPriceCents: parseDollarsToCents(e.target.value) })}
-          placeholder="0.00"
-        />
-      </div>
-      {/* Discount */}
-      <div>
-        <label className={labelCls}>Disc %</label>
-        <input
-          type="number" min="0" max="100" step="1"
-          className={inputCls}
-          value={item.discountPct}
-          onChange={(e) => update({ discountPct: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })}
-        />
-      </div>
-      {/* Line Total */}
-      <div>
-        <label className={labelCls}>Total</label>
-        <div className="px-3 py-2 text-sm font-semibold text-right border border-[var(--line)] bg-[var(--panel)]">
-          {centsToDisplay(item.lineTotalCents)}
+
+      {/* Sub-row for Qty, Unit Price, Disc %, Total, Remove on mobile */}
+      <div className="grid grid-cols-12 gap-2 items-end sm:contents">
+        {/* Qty */}
+        <div className="col-span-2 sm:col-auto">
+          <label className={labelCls}>Qty</label>
+          <input
+            type="number" min="1" step="1"
+            className={inputCls}
+            value={item.qty}
+            onChange={(e) => update({ qty: Math.max(1, parseInt(e.target.value) || 1) })}
+          />
+        </div>
+        {/* Unit Price */}
+        <div className="col-span-3 sm:col-auto">
+          <label className={labelCls}>Price ($)</label>
+          <input
+            className={inputCls}
+            value={(item.unitPriceCents / 100).toFixed(2)}
+            onChange={(e) => update({ unitPriceCents: parseDollarsToCents(e.target.value) })}
+            placeholder="0.00"
+          />
+        </div>
+        {/* Discount */}
+        <div className="col-span-2 sm:col-auto">
+          <label className={labelCls}>Disc %</label>
+          <input
+            type="number" min="0" max="100" step="1"
+            className={inputCls}
+            value={item.discountPct}
+            onChange={(e) => update({ discountPct: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })}
+          />
+        </div>
+        {/* Line Total */}
+        <div className="col-span-3 sm:col-auto">
+          <label className={labelCls}>Total</label>
+          <div className="px-2 py-2 text-xs sm:text-sm font-semibold text-right border border-[var(--line)] bg-[var(--panel)] truncate">
+            {centsToDisplay(item.lineTotalCents)}
+          </div>
+        </div>
+        {/* Remove */}
+        <div className="col-span-2 sm:col-auto flex justify-end">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="w-8 h-8 rounded-xs flex items-center justify-center text-[var(--muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 text-lg leading-none transition-colors cursor-pointer self-end"
+            aria-label="Remove line item"
+            title="Remove item"
+          >×</button>
         </div>
       </div>
-      {/* Remove */}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="text-[var(--muted)] hover:text-red-500 text-lg leading-none self-end pb-2 transition-colors"
-        aria-label="Remove line item"
-      >×</button>
     </div>
   );
 }
@@ -1533,14 +1540,18 @@ function PaymentModal({ finDoc, actor, onClose, onSaved }: PaymentModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }}>
-      <div className="w-full max-w-md border border-[var(--line)] p-6" style={{ background: "var(--panel)" }}>
-        <div className="flex items-center justify-between mb-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs">
+      <div className="w-full max-w-md border border-[var(--line)] p-5 sm:p-6 rounded-lg shadow-2xl max-h-[90dvh] overflow-y-auto" style={{ background: "var(--panel)" }}>
+        <div className="flex items-center justify-between mb-4">
           <h3 className="font-display font-bold uppercase tracking-tight text-sm">Record Payment</h3>
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--ink)] text-lg">×</button>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--dept-soft)] transition-colors cursor-pointer text-base"
+            aria-label="Close"
+          >×</button>
         </div>
         <p className="font-meta text-[10px] text-[var(--muted)] mb-4">
-          {finDoc.number} · Balance due: <strong>{centsToDisplay(finDoc.balanceDueCents)}</strong>
+          {finDoc.number} · Balance due: <strong className="text-[var(--ink)]">{centsToDisplay(finDoc.balanceDueCents)}</strong>
         </p>
         <div className="space-y-3">
           <div>
@@ -1582,8 +1593,8 @@ function PaymentModal({ finDoc, actor, onClose, onSaved }: PaymentModalProps) {
             </label>
           </div>
         </div>
-        <div className="flex gap-3 mt-5">
-          <button className={btnDept} onClick={save} disabled={busy}>
+        <div className="flex gap-3 mt-5 pt-3 border-t border-[var(--line)]">
+          <button className={`${btnDept} flex-1 sm:flex-initial`} onClick={save} disabled={busy}>
             {busy ? "Saving…" : "Record Payment"}
           </button>
           <button className={btnGhost} onClick={onClose}>Cancel</button>
@@ -2122,7 +2133,7 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className={labelCls}>Full Name / Business</label>
                   <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Client name" />
@@ -2139,7 +2150,7 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
                   <label className={labelCls}>Address</label>
                   <input className={inputCls} value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} placeholder="Street address" />
                 </div>
-                <div className="col-span-2">
+                <div className="col-span-1 sm:col-span-2">
                   <label className={labelCls}>City, State, Country</label>
                   <input className={inputCls} value={clientCity} onChange={(e) => setClientCity(e.target.value)} placeholder="Kingston, Jamaica" />
                 </div>
@@ -2198,7 +2209,7 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
 
               {/* Totals */}
               {items.length > 0 && (
-                <div className="mt-4 ml-auto w-64 space-y-1 text-sm border-t border-[var(--line)] pt-4">
+                <div className="mt-4 w-full sm:w-64 sm:ml-auto space-y-1 text-sm border-t border-[var(--line)] pt-4">
                   <div className="flex justify-between text-[var(--muted)]">
                     <span>Subtotal</span><span>{centsToDisplay(totals.subtotalCents)}</span>
                   </div>
@@ -2242,7 +2253,7 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-[var(--line)]">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-[var(--line)]">
                   <div>
                     <label className={labelCls}>Terms & Conditions</label>
                     <textarea className={`${inputCls} resize-none`} rows={3} value={terms} onChange={(e) => setTerms(e.target.value)} />
@@ -2291,8 +2302,6 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
    DOCUMENT LIST (with Preview Modal & Batch Operations)
 ────────────────────────────────────────────────────────────────────────────── */
 
-type FilterType = "all" | FinDocType | "overdue" | "unpaid" | "paid" | "draft";
-
 interface DocListProps {
   docs: FinDocument[];
   profile: FinanceProfile;
@@ -2303,7 +2312,9 @@ interface DocListProps {
 }
 
 function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProps) {
-  const [filter, setFilter] = useState<FilterType>("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | FinDocType>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "overdue" | "unpaid" | "paid" | "draft">("all");
+  const [actionMenuDocId, setActionMenuDocId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [payTarget, setPayTarget] = useState<FinDocument | null>(null);
   const [previewTarget, setPreviewTarget] = useState<FinDocument | null>(null);
@@ -2313,6 +2324,26 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   const [expandedDocIds, setExpandedDocIds] = useState<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const lastClickedIdx = useRef<number>(-1);
+
+  // Close action popup menu on outside click or Escape
+  useEffect(() => {
+    if (!actionMenuDocId) return;
+    const handleOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(`[data-action-menu="${actionMenuDocId}"]`)) {
+        setActionMenuDocId(null);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActionMenuDocId(null);
+    };
+    window.addEventListener("click", handleOutside);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("click", handleOutside);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [actionMenuDocId]);
 
   const toggleExpand = (id: string) => {
     setExpandedDocIds((prev) => {
@@ -2440,12 +2471,22 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
 
   const filtered = useMemo(() => {
     let list = docs;
-    // Status / Type presets
-    if (filter === "overdue") list = list.filter((d) => d.status === "overdue");
-    else if (filter === "paid") list = list.filter((d) => d.status === "paid");
-    else if (filter === "unpaid") list = list.filter((d) => d.status === "sent" || d.status === "overdue" || (d.type === "invoice" && d.balanceDueCents > 0));
-    else if (filter === "draft") list = list.filter((d) => d.status === "draft");
-    else if (filter !== "all") list = list.filter((d) => d.type === filter);
+
+    // Filter by document type
+    if (typeFilter !== "all") {
+      list = list.filter((d) => d.type === typeFilter);
+    }
+
+    // Filter by payment status
+    if (statusFilter === "overdue") {
+      list = list.filter((d) => d.status === "overdue");
+    } else if (statusFilter === "paid") {
+      list = list.filter((d) => d.status === "paid");
+    } else if (statusFilter === "unpaid") {
+      list = list.filter((d) => d.status === "sent" || d.status === "overdue" || (d.type === "invoice" && d.balanceDueCents > 0));
+    } else if (statusFilter === "draft") {
+      list = list.filter((d) => d.status === "draft");
+    }
 
     // Multi-field deep search
     if (search.trim()) {
@@ -2475,7 +2516,15 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
       });
     }
     return list;
-  }, [docs, filter, search]);
+  }, [docs, typeFilter, statusFilter, search]);
+
+  const isFiltered = search.trim() !== "" || typeFilter !== "all" || statusFilter !== "all";
+
+  const resetFilters = () => {
+    setSearch("");
+    setTypeFilter("all");
+    setStatusFilter("all");
+  };
 
   // Auto-expand parents when searching so matching child items are visible
   useEffect(() => {
@@ -2800,16 +2849,20 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     }
   };
 
-  const FILTERS: { key: FilterType; label: string }[] = [
-    { key: "all",         label: "All" },
-    { key: "invoice",     label: "Invoices" },
-    { key: "quote",       label: "Quotes" },
-    { key: "receipt",     label: "Receipts" },
-    { key: "credit_note", label: "Credit Notes" },
-    { key: "overdue",     label: "🔴 Overdue" },
-    { key: "unpaid",      label: "🟡 Unpaid / Due" },
-    { key: "paid",        label: "🟢 Paid" },
-    { key: "draft",       label: "📝 Drafts" },
+  const DOC_TYPES: { key: "all" | FinDocType; label: string; icon: string }[] = [
+    { key: "all",         label: "All Document Types", icon: "📁" },
+    { key: "invoice",     label: "Invoices",           icon: "📄" },
+    { key: "quote",       label: "Quotes",             icon: "📋" },
+    { key: "receipt",     label: "Receipts",           icon: "🧾" },
+    { key: "credit_note", label: "Credit Notes",       icon: "↩️" },
+  ];
+
+  const STATUS_FILTERS: { key: "all" | "overdue" | "unpaid" | "paid" | "draft"; label: string }[] = [
+    { key: "all",     label: "All Statuses" },
+    { key: "overdue", label: "🔴 Overdue" },
+    { key: "unpaid",  label: "🟡 Unpaid / Due" },
+    { key: "paid",    label: "🟢 Paid" },
+    { key: "draft",   label: "📝 Drafts" },
   ];
 
   const renderDocRow = (d: FinDocument, depth = 0): React.ReactNode => {
@@ -2822,7 +2875,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
     return (
       <React.Fragment key={d.id}>
         <tr
-          className={`border-b border-[var(--line)] transition-colors ${
+          className={`border-b border-[var(--line)] transition-colors [&>td]:align-top ${
             depth === 1
               ? "bg-blue-50/25 dark:bg-blue-950/20 hover:bg-blue-50/45 dark:hover:bg-blue-950/35 border-l-4 border-l-blue-500"
               : depth >= 2
@@ -2832,18 +2885,18 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
               : "hover:bg-[var(--dept-soft)]"
           }`}
         >
-          <td className="px-2 py-2">
+          <td className="px-2.5 py-3 w-8">
             <input
               type="checkbox"
               checked={selected.has(d.id)}
               onChange={(e) => toggleSelect(d.id, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
-              className="accent-[var(--dept)]"
+              className="accent-[var(--dept)] mt-0.5 cursor-pointer"
               aria-label={`Select ${d.number}`}
             />
           </td>
 
-          <td className="px-3 py-2 font-mono text-xs">
-            <div className={`flex items-center gap-1.5 ${depth === 1 ? "pl-3 sm:pl-5" : depth >= 2 ? "pl-6 sm:pl-10" : ""}`}>
+          <td className="px-2.5 py-3 font-mono text-xs whitespace-nowrap">
+            <div className={`flex items-center gap-1.5 ${depth === 1 ? "pl-2 sm:pl-4" : depth >= 2 ? "pl-4 sm:pl-8" : ""}`}>
               {depth > 0 && (
                 <span className="text-blue-500 font-mono text-xs select-none font-bold">
                   {depth === 1 ? "↳" : "↳↳"}
@@ -2854,7 +2907,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
                 <button
                   type="button"
                   onClick={() => toggleExpand(d.id)}
-                  className={`w-5 h-5 flex items-center justify-center rounded-xs transition-colors cursor-pointer ${
+                  className={`w-5 h-5 flex items-center justify-center rounded-xs transition-colors cursor-pointer shrink-0 ${
                     isExpanded
                       ? "bg-blue-600 text-white shadow-2xs"
                       : "hover:bg-[var(--dept-soft)] text-[var(--muted)] hover:text-[var(--ink)]"
@@ -2870,12 +2923,12 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
                   </span>
                 </button>
               ) : depth === 0 ? (
-                <span className="w-5" />
+                <span className="w-5 shrink-0" />
               ) : null}
 
               <button
                 type="button"
-                className="font-mono text-xs font-semibold text-[var(--ink)] hover:text-[var(--dept)] hover:underline flex items-center gap-1 cursor-pointer"
+                className="font-mono text-xs font-bold text-[var(--ink)] hover:text-[var(--dept)] hover:underline flex items-center gap-1 cursor-pointer whitespace-nowrap"
                 onClick={() => copyDocNumber(d.number)}
                 title="Click to copy document number"
               >
@@ -2889,7 +2942,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
 
               {depth > 0 && (
                 <span
-                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded-xs uppercase tracking-wider ${
+                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded-xs uppercase tracking-wider whitespace-nowrap ${
                     d.type === "receipt"
                       ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
                       : d.type === "credit_note"
@@ -2903,55 +2956,57 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
             </div>
 
             {/* Badges row under number */}
-            <div className={`flex flex-wrap items-center gap-1.5 mt-1 ${depth === 1 ? "pl-7 sm:pl-9" : depth >= 2 ? "pl-11 sm:pl-15" : "pl-6"}`}>
-              {hasChildren && (
-                <button
-                  type="button"
-                  onClick={() => toggleExpand(d.id)}
-                  className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all cursor-pointer ${
-                    isExpanded
-                      ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
-                      : "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 hover:bg-blue-100"
-                  }`}
-                  title={isExpanded ? "Click to collapse" : `Click to view ${children.length} converted document(s)`}
-                >
-                  <span>🔗</span>
-                  <span>{children.length} converted {children.length === 1 ? "doc" : "docs"}</span>
-                  <span className="text-[8px] font-bold">{isExpanded ? "▲" : "▼"}</span>
-                </button>
-              )}
-
-              {parentDoc && (
-                <div className="inline-flex items-center gap-1 text-[10px] text-[var(--muted)]">
-                  <span className="opacity-75">↳ from</span>
+            {(hasChildren || parentDoc) && (
+              <div className={`flex flex-wrap items-center gap-1.5 mt-1.5 ${depth === 1 ? "pl-5 sm:pl-7" : depth >= 2 ? "pl-8 sm:pl-11" : "pl-6"}`}>
+                {hasChildren && (
                   <button
                     type="button"
-                    onClick={() => setPreviewTarget(parentDoc)}
-                    className="font-mono font-medium text-neutral-600 dark:text-neutral-300 hover:text-[var(--dept)] hover:underline cursor-pointer"
-                    title={`Preview parent ${DOC_TYPE_LABELS[parentDoc.type]} #${parentDoc.number}`}
+                    onClick={() => toggleExpand(d.id)}
+                    className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all cursor-pointer whitespace-nowrap ${
+                      isExpanded
+                        ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                        : "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 hover:bg-blue-100"
+                    }`}
+                    title={isExpanded ? "Click to collapse" : `Click to view ${children.length} converted document(s)`}
                   >
-                    #{parentDoc.number}
+                    <span>🔗</span>
+                    <span>{children.length} converted {children.length === 1 ? "doc" : "docs"}</span>
+                    <span className="text-[8px] font-bold">{isExpanded ? "▲" : "▼"}</span>
                   </button>
-                </div>
-              )}
-            </div>
+                )}
+
+                {parentDoc && (
+                  <div className="inline-flex items-center gap-1 text-[10px] text-[var(--muted)] whitespace-nowrap">
+                    <span className="opacity-75">↳ from</span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTarget(parentDoc)}
+                      className="font-mono font-medium text-neutral-600 dark:text-neutral-300 hover:text-[var(--dept)] hover:underline cursor-pointer"
+                      title={`Preview parent ${DOC_TYPE_LABELS[parentDoc.type]} #${parentDoc.number}`}
+                    >
+                      #{parentDoc.number}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </td>
 
-          <td className="px-3 py-2 text-xs text-[var(--muted)]">
+          <td className="px-2.5 py-3 text-xs text-[var(--muted)] hidden sm:table-cell whitespace-nowrap">
             <span className="font-medium text-[var(--ink)]">
               {d.type === "receipt" ? "🧾 " : d.type === "credit_note" ? "↩️ " : d.type === "quote" ? "📋 " : "📄 "}
               {DOC_TYPE_LABELS[d.type]}
             </span>
           </td>
 
-          <td className="px-3 py-2">
-            <div className="text-xs font-medium">{d.clientName}</div>
-            <div className="font-meta text-[9px] text-[var(--muted)]">{d.clientEmail}</div>
+          <td className="px-2.5 py-3">
+            <div className="text-xs font-semibold text-[var(--ink)] max-w-[130px] sm:max-w-[190px] truncate">{d.clientName || "—"}</div>
+            <div className="font-meta text-[10px] text-[var(--muted)] max-w-[130px] sm:max-w-[190px] truncate">{d.clientEmail}</div>
           </td>
 
-          <td className="px-3 py-2 text-xs text-[var(--muted)]">{d.issueDate}</td>
-          <td className="px-3 py-2 text-xs text-right font-mono">{centsToDisplay(d.totalCents)}</td>
-          <td className="px-3 py-2 text-xs text-right font-mono">
+          <td className="px-2.5 py-3 text-xs text-[var(--muted)] hidden md:table-cell whitespace-nowrap">{d.issueDate}</td>
+          <td className="px-2.5 py-3 text-xs text-right font-mono font-bold whitespace-nowrap">{centsToDisplay(d.totalCents)}</td>
+          <td className="px-2.5 py-3 text-xs text-right font-mono hidden lg:table-cell whitespace-nowrap">
             {d.balanceDueCents > 0 ? (
               <span className="text-red-600 font-semibold">{centsToDisplay(d.balanceDueCents)}</span>
             ) : (
@@ -2959,85 +3014,177 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
             )}
           </td>
 
-          <td className="px-3 py-2">
-            <span className={`font-meta text-[9px] px-2 py-0.5 rounded-full ${STATUS_COLORS[d.status]}`}>
+          <td className="px-2.5 py-3 whitespace-nowrap">
+            <span className={`font-meta text-[9px] px-2 py-0.5 rounded-full inline-block font-semibold ${STATUS_COLORS[d.status]}`}>
               {STATUS_LABELS[d.status]}
             </span>
           </td>
 
-          <td className="px-3 py-2">
-            <div className="flex gap-1 justify-end flex-wrap">
+          <td className="px-2.5 py-3 text-right whitespace-nowrap relative">
+            <div className="inline-flex items-center gap-1 justify-end" data-action-menu={d.id}>
               <button
-                className="text-[10px] font-semibold text-[var(--ink)] bg-[var(--dept-soft)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] px-2.5 py-1 border border-[var(--line)] transition-colors"
+                type="button"
+                className="text-[10px] font-semibold text-[var(--ink)] bg-[var(--dept-soft)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] px-2.5 py-1 border border-[var(--line)] transition-colors rounded-xs cursor-pointer whitespace-nowrap"
                 onClick={() => setPreviewTarget(d)}
                 title="View client-facing preview"
               >
                 👁 Preview
               </button>
+
               <button
-                className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors"
-                onClick={() => copyClientLink(d)}
-                title="Copy direct client invoice link"
+                type="button"
+                className="hidden sm:inline-block text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors rounded-xs cursor-pointer whitespace-nowrap"
+                onClick={() => onEdit(d)}
+                title="Edit document"
               >
-                🔗 Link
+                Edit
               </button>
-              <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => onEdit(d)}>Edit</button>
-              <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => generatePDF(d, profile)}>PDF</button>
-              {d.status !== "paid" && d.status !== "void" && (
-                <button className="text-[10px] text-[var(--muted)] hover:text-green-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => setPayTarget(d)}>$ Pay</button>
-              )}
-              {d.status !== "paid" && d.status !== "void" && (
+
+              <button
+                type="button"
+                className="hidden md:inline-block text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors rounded-xs cursor-pointer whitespace-nowrap"
+                onClick={() => generatePDF(d, profile)}
+                title="Download PDF"
+              >
+                PDF
+              </button>
+
+              {/* Overflow Actions Dropdown */}
+              <div className="relative inline-block text-left">
                 <button
-                  className="text-[10px] text-[var(--muted)] hover:text-amber-600 px-2 py-1 border border-[var(--line)] transition-colors"
-                  onClick={() => sendReminder(d)}
-                  title="Send polite email payment reminder"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActionMenuDocId((prev) => (prev === d.id ? null : d.id));
+                  }}
+                  className={`text-[10px] font-bold px-2 py-1 border border-[var(--line)] rounded-xs transition-colors cursor-pointer ${
+                    actionMenuDocId === d.id ? "bg-[var(--dept)] text-[var(--on-dept)]" : "bg-[var(--panel)] text-[var(--ink)] hover:bg-[var(--dept-soft)]"
+                  }`}
+                  title="More actions"
+                  aria-label="More actions menu"
                 >
-                  🔔 Remind
+                  •••
                 </button>
-              )}
-              {d.totalCents > 0 && d.status !== "paid" && d.status !== "void" && (
-                <button
-                  className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] transition-colors"
-                  onClick={() => splitDepositInvoices(d)}
-                  title="Split into 50% upfront deposit and 50% final balance invoices"
-                >
-                  ⚡ 50/50
-                </button>
-              )}
-              {d.type === "quote" && d.status !== "void" && (
-                <button
-                  className="text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 border border-blue-200 transition-colors cursor-pointer"
-                  onClick={() => convertToInvoice(d)}
-                  title="Convert Quote to Invoice"
-                >
-                  → Invoice
-                </button>
-              )}
-              {d.type === "invoice" && d.status !== "void" && (
-                <>
-                  <button
-                    className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 border border-emerald-200 transition-colors cursor-pointer"
-                    onClick={() => convertToReceipt(d)}
-                    title="Convert Invoice to Official Payment Receipt"
+
+                {actionMenuDocId === d.id && (
+                  <div
+                    className="absolute right-0 top-full mt-1 w-48 bg-[var(--panel)] border border-[var(--line)] shadow-xl rounded-xs py-1 z-50 text-left"
+                    style={{ background: "var(--panel)" }}
+                    onClick={() => setActionMenuDocId(null)}
                   >
-                    🧾 → Receipt
-                  </button>
-                  <button
-                    className="text-[10px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2 py-1 border border-purple-200 transition-colors cursor-pointer"
-                    onClick={() => convertToCreditNote(d)}
-                    title="Convert Invoice to Credit Note (Cancel / Adjust)"
-                  >
-                    ↩️ → Credit Note
-                  </button>
-                </>
-              )}
-              {d.status !== "void" && (
-                <button className="text-[10px] text-[var(--muted)] hover:text-blue-600 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => sendDoc(d)}>Send</button>
-              )}
-              {d.status !== "void" && (
-                <button className="text-[10px] text-[var(--muted)] hover:text-orange-500 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => voidDoc(d)}>Void</button>
-              )}
-              <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)] transition-colors" onClick={() => deleteDoc_(d)}>Del</button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 text-xs text-[var(--ink)] hover:bg-[var(--dept-soft)] flex items-center gap-2 cursor-pointer sm:hidden"
+                      onClick={() => onEdit(d)}
+                    >
+                      <span>✏️</span> <span>Edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 text-xs text-[var(--ink)] hover:bg-[var(--dept-soft)] flex items-center gap-2 cursor-pointer md:hidden"
+                      onClick={() => generatePDF(d, profile)}
+                    >
+                      <span>📄</span> <span>Download PDF</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 text-xs text-[var(--ink)] hover:bg-[var(--dept-soft)] flex items-center gap-2 cursor-pointer"
+                      onClick={() => copyClientLink(d)}
+                    >
+                      <span>🔗</span> <span>Copy Client Link</span>
+                    </button>
+
+                    {d.status !== "paid" && d.status !== "void" && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-green-600 hover:bg-green-50 dark:hover:bg-green-950/40 flex items-center gap-2 cursor-pointer font-medium"
+                        onClick={() => setPayTarget(d)}
+                      >
+                        <span>💵</span> <span>Record Payment</span>
+                      </button>
+                    )}
+
+                    {d.status !== "paid" && d.status !== "void" && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 flex items-center gap-2 cursor-pointer"
+                        onClick={() => sendReminder(d)}
+                      >
+                        <span>🔔</span> <span>Send Reminder</span>
+                      </button>
+                    )}
+
+                    {d.totalCents > 0 && d.status !== "paid" && d.status !== "void" && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-[var(--ink)] hover:bg-[var(--dept-soft)] flex items-center gap-2 cursor-pointer"
+                        onClick={() => splitDepositInvoices(d)}
+                      >
+                        <span>⚡</span> <span>Split 50/50 Deposit</span>
+                      </button>
+                    )}
+
+                    {d.type === "quote" && d.status !== "void" && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center gap-2 cursor-pointer"
+                        onClick={() => convertToInvoice(d)}
+                      >
+                        <span>📄</span> <span>Convert to Invoice</span>
+                      </button>
+                    )}
+
+                    {d.type === "invoice" && d.status !== "void" && (
+                      <>
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-1.5 text-xs text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-2 cursor-pointer"
+                          onClick={() => convertToReceipt(d)}
+                        >
+                          <span>🧾</span> <span>Convert to Receipt</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-1.5 text-xs text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/40 flex items-center gap-2 cursor-pointer"
+                          onClick={() => convertToCreditNote(d)}
+                        >
+                          <span>↩️</span> <span>Issue Credit Note</span>
+                        </button>
+                      </>
+                    )}
+
+                    {d.status !== "void" && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center gap-2 cursor-pointer"
+                        onClick={() => sendDoc(d)}
+                      >
+                        <span>✉️</span> <span>Email to Client</span>
+                      </button>
+                    )}
+
+                    <div className="border-t border-[var(--line)] my-1" />
+
+                    {d.status !== "void" && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/40 flex items-center gap-2 cursor-pointer"
+                        onClick={() => voidDoc(d)}
+                      >
+                        <span>🚫</span> <span>Void Document</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 cursor-pointer"
+                      onClick={() => deleteDoc_(d)}
+                    >
+                      <span>🗑</span> <span>Delete</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </td>
         </tr>
@@ -3051,101 +3198,116 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="font-display font-bold uppercase tracking-tight text-sm flex-1">Documents</h2>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display font-bold uppercase tracking-tight text-sm">Documents</h2>
+          <p className="font-meta text-[10px] text-[var(--muted)]">Manage quotes, invoices, receipts and payments</p>
+        </div>
         <button className={btnDept} onClick={onNew}>+ New Document</button>
       </div>
 
-      {/* Filter strip + Tree/Flat view switcher + deep search bar + CSV Export */}
-      <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
-        {/* Quick filter pills */}
-        <div className="flex flex-wrap gap-1.5 items-center">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              className={`text-[11px] px-2.5 py-1 border transition-colors cursor-pointer ${
-                filter === f.key
-                  ? "border-[var(--dept)] bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
-                  : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] bg-[var(--panel)]"
-              }`}
+      {/* 2026 Modern Filter Toolbar */}
+      <div className="space-y-2.5">
+        {/* Row 1: Dropdown filters + quick status badges */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+          {/* Document Type Dropdown */}
+          <div className="col-span-1 sm:w-48">
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as any)}
+              className="w-full text-xs bg-[var(--panel)] border border-[var(--line)] px-2.5 py-2 rounded-xs text-[var(--ink)] focus:border-[var(--dept)] outline-none font-medium cursor-pointer"
+              aria-label="Filter by document type"
             >
-              {f.label}
-            </button>
-          ))}
-        </div>
+              {DOC_TYPES.map((dt) => (
+                <option key={dt.key} value={dt.key}>
+                  {dt.icon} {dt.label} {dt.key === "all" ? `(${docs.length})` : `(${docs.filter((d) => d.type === dt.key).length})`}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        {/* View Mode Toggle + Search input + export button */}
-        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-          {/* Tree / Flat Toggle */}
-          <div className="flex items-center gap-0.5 bg-[var(--panel)] border border-[var(--line)] p-0.5 rounded-xs">
+          {/* Status Dropdown */}
+          <div className="col-span-1 sm:w-48">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="w-full text-xs bg-[var(--panel)] border border-[var(--line)] px-2.5 py-2 rounded-xs text-[var(--ink)] focus:border-[var(--dept)] outline-none font-medium cursor-pointer"
+              aria-label="Filter by payment status"
+            >
+              {STATUS_FILTERS.map((st) => (
+                <option key={st.key} value={st.key}>
+                  {st.label} {st.key === "all" ? "" : `(${
+                    st.key === "overdue" ? docs.filter((d) => d.status === "overdue").length :
+                    st.key === "paid" ? docs.filter((d) => d.status === "paid").length :
+                    st.key === "unpaid" ? docs.filter((d) => d.status === "sent" || d.status === "overdue" || (d.type === "invoice" && d.balanceDueCents > 0)).length :
+                    docs.filter((d) => d.status === "draft").length
+                  })`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Quick presets on larger viewports */}
+          <div className="hidden lg:flex items-center gap-1 pl-1 border-l border-[var(--line)]">
             <button
               type="button"
-              onClick={() => setViewMode("tree")}
-              className={`text-[11px] px-2.5 py-1 rounded-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
-                viewMode === "tree"
-                  ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
-                  : "text-[var(--muted)] hover:text-[var(--ink)]"
+              onClick={() => { setTypeFilter("all"); setStatusFilter("overdue"); }}
+              className={`text-[10px] font-bold px-2 py-1.5 rounded-xs border transition-colors cursor-pointer ${
+                statusFilter === "overdue" ? "bg-red-500 text-white border-red-500 shadow-xs" : "bg-[var(--panel)] border-[var(--line)] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
               }`}
-              title="Group converted documents under their parent document"
             >
-              <span>🌳</span>
-              <span>Tree View</span>
-              {totalConvertedCount > 0 && (
-                <span className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
-                  viewMode === "tree" ? "bg-white/20 text-[var(--on-dept)]" : "bg-blue-100 text-blue-800"
-                }`}>
-                  {totalConvertedCount}
-                </span>
-              )}
+              🔴 Overdue
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("flat")}
-              className={`text-[11px] px-2.5 py-1 rounded-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
-                viewMode === "flat"
-                  ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
-                  : "text-[var(--muted)] hover:text-[var(--ink)]"
+              onClick={() => { setTypeFilter("all"); setStatusFilter("unpaid"); }}
+              className={`text-[10px] font-bold px-2 py-1.5 rounded-xs border transition-colors cursor-pointer ${
+                statusFilter === "unpaid" ? "bg-amber-500 text-white border-amber-500 shadow-xs" : "bg-[var(--panel)] border-[var(--line)] text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30"
               }`}
-              title="Show all documents in flat chronological order"
             >
-              <span>📄</span>
-              <span>Flat View</span>
+              🟡 Unpaid
+            </button>
+            <button
+              type="button"
+              onClick={() => { setTypeFilter("all"); setStatusFilter("paid"); }}
+              className={`text-[10px] font-bold px-2 py-1.5 rounded-xs border transition-colors cursor-pointer ${
+                statusFilter === "paid" ? "bg-emerald-600 text-white border-emerald-600 shadow-xs" : "bg-[var(--panel)] border-[var(--line)] text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              }`}
+            >
+              🟢 Paid
             </button>
           </div>
 
-          {/* Expand / Collapse All when in Tree View */}
-          {viewMode === "tree" && parentIdsWithChildren.length > 0 && (
+          {/* Reset Filters action */}
+          {isFiltered && (
             <button
               type="button"
-              onClick={() => {
-                if (expandedDocIds.size === parentIdsWithChildren.length) collapseAll();
-                else expandAll(parentIdsWithChildren);
-              }}
-              className="text-[10px] font-medium text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1.5 border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--dept-soft)] transition-colors cursor-pointer whitespace-nowrap"
-              title="Expand or collapse all converted sub-document groups"
+              onClick={resetFilters}
+              className="text-[11px] font-semibold text-[var(--dept)] hover:underline col-span-2 sm:col-span-1 px-1 cursor-pointer flex items-center gap-1"
             >
-              {expandedDocIds.size === parentIdsWithChildren.length ? "▲ Collapse All" : "▼ Expand All"}
+              ✕ Clear filters
             </button>
           )}
+        </div>
 
+        {/* Row 2: Search + View Mode Switcher + Export */}
+        <div className="flex items-center gap-2">
           {/* Search bar */}
-          <div className="relative flex-1 sm:w-64">
+          <div className="relative flex-1">
             <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] pointer-events-none">🔍</span>
             <input
               ref={searchInputRef}
-              className="w-full pl-8 pr-7 py-1.5 text-xs bg-[var(--panel)] border border-[var(--line)] text-[var(--ink)] placeholder-[var(--muted)] outline-none focus:border-[var(--dept)] focus:ring-1 focus:ring-[var(--dept)]"
-              placeholder="Search #, client, items… (Press /)"
+              className="w-full pl-8 pr-7 py-2 text-xs bg-[var(--panel)] border border-[var(--line)] text-[var(--ink)] placeholder-[var(--muted)] outline-none focus:border-[var(--dept)] focus:ring-1 focus:ring-[var(--dept)] rounded-xs"
+              placeholder="Search #, client, items… (/)"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
             {search && (
               <button
                 type="button"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer p-0.5"
                 onClick={() => { setSearch(""); searchInputRef.current?.focus(); }}
                 title="Clear search"
               >
@@ -3154,38 +3316,88 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
             )}
           </div>
 
+          {/* Tree / Flat Toggle */}
+          <div className="flex items-center bg-[var(--panel)] border border-[var(--line)] p-0.5 rounded-xs shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode("tree")}
+              className={`text-xs px-2 sm:px-2.5 py-1.5 rounded-xs flex items-center gap-1 transition-colors cursor-pointer ${
+                viewMode === "tree"
+                  ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
+                  : "text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+              title="Group converted documents under parent"
+            >
+              <span>🌳</span>
+              <span className="hidden sm:inline">Tree</span>
+              {totalConvertedCount > 0 && (
+                <span className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                  viewMode === "tree" ? "bg-white/25 text-[var(--on-dept)]" : "bg-blue-100 text-blue-800"
+                }`}>
+                  {totalConvertedCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("flat")}
+              className={`text-xs px-2 sm:px-2.5 py-1.5 rounded-xs flex items-center gap-1 transition-colors cursor-pointer ${
+                viewMode === "flat"
+                  ? "bg-[var(--dept)] text-[var(--on-dept)] font-bold shadow-xs"
+                  : "text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+              title="Show all documents in flat list"
+            >
+              <span>📄</span>
+              <span className="hidden sm:inline">Flat</span>
+            </button>
+          </div>
+
+          {/* Expand / Collapse All (Tree mode only) */}
+          {viewMode === "tree" && parentIdsWithChildren.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (expandedDocIds.size === parentIdsWithChildren.length) collapseAll();
+                else expandAll(parentIdsWithChildren);
+              }}
+              className="text-[11px] font-medium text-[var(--muted)] hover:text-[var(--ink)] px-2 sm:px-2.5 py-2 border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--dept-soft)] transition-colors cursor-pointer whitespace-nowrap rounded-xs shrink-0"
+              title={expandedDocIds.size === parentIdsWithChildren.length ? "Collapse all sub-groups" : "Expand all sub-groups"}
+            >
+              <span className="sm:hidden">{expandedDocIds.size === parentIdsWithChildren.length ? "▲" : "▼"}</span>
+              <span className="hidden sm:inline">{expandedDocIds.size === parentIdsWithChildren.length ? "▲ Collapse" : "▼ Expand"}</span>
+            </button>
+          )}
+
           {/* CSV Export */}
           <button
             type="button"
-            className="btn btn-ghost text-[11px] px-2.5 py-1.5 whitespace-nowrap"
+            className="text-[11px] font-medium text-[var(--ink)] hover:bg-[var(--dept-soft)] px-2.5 sm:px-3 py-2 border border-[var(--line)] bg-[var(--panel)] transition-colors whitespace-nowrap rounded-xs shrink-0 flex items-center gap-1"
             onClick={exportFilteredCSV}
-            title="Export matching documents as CSV spreadsheet"
+            title="Export to CSV spreadsheet"
           >
-            📥 CSV
+            <span>📥</span>
+            <span className="hidden sm:inline">CSV</span>
           </button>
         </div>
       </div>
 
-      {/* Results active summary bar */}
-      {(search.trim() || filter !== "all" || (viewMode === "tree" && totalConvertedCount > 0)) && (
-        <div className="flex items-center justify-between text-[11px] px-3 py-2 bg-[var(--dept-soft)]/30 border border-[var(--line)] text-[var(--muted)]">
-          <div>
-            Showing <strong className="text-[var(--ink)]">{filtered.length}</strong> {filtered.length === 1 ? "document" : "documents"}
-            {viewMode === "tree" && totalConvertedCount > 0 && (
-              <span> (<strong className="text-blue-600 font-semibold">{totalConvertedCount}</strong> converted sub-items grouped under parents)</span>
-            )}
-            {search.trim() && <span> matching "<strong>{search}</strong>"</span>}
-            {filter !== "all" && <span> with filter <strong>{FILTERS.find((f) => f.key === filter)?.label}</strong></span>}
+      {/* Results active summary bar (only when filtered/searching) */}
+      {isFiltered && (
+        <div className="flex items-center justify-between text-[11px] px-3 py-1.5 bg-[var(--dept-soft)]/40 border border-[var(--line)] text-[var(--muted)] rounded-xs">
+          <div className="truncate mr-2">
+            Showing <strong className="text-[var(--ink)]">{filtered.length}</strong> of {docs.length} documents
+            {typeFilter !== "all" && <span> · type: <strong className="text-[var(--ink)]">{DOC_TYPE_LABELS[typeFilter]}</strong></span>}
+            {statusFilter !== "all" && <span> · status: <strong className="text-[var(--ink)]">{statusFilter}</strong></span>}
+            {search.trim() && <span> · search: "<strong>{search}</strong>"</span>}
           </div>
-          {(search.trim() || filter !== "all") && (
-            <button
-              type="button"
-              className="text-[10px] font-bold uppercase text-[var(--dept)] hover:underline cursor-pointer"
-              onClick={() => { setSearch(""); setFilter("all"); }}
-            >
-              ✕ Reset Filters
-            </button>
-          )}
+          <button
+            type="button"
+            className="text-[10px] font-bold uppercase text-[var(--dept)] hover:underline cursor-pointer shrink-0"
+            onClick={resetFilters}
+          >
+            ✕ Reset
+          </button>
         </div>
       )}
 
@@ -3193,10 +3405,10 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
       {filtered.length === 0 ? (
         <div className={`${panelCls} text-center py-12`} style={{ background: "var(--panel)" }}>
           <p className="text-[var(--muted)] text-sm">
-            {search.trim() || filter !== "all" ? "No matching documents found." : "No documents found."}
+            {isFiltered ? "No matching documents found." : "No documents found."}
           </p>
-          {search.trim() || filter !== "all" ? (
-            <button className={`${btnGhost} mt-3`} onClick={() => { setSearch(""); setFilter("all"); }}>
+          {isFiltered ? (
+            <button className={`${btnGhost} mt-3`} onClick={resetFilters}>
               Clear Search & Filter
             </button>
           ) : (
@@ -3204,11 +3416,11 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto border border-[var(--line)] rounded-xs">
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr className="border-b border-[var(--line)]">
-                <th className="w-8 px-2 py-2">
+              <tr className="border-b border-[var(--line)] bg-[var(--panel)]">
+                <th className="w-8 px-2.5 py-2.5 text-left">
                   <input
                     type="checkbox"
                     checked={filtered.length > 0 && filtered.every((d) => selected.has(d.id))}
@@ -3219,17 +3431,17 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
                       if (e.target.checked) setSelected(new Set(filtered.map((d) => d.id)));
                       else setSelected(new Set());
                     }}
-                    className="accent-[var(--dept)]"
+                    className="accent-[var(--dept)] cursor-pointer"
                   />
                 </th>
-                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Number</th>
-                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Type</th>
-                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Client</th>
-                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Date</th>
-                <th className="text-right font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Total</th>
-                <th className="text-right font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Balance</th>
-                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">Status</th>
-                <th className="px-3 py-2"></th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider whitespace-nowrap">Number</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider hidden sm:table-cell whitespace-nowrap">Type</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider">Client</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider hidden md:table-cell whitespace-nowrap">Date</th>
+                <th className="text-right font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider whitespace-nowrap">Total</th>
+                <th className="text-right font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider hidden lg:table-cell whitespace-nowrap">Balance</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-2.5 py-2.5 uppercase tracking-wider whitespace-nowrap">Status</th>
+                <th className="px-2.5 py-2.5 text-right font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -3380,18 +3592,23 @@ function BusinessSettingsManager({
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <div>
-        <h2 className="font-display font-bold uppercase tracking-tight text-sm">Business & CIBC Caribbean Banking Settings</h2>
-        <p className="font-meta text-[10px] text-[var(--muted)] mt-1">
-          This information and banking instruction note is automatically pulled into every Quote, Invoice, Receipt, PDF, and Email.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display font-bold uppercase tracking-tight text-sm">Business & CIBC Caribbean Banking Settings</h2>
+          <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+            This information and banking instruction note is automatically pulled into every Quote, Invoice, Receipt, PDF, and Email.
+          </p>
+        </div>
+        <button className={btnDept} onClick={save} disabled={busy}>
+          {busy ? "Saving…" : "Save Settings"}
+        </button>
       </div>
 
       {/* Business Details */}
       <div className={`${panelCls} space-y-4`} style={{ background: "var(--panel)" }}>
         <h3 className="font-display font-bold uppercase text-xs">Business Identity</h3>
         <div className="grid sm:grid-cols-2 gap-3">
-          <div>
+          <div className="sm:col-span-2">
             <label className={labelCls}>Business Name</label>
             <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Socialkon10 Jamaica" />
           </div>
@@ -3533,12 +3750,25 @@ function ClientsManager() {
   const [isNew, setIsNew] = useState(false);
   const [form, setForm] = useState<Partial<FinClient>>({});
   const [busy, setBusy] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const load = useCallback(async () => {
     setClients(await loadClients());
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const filteredClients = useMemo(() => {
+    if (!searchQuery.trim()) return clients;
+    const q = searchQuery.toLowerCase().trim();
+    return clients.filter((c) =>
+      c.name?.toLowerCase().includes(q) ||
+      c.email?.toLowerCase().includes(q) ||
+      c.phone?.toLowerCase().includes(q) ||
+      c.company?.toLowerCase().includes(q) ||
+      c.city?.toLowerCase().includes(q)
+    );
+  }, [clients, searchQuery]);
 
   const openNew = () => {
     setForm({ country: "Jamaica" });
@@ -3591,23 +3821,39 @@ function ClientsManager() {
           <h3 className="font-display font-bold uppercase tracking-tight text-xs">{isNew ? "New Client" : `Edit ${editing?.name}`}</h3>
         </div>
         <div className={`${panelCls} space-y-3`} style={{ background: "var(--panel)" }}>
-          {([
-            ["name", "Full Name / Business", "text"],
-            ["email", "Email", "email"],
-            ["phone", "Phone", "tel"],
-            ["company", "Company", "text"],
-            ["address", "Street Address", "text"],
-            ["city", "City / Parish", "text"],
-            ["country", "Country", "text"],
-          ] as [keyof FinClient, string, string][]).map(([k, label, t]) => (
-            <div key={k}>
-              <label className={labelCls}>{label}</label>
-              <input type={t} className={inputCls} value={(form[k] as string) ?? ""} onChange={(e) => set(k, e.target.value)} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Full Name / Business *</label>
+              <input type="text" className={inputCls} value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} placeholder="Client name" />
             </div>
-          ))}
+            <div>
+              <label className={labelCls}>Email *</label>
+              <input type="email" className={inputCls} value={form.email ?? ""} onChange={(e) => set("email", e.target.value)} placeholder="client@email.com" />
+            </div>
+            <div>
+              <label className={labelCls}>Phone</label>
+              <input type="tel" className={inputCls} value={form.phone ?? ""} onChange={(e) => set("phone", e.target.value)} placeholder="1 (876) ..." />
+            </div>
+            <div>
+              <label className={labelCls}>Company</label>
+              <input type="text" className={inputCls} value={form.company ?? ""} onChange={(e) => set("company", e.target.value)} placeholder="Company Ltd" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className={labelCls}>Street Address</label>
+              <input type="text" className={inputCls} value={form.address ?? ""} onChange={(e) => set("address", e.target.value)} placeholder="Street address" />
+            </div>
+            <div>
+              <label className={labelCls}>City / Parish</label>
+              <input type="text" className={inputCls} value={form.city ?? ""} onChange={(e) => set("city", e.target.value)} placeholder="Kingston" />
+            </div>
+            <div>
+              <label className={labelCls}>Country</label>
+              <input type="text" className={inputCls} value={form.country ?? ""} onChange={(e) => set("country", e.target.value)} placeholder="Jamaica" />
+            </div>
+          </div>
           <div>
             <label className={labelCls}>Notes</label>
-            <textarea className={`${inputCls} resize-none`} rows={2} value={form.notes ?? ""} onChange={(e) => set("notes", e.target.value)} />
+            <textarea className={`${inputCls} resize-none`} rows={2} value={form.notes ?? ""} onChange={(e) => set("notes", e.target.value)} placeholder="Internal client notes..." />
           </div>
         </div>
         <div className="flex gap-3">
@@ -3619,48 +3865,82 @@ function ClientsManager() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-3">
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="font-display font-bold uppercase tracking-tight text-sm">Past & Saved Clients</h2>
           <p className="font-meta text-[10px] text-[var(--muted)]">All clients compiled across your invoices, website orders, leads, and saved contacts.</p>
         </div>
-        <div className="flex-1" />
         <button className={btnDept} onClick={openNew}>+ New Client</button>
       </div>
+
+      {/* Search Bar */}
+      {clients.length > 0 && (
+        <div className="relative max-w-md">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] pointer-events-none">🔍</span>
+          <input
+            type="text"
+            className="w-full pl-8 pr-7 py-2 text-xs bg-[var(--panel)] border border-[var(--line)] text-[var(--ink)] placeholder-[var(--muted)] outline-none focus:border-[var(--dept)] rounded-xs"
+            placeholder="Search clients by name, email, company, phone…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer"
+              onClick={() => setSearchQuery("")}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
       {clients.length === 0 ? (
         <div className={`${panelCls} text-center py-10`} style={{ background: "var(--panel)" }}>
           <p className="text-sm text-[var(--muted)]">No clients yet. Clients are auto-compiled when you create documents or receive orders.</p>
         </div>
+      ) : filteredClients.length === 0 ? (
+        <div className={`${panelCls} text-center py-8`} style={{ background: "var(--panel)" }}>
+          <p className="text-xs text-[var(--muted)]">No clients match "{searchQuery}".</p>
+          <button className={`${btnGhost} mt-2 text-xs`} onClick={() => setSearchQuery("")}>Clear Search</button>
+        </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto border border-[var(--line)] rounded-xs">
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr className="border-b border-[var(--line)]">
-                {["Client", "Email", "Phone", "City", "Source", ""].map((h) => (
-                  <th key={h} className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2 uppercase tracking-wider">{h}</th>
-                ))}
+              <tr className="border-b border-[var(--line)] bg-[var(--panel)]">
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2.5 uppercase tracking-wider whitespace-nowrap">Client</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2.5 uppercase tracking-wider whitespace-nowrap">Email</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2.5 uppercase tracking-wider hidden md:table-cell whitespace-nowrap">Phone</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2.5 uppercase tracking-wider hidden lg:table-cell whitespace-nowrap">City</th>
+                <th className="text-left font-meta text-[9px] text-[var(--muted)] px-3 py-2.5 uppercase tracking-wider hidden sm:table-cell whitespace-nowrap">Source</th>
+                <th className="text-right font-meta text-[9px] text-[var(--muted)] px-3 py-2.5 uppercase tracking-wider whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {clients.map((c) => (
+              {filteredClients.map((c) => (
                 <tr key={c.id} className="border-b border-[var(--line)] hover:bg-[var(--dept-soft)] transition-colors">
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-xs text-[var(--ink)]">{c.name}</div>
-                    {c.company && <div className="text-[10px] text-[var(--muted)]">{c.company}</div>}
+                  <td className="px-3 py-2.5">
+                    <div className="font-semibold text-xs text-[var(--ink)]">{c.name}</div>
+                    {c.company && <div className="text-[10px] text-[var(--muted)] truncate max-w-[150px]">{c.company}</div>}
+                    <div className="sm:hidden text-[9px] text-[var(--muted)] mt-0.5">{c.phone || c.city || ""}</div>
                   </td>
-                  <td className="px-3 py-2 text-xs text-[var(--muted)]">{c.email}</td>
-                  <td className="px-3 py-2 text-xs text-[var(--muted)]">{c.phone || "—"}</td>
-                  <td className="px-3 py-2 text-xs text-[var(--muted)]">{c.city || "—"}</td>
-                  <td className="px-3 py-2 text-xs">
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[var(--dept-soft)] text-[var(--dept)] border border-[var(--dept)]/20">
+                  <td className="px-3 py-2.5 text-xs text-[var(--muted)]">
+                    <span className="truncate max-w-[140px] sm:max-w-[200px] block" title={c.email}>{c.email}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-[var(--muted)] hidden md:table-cell whitespace-nowrap">{c.phone || "—"}</td>
+                  <td className="px-3 py-2.5 text-xs text-[var(--muted)] hidden lg:table-cell whitespace-nowrap">{c.city || "—"}</td>
+                  <td className="px-3 py-2.5 text-xs hidden sm:table-cell whitespace-nowrap">
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-xs bg-[var(--dept-soft)] text-[var(--dept)] border border-[var(--dept)]/20 font-bold">
                       {c.source || "Client"}
                     </span>
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex gap-2 justify-end">
-                      <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)]" onClick={() => openEdit(c)}>Edit</button>
-                      <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)]" onClick={() => deleteClient(c)}>Del</button>
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    <div className="flex gap-1.5 justify-end">
+                      <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] rounded-xs transition-colors" onClick={() => openEdit(c)}>Edit</button>
+                      <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)] rounded-xs transition-colors" onClick={() => deleteClient(c)}>Del</button>
                     </div>
                   </td>
                 </tr>
@@ -3728,31 +4008,40 @@ function TaxRatesManager() {
   return (
     <div className="space-y-5 max-w-xl">
       <h2 className="font-display font-bold uppercase tracking-tight text-sm">Tax Rates</h2>
-      <div className={`${panelCls} space-y-3`} style={{ background: "var(--panel)" }}>
-        <div className="flex gap-3">
+      <div className={`${panelCls} space-y-4`} style={{ background: "var(--panel)" }}>
+        <div className="flex flex-col sm:flex-row gap-2.5 sm:items-end">
           <div className="flex-1">
             <label className={labelCls}>Name (e.g. Jamaica GCT / Sales Tax)</label>
             <input className={inputCls} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Tax description" />
           </div>
-          <div className="w-28">
+          <div className="w-full sm:w-28">
             <label className={labelCls}>Percent %</label>
             <input type="number" min="0" max="100" step="0.01" className={inputCls} value={newPct} onChange={(e) => setNewPct(e.target.value)} placeholder="0.0" />
           </div>
-          <div className="self-end">
-            <button className={btnDept} onClick={addRate} disabled={busy}>Add</button>
+          <div className="w-full sm:w-auto">
+            <button className={`${btnDept} w-full sm:w-auto`} onClick={addRate} disabled={busy}>Add Rate</button>
           </div>
         </div>
+
         {rates.length === 0 && (
-          <p className="text-xs text-[var(--muted)]">No tax rates configured. Documents default to 0% tax.</p>
+          <p className="text-xs text-[var(--muted)] pt-2 border-t border-[var(--line)]">No tax rates configured. Documents default to 0% tax.</p>
         )}
+
         {rates.map((r) => (
-          <div key={r.id} className="flex items-center gap-3 border-t border-[var(--line)] pt-3">
-            <span className="flex-1 text-sm">{r.name}</span>
-            <span className="font-mono text-sm">{r.percent}%</span>
-            {r.isDefault && <span className="font-meta text-[9px] px-2 py-0.5 bg-[var(--dept)] text-[var(--on-dept)] font-bold">Default</span>}
-            <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)]" onClick={() => setDefault(r)}>Set Default</button>
-            <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)]" onClick={() => toggle(r)}>{r.active ? "Disable" : "Enable"}</button>
-            <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)]" onClick={() => del(r)}>Del</button>
+          <div key={r.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-[var(--line)] pt-3">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span className="text-sm font-medium truncate">{r.name}</span>
+              <span className="font-mono text-sm font-bold text-[var(--ink)]">{r.percent}%</span>
+              {r.isDefault && <span className="font-meta text-[9px] px-1.5 py-0.5 bg-[var(--dept)] text-[var(--on-dept)] font-bold rounded-xs shrink-0">Default</span>}
+              {!r.active && <span className="font-meta text-[9px] px-1.5 py-0.5 bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 font-bold rounded-xs shrink-0">Disabled</span>}
+            </div>
+            <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+              {!r.isDefault && (
+                <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] rounded-xs transition-colors" onClick={() => setDefault(r)}>Set Default</button>
+              )}
+              <button className="text-[10px] text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 border border-[var(--line)] rounded-xs transition-colors" onClick={() => toggle(r)}>{r.active ? "Disable" : "Enable"}</button>
+              <button className="text-[10px] text-[var(--muted)] hover:text-red-500 px-2 py-1 border border-[var(--line)] rounded-xs transition-colors" onClick={() => del(r)}>Del</button>
+            </div>
           </div>
         ))}
       </div>
@@ -3788,25 +4077,25 @@ function ReportsView({ docs }: { docs: FinDocument[] }) {
   }, [paid]);
 
   const StatCard = ({ label, value, sub, color = "var(--ink)" }: { label: string; value: string; sub?: string; color?: string }) => (
-    <div className={panelCls} style={{ background: "var(--panel)" }}>
-      <p className={labelCls}>{label}</p>
-      <p className="text-2xl font-bold mt-1" style={{ color }}>{value}</p>
-      {sub && <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">{sub}</p>}
+    <div className={`${panelCls} p-3 sm:p-4`} style={{ background: "var(--panel)" }}>
+      <p className={`${labelCls} truncate`}>{label}</p>
+      <p className="text-lg sm:text-2xl font-bold mt-1 truncate" style={{ color }} title={value}>{value}</p>
+      {sub && <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5 truncate">{sub}</p>}
     </div>
   );
 
   return (
     <div className="space-y-6">
       <h2 className="font-display font-bold uppercase tracking-tight text-sm">Reports</h2>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Total Revenue (Paid)" value={centsToDisplay(totalRevenue)} sub={`${paid.length} paid invoices`} color="var(--dept)" />
         <StatCard label="Outstanding" value={centsToDisplay(totalOutstanding)} sub={`${outstanding.length} open`} />
         <StatCard label="Overdue" value={centsToDisplay(totalOverdue)} color="var(--dept)" />
         <StatCard label="Total Documents" value={String(docs.length)} sub={`${docs.filter((d) => d.type === "quote").length} quotes, ${docs.filter((d) => d.type === "invoice").length} invoices`} />
       </div>
 
-      <div className={panelCls} style={{ background: "var(--panel)" }}>
-        <p className={`${labelCls} mb-4`}>Monthly Revenue (USD)</p>
+      <div className={`${panelCls} space-y-2`} style={{ background: "var(--panel)" }}>
+        <p className={`${labelCls} mb-2`}>Monthly Revenue (USD)</p>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={monthlyData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
@@ -3820,29 +4109,31 @@ function ReportsView({ docs }: { docs: FinDocument[] }) {
 
       {/* Recent paid invoices */}
       <div className={panelCls} style={{ background: "var(--panel)" }}>
-        <p className={`${labelCls} mb-4`}>Recent Paid Documents</p>
+        <p className={`${labelCls} mb-3`}>Recent Paid Documents</p>
         {paid.length === 0 ? (
           <p className="text-xs text-[var(--muted)]">No paid documents yet.</p>
         ) : (
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-[var(--line)]">
-                {["Number", "Client", "Paid Date", "Amount"].map((h) => (
-                  <th key={h} className="text-left font-meta text-[9px] text-[var(--muted)] px-2 py-1 uppercase">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paid.slice(0, 10).map((d) => (
-                <tr key={d.id} className="border-b border-[var(--line)]">
-                  <td className="px-2 py-1.5 font-mono">{d.number}</td>
-                  <td className="px-2 py-1.5">{d.clientName}</td>
-                  <td className="px-2 py-1.5 text-[var(--muted)]">{d.paidDate ?? d.issueDate}</td>
-                  <td className="px-2 py-1.5 font-semibold">{centsToDisplay(d.totalCents)}</td>
+          <div className="overflow-x-auto -mx-1 px-1">
+            <table className="w-full text-xs border-collapse min-w-[340px]">
+              <thead>
+                <tr className="border-b border-[var(--line)]">
+                  {["Number", "Client", "Paid Date", "Amount"].map((h) => (
+                    <th key={h} className="text-left font-meta text-[9px] text-[var(--muted)] px-2.5 py-2 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {paid.slice(0, 10).map((d) => (
+                  <tr key={d.id} className="border-b border-[var(--line)] hover:bg-[var(--dept-soft)] transition-colors">
+                    <td className="px-2.5 py-2 font-mono whitespace-nowrap">{d.number}</td>
+                    <td className="px-2.5 py-2 truncate max-w-[150px]">{d.clientName}</td>
+                    <td className="px-2.5 py-2 text-[var(--muted)] whitespace-nowrap">{d.paidDate ?? d.issueDate}</td>
+                    <td className="px-2.5 py-2 font-semibold whitespace-nowrap">{centsToDisplay(d.totalCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
@@ -3963,7 +4254,7 @@ export function FinanceManager() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {view === "documents" && (
+          {view !== "documents" && (
             <button className={btnDept} onClick={() => { setEditTarget(null); setView("new"); }}>
               + Create Document
             </button>
@@ -3971,15 +4262,15 @@ export function FinanceManager() {
         </div>
       </div>
 
-      {/* Sub-tab nav (only when not in editor) */}
+      {/* Sub-tab nav (only when not in editor) - smooth horizontal scrolling on mobile */}
       {view !== "new" && view !== "edit" && (
-        <div className="flex flex-wrap gap-1 border-b border-[var(--line)] pb-0">
+        <div className="flex overflow-x-auto scrollbar-none gap-1 border-b border-[var(--line)] pb-0 whitespace-nowrap -mx-1 px-1">
           {SUB_TABS.map((t) => (
             <button
               key={t.key}
               type="button"
               onClick={() => setView(t.key)}
-              className={`text-xs px-4 py-2 transition-colors border-b-2 -mb-px ${view === t.key ? "border-[var(--dept)] text-[var(--ink)] font-bold" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"}`}
+              className={`text-xs px-3.5 py-2.5 transition-colors border-b-2 -mb-px shrink-0 font-medium ${view === t.key ? "border-[var(--dept)] text-[var(--ink)] font-bold" : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"}`}
             >
               {t.label}
             </button>

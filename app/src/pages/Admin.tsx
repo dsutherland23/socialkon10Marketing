@@ -851,8 +851,8 @@ function Orders() {
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
-        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter orders">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap min-w-0" role="tablist" aria-label="Filter orders">
           <button
             onClick={() => setFilter("ACTIVE")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
@@ -1542,13 +1542,13 @@ function Leads() {
         onStatusChange={handleBatchStatus}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap min-w-0">
           {(["ALL", "new", "contacted", "converted", "closed"] as const).map((s) => (
             <button
               key={s}
               onClick={() => setFilter(s)}
-              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all ${
+              className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
                 filter === s
                   ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold shadow-xs"
                   : "border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
@@ -1589,23 +1589,33 @@ function Leads() {
             return (
               <div
                 key={l.id}
-                className={`border px-5 py-4 grid md:grid-cols-[40px_120px_1fr_180px_200px] gap-4 items-start rounded-2xl transition-all ${
+                className={`border p-4 sm:p-5 flex flex-col md:grid md:grid-cols-[36px_110px_1fr_140px_170px] gap-3 md:gap-4 items-start rounded-2xl transition-all ${
                   isChecked ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)] shadow-xs" : "border-[var(--line)] bg-[var(--panel)]"
                 }`}
               >
-                <div className="pt-0.5">
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={() => toggleLeadSelection(l.id)}
-                    className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
-                    aria-label={`Select lead ${l.name}`}
-                  />
+                {/* Mobile Header (Checkbox + Intent + Date) */}
+                <div className="w-full md:w-auto flex items-center justify-between md:contents">
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleLeadSelection(l.id)}
+                      className="w-4 h-4 accent-[var(--dept)] rounded cursor-pointer"
+                      aria-label={`Select lead ${l.name}`}
+                    />
+                    <span className="font-meta text-[10px] dept-accent uppercase font-bold md:hidden">{l.intent}</span>
+                  </div>
+                  <span className="font-meta text-[9px] text-[var(--muted)] md:hidden">
+                    {l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ""}
+                  </span>
                 </div>
-                <span className="font-meta text-[10px] dept-accent uppercase font-bold">{l.intent}</span>
-                <div className="text-sm">
-                  <p className="font-medium">{l.name} <span className="text-[var(--muted)] font-normal">· {l.email}</span></p>
-                  <p className="text-[13px] text-[var(--muted)] mt-1">{l.message}</p>
+
+                <span className="hidden md:inline-block font-meta text-[10px] dept-accent uppercase font-bold">{l.intent}</span>
+
+                {/* Lead Information */}
+                <div className="text-sm w-full">
+                  <p className="font-medium text-[var(--ink)]">{l.name} <span className="text-[var(--muted)] font-normal">· {l.email}</span></p>
+                  {l.message && <p className="text-[13px] text-[var(--muted)] mt-1">{l.message}</p>}
                   <p className="font-meta text-[9px] text-[var(--muted)] mt-2">
                     {[l.dept, l.service, l.budget, l.timeline, l.date && `${l.date} ${l.time ?? ""}`].filter(Boolean).join(" · ") || "—"}
                   </p>
@@ -1631,20 +1641,23 @@ function Leads() {
 
                   <div className="mt-3"><ConvertLead lead={l} onDone={reload} /></div>
                 </div>
-                <span className="font-meta text-[9px] text-[var(--muted)]">{l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ""}</span>
-                <div className="flex flex-col gap-2">
+
+                <span className="hidden md:inline-block font-meta text-[9px] text-[var(--muted)]">{l.createdAt ? new Date(l.createdAt).toLocaleDateString() : ""}</span>
+
+                {/* Status & Actions Footer */}
+                <div className="w-full md:w-auto pt-3 md:pt-0 border-t md:border-t-0 border-[var(--line)] flex items-center justify-between md:flex-col md:items-stretch gap-2">
                   <select
                     value={l.status}
                     onChange={async (e) => {
                       const okDone = await mutate(() => setLeadStatus(l.id, e.target.value as LeadRecord["status"]), "Lead updated");
                       if (okDone) reload();
                     }}
-                    className={`${inputCls} !py-1.5 font-meta text-[10px] rounded-xl`}
+                    className={`${inputCls} !py-1.5 font-meta text-[10px] rounded-xl flex-1 md:w-full`}
                     aria-label="Lead status"
                   >
                     {["new", "contacted", "converted", "closed"].map((s) => <option key={s} value={s}>{s.toUpperCase()}</option>)}
                   </select>
-                  <div className="self-end">
+                  <div className="self-end md:self-auto">
                     <RemoveButton onRemove={() => deleteLead(l.id)} onDone={reload} />
                   </div>
                 </div>
@@ -2208,8 +2221,8 @@ function IntakesManager() {
       </div>
 
       {/* Filter & Search Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
-        <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="Filter briefs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap min-w-0" role="tablist" aria-label="Filter briefs">
           <button
             onClick={() => setFilter("ALL")}
             className={`font-meta text-[10px] px-3 py-1.5 rounded-xl border transition-all shrink-0 ${
@@ -2260,7 +2273,7 @@ function IntakesManager() {
           </button>
 
           {filteredIntakes.length > 0 && (
-            <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl">
+            <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-meta text-[var(--muted)] hover:text-[var(--ink)] cursor-pointer select-none ml-1 bg-[var(--panel)] border border-[var(--line)] rounded-xl shrink-0">
               <input
                 type="checkbox"
                 checked={isAllFilteredSelected}
@@ -2307,18 +2320,28 @@ function IntakesManager() {
                   isChecked ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)] shadow-xs" : "border-[var(--line)] bg-[var(--panel)]"
                 }`}
               >
-                <div className="grid md:grid-cols-[36px_1fr_160px_140px_130px_140px] gap-3 sm:gap-4 items-center">
-                  <div>
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => toggleIntakeSelection(x.id)}
-                      className="w-3.5 h-3.5 accent-[var(--dept)] rounded cursor-pointer"
-                      aria-label={`Select brief for ${x.packageName}`}
-                    />
+                <div className="flex flex-col md:grid md:grid-cols-[36px_1fr_160px_140px_130px_140px] gap-3 sm:gap-4 items-start md:items-center">
+                  {/* Mobile Top Row: Checkbox + Business/Package + Score Badge */}
+                  <div className="w-full flex items-center justify-between md:contents">
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleIntakeSelection(x.id)}
+                        className="w-4 h-4 accent-[var(--dept)] rounded cursor-pointer shrink-0"
+                        aria-label={`Select brief for ${x.packageName}`}
+                      />
+                      <span className="font-display text-sm font-bold uppercase md:hidden truncate">
+                        {String(x.answers?.business_name ?? "") || x.packageName}
+                      </span>
+                    </div>
+                    <span className="font-meta text-[9.5px] px-2 py-0.5 text-white text-center rounded-lg font-bold shrink-0 md:hidden" style={{ background: LEAD_BADGE[x.leadCategory] ?? "#6b7280" }}>
+                      {x.leadScore ?? 0} · {x.leadCategory ?? "—"}
+                    </span>
                   </div>
-                  <div>
-                    <p className="font-display text-sm font-bold uppercase">{String(x.answers?.business_name ?? "") || x.packageName}</p>
+
+                  <div className="w-full">
+                    <p className="hidden md:block font-display text-sm font-bold uppercase">{String(x.answers?.business_name ?? "") || x.packageName}</p>
                     <p className="font-meta text-[9px] sm:text-[9.5px] text-[var(--muted)] mt-0.5">
                       {String(x.answers?.contact_name ?? "")} · {x.email} · {x.packageName}
                       {x.answers?.website_type ? ` · ${x.answers.website_type}` : ""}
@@ -2334,28 +2357,34 @@ function IntakesManager() {
                       </span>
                     )}
                   </div>
-                  <span className="font-meta text-[10px]">
+
+                  <span className="font-meta text-[10px] font-bold md:font-normal text-[var(--ink)] md:text-inherit">
                     {x.status === "draft" ? "Draft in progress" : `${money(x.estimate?.oneTime ?? 0)}${(x.estimate?.monthly ?? 0) > 0 ? ` + ${money(x.estimate!.monthly)}/mo` : ""}`}
                   </span>
-                  <span className="font-meta text-[10px] px-2.5 py-1 text-white text-center rounded-lg font-bold" style={{ background: LEAD_BADGE[x.leadCategory] ?? "#6b7280" }}>
+
+                  <span className="hidden md:inline-block font-meta text-[10px] px-2.5 py-1 text-white text-center rounded-lg font-bold" style={{ background: LEAD_BADGE[x.leadCategory] ?? "#6b7280" }}>
                     {x.leadScore ?? 0} · {x.leadCategory ?? "—"}
                   </span>
-                  <select
-                    value={x.status}
-                    onChange={async (e) => {
-                      const okDone = await mutate(() => setIntakeStatus(x.id, e.target.value as IntakeRecord["status"]), "Brief status updated");
-                      if (okDone) reload();
-                    }}
-                    className={`${inputCls} !py-1.5 font-meta text-[10px] rounded-xl`}
-                    aria-label="Brief status"
-                  >
-                    {INTAKE_STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ").toUpperCase()}</option>)}
-                  </select>
-                  <div className="flex items-center justify-end gap-2.5">
-                    <button className="font-meta text-[10px] dept-accent u-line font-bold" onClick={() => setOpenId(open ? null : x.id)}>
-                      {open ? "Close" : "View brief"}
-                    </button>
-                    <RemoveButton onRemove={() => deleteIntake(x.id)} onDone={reload} />
+
+                  {/* Actions & Status Footer on Mobile */}
+                  <div className="w-full md:contents pt-2 md:pt-0 border-t md:border-t-0 border-[var(--line)] flex items-center justify-between gap-2.5">
+                    <select
+                      value={x.status}
+                      onChange={async (e) => {
+                        const okDone = await mutate(() => setIntakeStatus(x.id, e.target.value as IntakeRecord["status"]), "Brief status updated");
+                        if (okDone) reload();
+                      }}
+                      className={`${inputCls} !py-1.5 font-meta text-[10px] rounded-xl flex-1 md:w-full`}
+                      aria-label="Brief status"
+                    >
+                      {INTAKE_STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ").toUpperCase()}</option>)}
+                    </select>
+                    <div className="flex items-center justify-end gap-2.5 shrink-0">
+                      <button className="font-meta text-[10px] dept-accent u-line font-bold" onClick={() => setOpenId(open ? null : x.id)}>
+                        {open ? "Close" : "View brief"}
+                      </button>
+                      <RemoveButton onRemove={() => deleteIntake(x.id)} onDone={reload} />
+                    </div>
                   </div>
                 </div>
                 {open && <IntakeDetail intake={x} onDone={reload} />}
@@ -2596,7 +2625,7 @@ function ContentManager({ kind, fields, image }: { kind: "testimonials" | "faqs"
 
   return (
     <div>
-      <div className="border border-[var(--line-strong)] p-5 mb-6" style={{ background: "var(--panel)" }}>
+      <div className="border border-[var(--line)] p-5 sm:p-6 mb-6 rounded-2xl bg-[var(--panel)] shadow-xs">
         <div className="flex items-center justify-between">
           <span className="idx">/{editingId ? `edit-${noun}` : `add-${noun}`}</span>
           {editingId && <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => { setEditingId(null); setDraft({}); }}>Cancel edit ✕</button>}
@@ -2621,26 +2650,26 @@ function ContentManager({ kind, fields, image }: { kind: "testimonials" | "faqs"
               </div>
               {draft.image && (
                 <div className="mt-3 flex items-center gap-4">
-                  <img src={draft.image} alt="Cover preview" className="w-24 h-32 object-cover border border-[var(--line)]" />
+                  <img src={draft.image} alt="Cover preview" className="w-24 h-32 object-cover border border-[var(--line)] rounded-xl" />
                   <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors" onClick={() => setDraft((d) => { const { image: _i, ...rest } = d; return rest; })}>Remove image</button>
                 </div>
               )}
             </div>
           )}
         </div>
-        <button className="btn btn-dept !py-2.5 mt-4" onClick={submit}>{editingId ? "Update" : "Add"}</button>
+        <button className="btn btn-dept !py-2.5 !px-5 mt-4 rounded-xl" onClick={submit}>{editingId ? "Update" : "Add"}</button>
       </div>
 
       <p className="font-meta text-[9px] text-[var(--muted)] mb-3">Default content ships with the site; items you add here appear alongside it. Click Edit to change any entry.</p>
       <div className="flex flex-col gap-2">
         {items.map((it) => (
-          <div key={it.id} className="border border-[var(--line)] px-5 py-3 flex items-center justify-between gap-4 text-sm" style={{ background: "var(--panel)" }}>
+          <div key={it.id} className="border border-[var(--line)] px-4 sm:px-5 py-3.5 flex items-center justify-between gap-4 text-sm rounded-2xl bg-[var(--panel)] shadow-2xs hover:border-[var(--line-strong)] transition-all">
             <span className="truncate flex items-center gap-3">
-              {typeof it.image === "string" && it.image && <img src={it.image} alt="" className="w-8 h-10 object-cover border border-[var(--line)]" />}
-              {String(it[fields[0].key] ?? "")}
+              {typeof it.image === "string" && it.image && <img src={it.image} alt="" className="w-9 h-11 object-cover border border-[var(--line)] rounded-lg" />}
+              <span className="font-medium truncate">{String(it[fields[0].key] ?? "")}</span>
             </span>
-            <span className="flex gap-4 shrink-0">
-              <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)] transition-colors" onClick={() => startEdit(it)}>Edit</button>
+            <span className="flex items-center gap-2.5 shrink-0">
+              <button className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] hover:border-[var(--dept)] transition-colors" onClick={() => startEdit(it)}>Edit</button>
               <RemoveButton onRemove={() => removeManaged(kind, it.id)} onDone={reload} />
             </span>
           </div>
@@ -4062,33 +4091,50 @@ function SettingsManager() {
     setS((prev) => ({ ...prev, socials: socials.map((x) => (x.id === id ? { ...x, href } : x)) }));
 
   return (
-    <div className="max-w-2xl">
-      <p className="font-meta text-[10px] text-[var(--muted)] mb-6">
-        Contact details and social links shown in the footer and contact points site-wide (PRD §74/§85). Blank fields keep the defaults.
-      </p>
-      <div className="grid sm:grid-cols-2 gap-4">
-        <label className={labelCls}>PHONE
-          <input className={`${inputCls} mt-1.5`} placeholder={CONTACT.phone} value={s.phone ?? ""} onChange={(e) => setS({ ...s, phone: e.target.value })} />
-        </label>
-        <label className={labelCls}>EMAIL
-          <input className={`${inputCls} mt-1.5`} placeholder={CONTACT.email} value={s.email ?? ""} onChange={(e) => setS({ ...s, email: e.target.value })} />
-        </label>
-        <label className={`${labelCls} sm:col-span-2`}>LOCATION
-          <input className={`${inputCls} mt-1.5`} placeholder={CONTACT.location} value={s.location ?? ""} onChange={(e) => setS({ ...s, location: e.target.value })} />
-        </label>
-        <label className={labelCls}>"CATCH ME" EASTER EGG — DISCOUNT %
-          <input className={`${inputCls} mt-1.5`} type="number" min={0} max={50} placeholder="e.g. 10 — 0 or blank disables the egg"
-            value={s.catchDiscountPct ?? ""} onChange={(e) => setS({ ...s, catchDiscountPct: Math.max(0, Math.min(50, Number(e.target.value) || 0)) })} />
-          <span className="block font-meta text-[8px] text-[var(--muted)] mt-1">Visitors who catch the running token get this % off — with a 2-minute countdown to use it.</span>
-        </label>
-        {socials.map((x) => (
-          <label key={x.id} className={labelCls}>{x.label.toUpperCase()} URL
-            <input className={`${inputCls} mt-1.5`} value={x.href} onChange={(e) => setSocial(x.id, e.target.value)} />
+    <div className="max-w-3xl space-y-8">
+      <div className="border border-[var(--line)] bg-[var(--panel)] p-5 sm:p-7 rounded-2xl shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-[var(--line)]">
+          <div>
+            <h2 className="font-display text-base font-bold uppercase tracking-wider">Contact &amp; Brand Settings</h2>
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+              Contact details and social links shown in the footer and contact points site-wide (PRD §74/§85). Blank fields keep defaults.
+            </p>
+          </div>
+          <button
+            className="btn btn-dept !py-2 !px-4 rounded-xl font-meta text-[10px] uppercase font-bold"
+            onClick={() => mutate(() => saveSettings({ ...s, socials }), "Settings saved — live now")}
+          >
+            Save Settings
+          </button>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-4">
+          <label className={labelCls}>PHONE
+            <input className={`${inputCls} mt-1.5`} placeholder={CONTACT.phone} value={s.phone ?? ""} onChange={(e) => setS({ ...s, phone: e.target.value })} />
           </label>
-        ))}
+          <label className={labelCls}>EMAIL
+            <input className={`${inputCls} mt-1.5`} placeholder={CONTACT.email} value={s.email ?? ""} onChange={(e) => setS({ ...s, email: e.target.value })} />
+          </label>
+          <label className={`${labelCls} sm:col-span-2`}>LOCATION
+            <input className={`${inputCls} mt-1.5`} placeholder={CONTACT.location} value={s.location ?? ""} onChange={(e) => setS({ ...s, location: e.target.value })} />
+          </label>
+          <label className={`${labelCls} sm:col-span-2`}>"CATCH ME" EASTER EGG — DISCOUNT %
+            <input className={`${inputCls} mt-1.5`} type="number" min={0} max={50} placeholder="e.g. 10 — 0 or blank disables the egg"
+              value={s.catchDiscountPct ?? ""} onChange={(e) => setS({ ...s, catchDiscountPct: Math.max(0, Math.min(50, Number(e.target.value) || 0)) })} />
+            <span className="block font-meta text-[8.5px] text-[var(--muted)] mt-1">Visitors who catch the running token get this % off — with a 2-minute countdown to use it.</span>
+          </label>
+          {socials.map((x) => (
+            <label key={x.id} className={labelCls}>{x.label.toUpperCase()} URL
+              <input className={`${inputCls} mt-1.5`} value={x.href} onChange={(e) => setSocial(x.id, e.target.value)} />
+            </label>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-[var(--line)]">
+          <button className="btn btn-dept !py-2.5 !px-5 rounded-xl" onClick={() => mutate(() => saveSettings({ ...s, socials }), "Settings saved — live now")}>Save Settings</button>
+          <span className="font-meta text-[9px] text-[var(--muted)]">Changes apply site-wide immediately.</span>
+        </div>
       </div>
-      <button className="btn btn-dept !py-2.5 mt-6" onClick={() => mutate(() => saveSettings({ ...s, socials }), "Settings saved — live now")}>Save settings</button>
-      <p className="font-meta text-[9px] text-[var(--muted)] mt-4">Changes apply site-wide immediately.</p>
 
       {/* 2026 Website Intelligence & Analytics Engine Configuration Card */}
       <div className="mt-10 pt-8 border-t border-[var(--line)] space-y-6">
@@ -5669,10 +5715,22 @@ function HomepageManager() {
   const sections = home.sections ?? {};
 
   return (
-    <div className="max-w-2xl">
-      <p className="font-meta text-[10px] text-[var(--muted)] mb-6">
-        Edit the front page without code (PRD §85). Blank headline/sub keep the defaults. Changes go live immediately.
-      </p>
+    <div className="max-w-3xl border border-[var(--line)] bg-[var(--panel)] p-5 sm:p-7 rounded-2xl shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-[var(--line)]">
+        <div>
+          <h2 className="font-display text-base font-bold uppercase tracking-wider">Homepage CMS</h2>
+          <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+            Edit the front page without code (PRD §85). Blank headline/sub keep defaults. Changes go live immediately.
+          </p>
+        </div>
+        <button
+          className="btn btn-dept !py-2 !px-4 rounded-xl font-meta text-[10px] uppercase font-bold"
+          onClick={() => mutate(() => saveSettings({ ...s, home }), "Homepage saved — live now")}
+        >
+          Save Homepage
+        </button>
+      </div>
+
       <div className="flex flex-col gap-4">
         <label className={labelCls}>HERO HEADLINE
           <input className={`${inputCls} mt-1.5`} placeholder="We build brands that get noticed." value={home.headline ?? ""} onChange={(e) => setHome({ headline: e.target.value })} />
@@ -5684,20 +5742,20 @@ function HomepageManager() {
           <textarea rows={4} className={`${inputCls} mt-1.5`} placeholder={`Branding\nSocial Media\nWebsites`} value={home.marquee ?? ""} onChange={(e) => setHome({ marquee: e.target.value })} />
         </label>
         <div>
-          <span className={labelCls}>SECTIONS</span>
-          <div className="grid sm:grid-cols-2 gap-2 mt-2">
+          <span className={labelCls}>ENABLED SECTIONS</span>
+          <div className="grid sm:grid-cols-2 gap-2.5 mt-2">
             {HOME_SECTIONS.map((sec) => (
-              <label key={sec.key} className="font-meta text-[10px] flex items-center gap-2.5 border border-[var(--line)] px-3 py-2.5 cursor-pointer" style={{ background: "var(--panel)" }}>
-                <input type="checkbox" className="accent-[var(--dept)] w-4 h-4"
+              <label key={sec.key} className="font-meta text-[10px] flex items-center gap-2.5 border border-[var(--line)] px-3.5 py-3 cursor-pointer rounded-xl bg-[var(--bg)] hover:border-[var(--dept)] transition-colors select-none">
+                <input type="checkbox" className="accent-[var(--dept)] w-4 h-4 rounded cursor-pointer"
                   checked={sections[sec.key] !== false}
                   onChange={(e) => setHome({ sections: { ...sections, [sec.key]: e.target.checked } })} />
-                {sec.label}
+                <span className="font-semibold text-[var(--ink)]">{sec.label}</span>
               </label>
             ))}
           </div>
         </div>
       </div>
-      <button className="btn btn-dept !py-2.5 mt-6" onClick={() => mutate(() => saveSettings({ ...s, home }), "Homepage saved — live now")}>Save homepage</button>
+      <button className="btn btn-dept !py-2.5 !px-5 mt-6 rounded-xl" onClick={() => mutate(() => saveSettings({ ...s, home }), "Homepage saved — live now")}>Save Homepage</button>
     </div>
   );
 }
@@ -5878,6 +5936,7 @@ function AdminCommunications() {
       });
 
       // Automatically post invitation into any matching client project threads
+      let notifiedThreadCount = 0;
       for (const p of parsedParticipants) {
         const matchingOrders = ordersList.filter((o) => o.email?.toLowerCase() === p.email.toLowerCase());
         for (const o of matchingOrders) {
@@ -5888,13 +5947,17 @@ function AdminCommunications() {
               `📅 Studio scheduled a meeting: "${newM.title}" for ${new Date(startIso).toLocaleDateString()} at ${new Date(startIso).toLocaleTimeString()}.\n\n🔑 Meeting Code: ${newM.roomId}\n🚀 Join Link: ${window.location.origin}/meet/${newM.roomId}${newM.passcode ? `\n🔒 Passcode PIN: ${newM.passcode}` : ""}`,
               "Social Kon10 Studio"
             );
+            notifiedThreadCount++;
           } catch {
             // non-blocking
           }
         }
       }
 
-      toast.success(`Meeting "${newM.title}" scheduled and invites prepared.`);
+      const notifyMsg = notifiedThreadCount > 0
+        ? ` · ${notifiedThreadCount} client thread${notifiedThreadCount > 1 ? "s" : ""} notified.`
+        : "";
+      toast.success(`Meeting "${newM.title}" scheduled${notifyMsg}`);
       setScheduleModalOpen(false);
       setFormTitle("");
       setFormDesc("");
@@ -6184,11 +6247,11 @@ function AdminCommunications() {
       </div>
 
       {/* Sub-Tabs Navigation Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-3">
-        <div className="flex flex-wrap gap-1.5" role="tablist">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--line)] pb-3">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap min-w-0" role="tablist">
           <button
             onClick={() => setActiveSubTab("meetings")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors shrink-0 ${
               activeSubTab === "meetings" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
@@ -6196,7 +6259,7 @@ function AdminCommunications() {
           </button>
           <button
             onClick={() => setActiveSubTab("calendar")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors shrink-0 ${
               activeSubTab === "calendar" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
@@ -6204,7 +6267,7 @@ function AdminCommunications() {
           </button>
           <button
             onClick={() => setActiveSubTab("calls")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors shrink-0 ${
               activeSubTab === "calls" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
@@ -6212,7 +6275,7 @@ function AdminCommunications() {
           </button>
           <button
             onClick={() => setActiveSubTab("intelligence")}
-            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors ${
+            className={`font-meta text-[10px] px-3.5 py-1.5 rounded-xl border transition-colors shrink-0 ${
               activeSubTab === "intelligence" ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--dept)]"
             }`}
           >
@@ -6220,10 +6283,10 @@ function AdminCommunications() {
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setScheduleModalOpen(true)}
-            className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] uppercase font-bold"
+            className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px] uppercase font-bold rounded-xl"
           >
             + Schedule Meeting
           </button>
@@ -6234,8 +6297,8 @@ function AdminCommunications() {
       {activeSubTab === "meetings" && (
         <div className="flex flex-col gap-4">
           {/* Status filter & search */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap min-w-0">
               {["ALL", "scheduled", "live", "completed", "cancelled"].map((s) => (
                 <button
                   key={s}
@@ -6761,12 +6824,23 @@ function AdminCommunications() {
               <div className="grid sm:grid-cols-2 gap-3 pt-2">
                 <div>
                   <label className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold block mb-1">Timezone</label>
-                  <input
-                    type="text"
+                  <select
                     value={formTimezone}
                     onChange={(e) => setFormTimezone(e.target.value)}
-                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)]"
-                  />
+                    className="w-full bg-[var(--bg)] border border-[var(--line)] px-3 py-2 rounded outline-none focus:border-[var(--dept)] text-xs"
+                  >
+                    {/* User's local timezone pinned at top for quick selection */}
+                    {(() => {
+                      const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                      const allZones: string[] = typeof Intl.supportedValuesOf === "function"
+                        ? (Intl.supportedValuesOf("timeZone") as string[])
+                        : [local];
+                      const others = allZones.filter((z) => z !== local).sort();
+                      return [local, ...others].map((tz) => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ));
+                    })()}
+                  </select>
                 </div>
 
                 <div>
@@ -7550,8 +7624,8 @@ export default function Admin() {
           {/* 2026 CATEGORIZED STUDIO ADMIN NAVIGATION */}
           <div className="space-y-3 mb-8">
             {/* Top Tier: Primary Studio Pillar Segments + Sign Out */}
-            <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-[var(--panel)] border border-[var(--line)] rounded-2xl shadow-xs">
-              <div className="flex flex-wrap items-center gap-1 flex-1">
+            <div className="flex items-center justify-between gap-2 p-1.5 bg-[var(--panel)] border border-[var(--line)] rounded-2xl shadow-xs">
+              <div className="flex items-center gap-1 flex-1 overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap min-w-0">
                 {ADMIN_SECTIONS.map((sec) => {
                   const isSecActive = sec.tabs.some((t) => t === tab);
                   const totalBadges = sectionBadge(sec.tabs);
@@ -7562,7 +7636,7 @@ export default function Admin() {
                       onClick={() => {
                         if (!isSecActive) setTab(sec.tabs[0]);
                       }}
-                      className={`relative px-3.5 py-2 rounded-xl font-display text-xs font-bold uppercase transition-all flex items-center gap-2 active:scale-95 ${
+                      className={`relative px-3.5 py-2 rounded-xl font-display text-xs font-bold uppercase transition-all flex items-center gap-2 shrink-0 active:scale-95 ${
                         isSecActive
                           ? "bg-[var(--dept)] text-[var(--on-dept)] shadow-xs"
                           : "text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--bg)]"
@@ -7589,7 +7663,7 @@ export default function Admin() {
               <button
                 type="button"
                 onClick={signOut}
-                className="font-meta text-[10px] px-3 py-1.5 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:border-red-500 hover:text-red-500 transition-colors ml-auto flex items-center gap-1.5 active:scale-95"
+                className="font-meta text-[10px] px-3 py-2 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:border-red-500 hover:text-red-500 transition-colors shrink-0 flex items-center gap-1.5 active:scale-95"
               >
                 <span>🚪</span>
                 <span className="hidden sm:inline">SIGN OUT</span>

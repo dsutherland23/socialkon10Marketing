@@ -21,7 +21,7 @@ import { useMoney } from "../lib/money";
    performance analytics. Writes merge over the seed catalog by slug.
 ------------------------------------------------------------------- */
 
-const inputCls = "bg-transparent border border-[var(--line)] px-3 py-2 text-sm outline-none focus:border-[var(--dept)] transition-colors w-full";
+const inputCls = "bg-transparent border border-[var(--line)] px-3 py-2 text-sm outline-none focus:border-[var(--dept)] transition-colors w-full rounded-xl";
 const labelCls = "font-meta text-[9px] text-[var(--muted)] block mb-1";
 
 async function mutate(fn: () => Promise<unknown>, ok: string) {
@@ -129,7 +129,7 @@ function TemplateForm({ initial, managedId, onDone }: {
   };
 
   return (
-    <div className="border border-[var(--line-strong)] p-6" style={{ background: "var(--panel)" }}>
+    <div className="border border-[var(--line-strong)] p-5 sm:p-6 rounded-2xl shadow-xs" style={{ background: "var(--panel)" }}>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div><span className={labelCls}>Template name *</span><input className={inputCls} value={f.name} onChange={(e) => set("name", e.target.value)} /></div>
         <div><span className={labelCls}>Slug * (URL: /templates/…)</span><input className={inputCls} value={f.slug} onChange={(e) => set("slug", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} /></div>
@@ -247,29 +247,40 @@ function TemplateForm({ initial, managedId, onDone }: {
       <div className="rule-t mt-6 pt-5">
         <span className={labelCls}>Versions (immutable — never overwrite a released file)</span>
         {f.versions.map((v, i) => (
-          <div key={i} className="grid grid-cols-[80px_1fr_2fr_110px_32px] gap-2 mt-2 items-center">
-            <input className={inputCls} value={v.version} aria-label="Version number"
-              onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, version: e.target.value } : x))} />
-            <input className={inputCls} type="date" value={v.date} aria-label="Release date"
-              onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, date: e.target.value } : x))} />
+          <div key={i} className="p-3 sm:p-0 border sm:border-0 border-[var(--line)] rounded-xl sm:rounded-none bg-[var(--panel)] sm:bg-transparent grid grid-cols-1 sm:grid-cols-[80px_1fr_2fr_110px_32px] gap-2 mt-2 items-center">
+            <div className="grid grid-cols-2 sm:contents gap-2">
+              <input className={inputCls} value={v.version} aria-label="Version number" placeholder="Version (e.g. 1.0)"
+                onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, version: e.target.value } : x))} />
+              <input className={inputCls} type="date" value={v.date} aria-label="Release date"
+                onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, date: e.target.value } : x))} />
+            </div>
             <input className={inputCls} value={v.notes} placeholder="Change notes" aria-label="Change notes"
               onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, notes: e.target.value } : x))} />
-            <select className={inputCls} value={v.status} aria-label="Version status"
-              onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, status: e.target.value as TemplateVersion["status"] } : x))}>
-              <option className="text-black">current</option><option className="text-black">superseded</option>
-            </select>
-            <button aria-label="Remove version" onClick={() => set("versions", f.versions.filter((_, xi) => xi !== i))}>✕</button>
+            <div className="flex items-center gap-2 sm:contents">
+              <select className={`${inputCls} flex-1`} value={v.status} aria-label="Version status"
+                onChange={(e) => set("versions", f.versions.map((x, xi) => xi === i ? { ...x, status: e.target.value as TemplateVersion["status"] } : x))}>
+                <option className="text-black">current</option><option className="text-black">superseded</option>
+              </select>
+              <button
+                type="button"
+                aria-label="Remove version"
+                onClick={() => set("versions", f.versions.filter((_, xi) => xi !== i))}
+                className="w-8 h-8 rounded-lg flex items-center justify-center border border-[var(--line)] text-[var(--muted)] hover:text-red-500 hover:border-red-500 transition-colors shrink-0"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         ))}
-        <button className="btn btn-ghost !py-1.5 mt-3"
+        <button className="btn btn-ghost !py-1.5 mt-3 rounded-xl"
           onClick={() => set("versions", [...f.versions.map((v) => ({ ...v, status: "superseded" as const })), { version: "", date: new Date().toISOString().slice(0, 10), notes: "", status: "current" }])}>
           + Add version
         </button>
       </div>
 
-      <div className="flex gap-3 mt-6">
-        <button className="btn btn-dept" disabled={busy} onClick={save}>{managedId ? "Save changes" : "Create template"}</button>
-        <button className="btn btn-ghost" onClick={onDone}>Cancel</button>
+      <div className="flex flex-wrap gap-3 mt-6">
+        <button className="btn btn-dept !py-2.5 rounded-xl" disabled={busy} onClick={save}>{managedId ? "Save changes" : "Create template"}</button>
+        <button className="btn btn-ghost !py-2.5 rounded-xl" onClick={onDone}>Cancel</button>
       </div>
     </div>
   );
@@ -313,54 +324,57 @@ function TemplatesManager() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-wrap gap-3 justify-between items-center mb-6">
         <p className="font-meta text-[10px] text-[var(--muted)]">{templates.length} templates · edits merge over the built-in catalog and go live instantly</p>
-        <button className="btn btn-dept !py-2.5" onClick={() => setCreating(true)}>+ New template</button>
+        <button className="btn btn-dept !py-2.5 rounded-xl" onClick={() => setCreating(true)}>+ New template</button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-xs">
         <table className="w-full text-sm min-w-[760px]">
           <thead>
-            <tr className="font-meta text-[9px] text-[var(--muted)] text-left border-b border-[var(--line)]">
-              <th className="py-2 pr-4 font-normal">Template</th><th className="py-2 pr-4 font-normal">Price</th>
-              <th className="py-2 pr-4 font-normal">Status</th><th className="py-2 pr-4 font-normal">File</th>
-              <th className="py-2 font-normal text-right">Actions</th>
+            <tr className="font-meta text-[9px] text-[var(--muted)] text-left border-b border-[var(--line)] bg-[var(--bg)]">
+              <th className="py-2.5 px-4 font-normal">Template</th><th className="py-2.5 px-4 font-normal">Price</th>
+              <th className="py-2.5 px-4 font-normal">Status</th><th className="py-2.5 px-4 font-normal">File</th>
+              <th className="py-2.5 px-4 font-normal text-right">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-[var(--line)]">
             {templates.map((t) => (
-              <tr key={t.slug} className="border-b border-[var(--line)]">
-                <td className="py-3 pr-4">
+              <tr key={t.slug} className="hover:bg-[var(--bg)]/50 transition-colors">
+                <td className="py-3 px-4">
                   <strong>{t.name}</strong>
                   <span className="font-meta text-[9px] text-[var(--muted)] block">/{t.slug} · v{currentVersion(t)?.version}</span>
                 </td>
-                <td className="py-3 pr-4">{effectivePrice(t) === 0 ? "Free" : money(effectivePrice(t))}</td>
-                <td className="py-3 pr-4">
-                  <span className="font-meta text-[9px] px-2 py-1 border" style={{
+                <td className="py-3 px-4">{effectivePrice(t) === 0 ? "Free" : money(effectivePrice(t))}</td>
+                <td className="py-3 px-4">
+                  <span className="font-meta text-[9px] px-2.5 py-0.5 rounded-full border inline-block" style={{
                     borderColor: t.status === "published" ? "var(--dept)" : "var(--line)",
                     color: t.status === "published" ? "var(--dept)" : "var(--muted)",
+                    background: t.status === "published" ? "var(--dept-soft)" : "transparent",
                   }}>{t.status.toUpperCase()}</span>
                 </td>
-                <td className="py-3 pr-4 font-meta text-[9px]">{t.privateFilePath ? "✓ PRIVATE" : "—"}</td>
-                <td className="py-3 text-right whitespace-nowrap">
-                  <Link to={`/editor/author/${t.slug}`} className="font-meta text-[9px] px-2 py-1 dept-accent hover:underline">STUDIO</Link>
-                  <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]" onClick={() => setEditing({ tpl: t, id: managedIdFor(t.slug, t) })}>EDIT</button>
-                  <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]"
-                    onClick={() => setEditing({ tpl: { ...t, slug: `${t.slug}-copy`, name: `${t.name} (Copy)`, status: "draft" }, id: undefined })}>DUPLICATE</button>
-                  {t.status !== "published" ? (
-                    <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]" onClick={() => write(t, { status: "published" }, "template_published")}>PUBLISH</button>
-                  ) : (
-                    <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]" onClick={() => write(t, { status: "unpublished" }, "template_unpublished")}>UNPUBLISH</button>
-                  )}
-                  {t.status !== "archived" && (
-                    <button className="font-meta text-[9px] px-2 py-1 hover:text-[var(--dept)]" onClick={() => write(t, { status: "archived" }, "template_archived")}>ARCHIVE</button>
-                  )}
-                  <button className="font-meta text-[9px] px-2 py-1 text-red-600"
-                    onClick={async () => {
-                      if (!confirm(`Delete "${t.name}"? Existing customers keep their downloads.`)) return;
-                      const id = managedIdFor(t.slug, t);
-                      if (id) await mutate(() => removeManaged("templates", id).then(reload), "Deleted.");
-                      else await write(t, { status: "archived" }, "template_archived"); // seeds can't be hard-deleted — archive instead
-                    }}>DELETE</button>
+                <td className="py-3 px-4 font-meta text-[9px]">{t.privateFilePath ? "✓ PRIVATE" : "—"}</td>
+                <td className="py-3 px-4 text-right whitespace-nowrap">
+                  <div className="inline-flex items-center gap-1">
+                    <Link to={`/editor/author/${t.slug}`} className="font-meta text-[9px] px-2 py-1 dept-accent rounded-lg hover:bg-[var(--dept-soft)] transition-colors">STUDIO</Link>
+                    <button className="font-meta text-[9px] px-2 py-1 rounded-lg hover:bg-[var(--panel)] hover:text-[var(--dept)] transition-colors" onClick={() => setEditing({ tpl: t, id: managedIdFor(t.slug, t) })}>EDIT</button>
+                    <button className="font-meta text-[9px] px-2 py-1 rounded-lg hover:bg-[var(--panel)] hover:text-[var(--dept)] transition-colors"
+                      onClick={() => setEditing({ tpl: { ...t, slug: `${t.slug}-copy`, name: `${t.name} (Copy)`, status: "draft" }, id: undefined })}>DUPLICATE</button>
+                    {t.status !== "published" ? (
+                      <button className="font-meta text-[9px] px-2 py-1 rounded-lg hover:bg-[var(--panel)] hover:text-[var(--dept)] transition-colors" onClick={() => write(t, { status: "published" }, "template_published")}>PUBLISH</button>
+                    ) : (
+                      <button className="font-meta text-[9px] px-2 py-1 rounded-lg hover:bg-[var(--panel)] hover:text-[var(--dept)] transition-colors" onClick={() => write(t, { status: "unpublished" }, "template_unpublished")}>UNPUBLISH</button>
+                    )}
+                    {t.status !== "archived" && (
+                      <button className="font-meta text-[9px] px-2 py-1 rounded-lg hover:bg-[var(--panel)] hover:text-[var(--dept)] transition-colors" onClick={() => write(t, { status: "archived" }, "template_archived")}>ARCHIVE</button>
+                    )}
+                    <button className="font-meta text-[9px] px-2 py-1 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"
+                      onClick={async () => {
+                        if (!confirm(`Delete "${t.name}"? Existing customers keep their downloads.`)) return;
+                        const id = managedIdFor(t.slug, t);
+                        if (id) await mutate(() => removeManaged("templates", id).then(reload), "Deleted.");
+                        else await write(t, { status: "archived" }, "template_archived"); // seeds can't be hard-deleted — archive instead
+                      }}>DELETE</button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -596,12 +610,16 @@ export function TemplateStudio() {
         Template marketplace manager — create templates, upload private source files and public previews,
         set pricing and licenses, manage versions, categories, bundles, reviews and watermark protection.
       </p>
-      <div className="flex flex-wrap gap-2 mb-8" role="tablist" aria-label="Template studio sections">
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 whitespace-nowrap mb-8" role="tablist" aria-label="Template studio sections">
         {SECTIONS.map((s) => (
           <button key={s} role="tab" aria-selected={section === s} onClick={() => setSection(s)}
-            className="font-meta text-[10px] px-3.5 py-2 border transition-colors"
-            style={section === s ? { background: "var(--dept)", borderColor: "var(--dept)", color: "var(--on-dept)" } : { borderColor: "var(--line)" }}>
-            {s}
+            className={`font-meta text-[10px] sm:text-[10.5px] px-3.5 py-2 rounded-xl border transition-all shrink-0 active:scale-95 ${
+              section === s
+                ? "bg-[var(--dept)] text-[var(--on-dept)] border-[var(--dept)] font-bold shadow-xs"
+                : "border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--dept)] hover:text-[var(--ink)]"
+            }`}
+          >
+            {s.toUpperCase()}
           </button>
         ))}
       </div>

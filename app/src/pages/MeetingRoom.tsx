@@ -384,6 +384,18 @@ export default function MeetingRoom() {
       setShowPermissionGuide(false);
       meshRef.current?.setLocalStream(s);
       localStorage.setItem("sk_media_permission_allowed", "true");
+
+      // Re-enumerate devices after permission is granted — browsers only populate
+      // real device labels (e.g. "FaceTime Camera") once a getUserMedia call succeeds.
+      const refreshedDevices = await getMediaDevices();
+      setDevices(refreshedDevices);
+      if (refreshedDevices.audioInputs.length > 0 && !selectedAudioInput) {
+        setSelectedAudioInput(refreshedDevices.audioInputs[0].deviceId);
+      }
+      if (refreshedDevices.videoInputs.length > 0 && !selectedVideoInput) {
+        setSelectedVideoInput(refreshedDevices.videoInputs[0].deviceId);
+      }
+
       if (!silentOnMount) {
         toast.success("Camera & microphone connected!");
       }
@@ -398,7 +410,7 @@ export default function MeetingRoom() {
       if (isBlocked) {
         localStorage.removeItem("sk_media_permission_allowed");
         setHardwareError(
-          "Permission blocked in browser settings. Follow the mobile guide below to enable camera access."
+          "Permission blocked in browser settings. Follow the guide below to enable camera access."
         );
         if (!silentOnMount) {
           setShowPermissionGuide(true);
@@ -421,12 +433,24 @@ export default function MeetingRoom() {
       const previouslyAllowed = localStorage.getItem("sk_media_permission_allowed") === "true";
 
       let permissionGranted = previouslyAllowed;
-      if (navigator.permissions?.query) {
+
+      // Permissions API: probe "camera" and "microphone" separately.
+      // Firefox does not support these permission names and throws a TypeError —
+      // each query is wrapped individually so one failure doesn't block the other.
+      if (!permissionGranted && navigator.permissions?.query) {
         try {
-          const camQuery = await navigator.permissions.query({ name: "camera" as any });
+          const camQuery = await navigator.permissions.query({ name: "camera" as PermissionName });
           if (camQuery.state === "granted") permissionGranted = true;
         } catch {
-          // Ignore unsupported permission names in older/Safari browsers
+          // "camera" not a valid permission name in Firefox — fall through
+        }
+        if (!permissionGranted) {
+          try {
+            const micQuery = await navigator.permissions.query({ name: "microphone" as PermissionName });
+            if (micQuery.state === "granted") permissionGranted = true;
+          } catch {
+            // "microphone" not supported — fall through
+          }
         }
       }
 
@@ -439,6 +463,7 @@ export default function MeetingRoom() {
     return () => {
       mounted = false;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Only re-request if user explicitly changed hardware device in the dropdown
@@ -2084,7 +2109,11 @@ export default function MeetingRoom() {
                         <p className="font-display text-xs sm:text-sm font-bold uppercase text-white">
                           Camera &amp; Microphone
                         </p>
-                        <p className="text-[11px] text-neutral-300 mt-0.5">
+                        <p
+                          className="text-[11px] text-neutral-300 mt-0.5"
+                          role={hardwareError ? "alert" : undefined}
+                          aria-live="polite"
+                        >
                           {hardwareError || "Tap below to grant access or join in listen mode."}
                         </p>
                       </div>
@@ -2264,41 +2293,70 @@ export default function MeetingRoom() {
           </div>
         </div>
 
-        {/* Mobile Setup Guide Modal */}
+        {/* Camera & Mic Permission Guide Modal — All Platforms */}
         {showPermissionGuide && (
           <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-md bg-[var(--panel)] border border-[var(--line-strong)] p-6 rounded-2xl shadow-2xl text-[var(--ink)] space-y-4">
+            <div className="w-full max-w-lg bg-[var(--panel)] border border-[var(--line-strong)] p-6 rounded-2xl shadow-2xl text-[var(--ink)] space-y-4 max-h-[90dvh] overflow-y-auto">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-xl">📱</span>
-                  <h3 className="font-display text-sm font-bold uppercase">Mobile Permission Guide</h3>
+                  <span className="text-xl">🎙️</span>
+                  <h3 className="font-display text-sm font-bold uppercase">Camera &amp; Microphone Access Guide</h3>
                 </div>
-                <button onClick={() => setShowPermissionGuide(false)} className="text-[var(--muted)] hover:text-[var(--ink)] text-sm">✕</button>
+                <button onClick={() => setShowPermissionGuide(false)} className="text-[var(--muted)] hover:text-[var(--ink)] text-sm" aria-label="Close permission guide">✕</button>
               </div>
 
               <div className="space-y-3 text-xs">
+                {/* Desktop Chrome */}
+                <div className="p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl space-y-1.5">
+                  <p className="font-bold text-[11px] uppercase flex items-center gap-1.5 text-blue-400">
+                    <span>🖥️</span> Desktop Chrome / Edge / Brave
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-[var(--muted)] leading-relaxed">
+                    <li>Look for the <strong>camera 📷 icon</strong> or <strong>lock 🔒</strong> in the address bar (far right or far left).</li>
+                    <li>Click it, then click <strong>Allow</strong> next to Camera and Microphone.</li>
+                    <li>If it says <strong>Blocked</strong>: go to <strong>Settings → Privacy &amp; Security → Site Settings → Camera / Microphone</strong> → remove this site from the blocked list.</li>
+                    <li>Refresh and tap <strong>"Allow Media Access"</strong> below.</li>
+                  </ol>
+                </div>
+
+                {/* Firefox Desktop */}
+                <div className="p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl space-y-1.5">
+                  <p className="font-bold text-[11px] uppercase flex items-center gap-1.5 text-orange-400">
+                    <span>🦊</span> Firefox (Desktop &amp; Android)
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-[var(--muted)] leading-relaxed">
+                    <li>Click the <strong>Lock 🔒</strong> icon to the left of the address bar.</li>
+                    <li>Select <strong>Connection Secure → More Information</strong>.</li>
+                    <li>Go to the <strong>Permissions</strong> tab.</li>
+                    <li>Set <strong>Use the Camera</strong> and <strong>Use the Microphone</strong> to <strong>Allow</strong>.</li>
+                    <li>Reload the page and click <strong>"Try Granting Access Now"</strong> below.</li>
+                  </ol>
+                </div>
+
+                {/* iPhone / iPad */}
                 <div className="p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl space-y-1.5">
                   <p className="font-bold text-[11px] uppercase flex items-center gap-1.5 text-cyan-400">
                     <span>🍎</span> iPhone / iPad (Safari)
                   </p>
                   <ol className="list-decimal list-inside space-y-1 text-[11px] text-[var(--muted)] leading-relaxed">
-                    <li>Look at the top/bottom URL address bar in Safari.</li>
+                    <li>Look at the URL address bar in Safari.</li>
                     <li>Tap the <strong>"aA"</strong> or <strong>Lock icon (🔒)</strong> next to the web address.</li>
                     <li>Select <strong>Website Settings</strong>.</li>
                     <li>Set <strong>Camera</strong> ➔ <strong>Allow</strong> &amp; <strong>Microphone</strong> ➔ <strong>Allow</strong>.</li>
-                    <li>Tap <strong>Done</strong>, then tap <strong>"Allow Media Access"</strong> button.</li>
+                    <li>Tap <strong>Done</strong>, then tap <strong>"Try Granting Access Now"</strong> below.</li>
                   </ol>
                 </div>
 
+                {/* Android */}
                 <div className="p-3 bg-[var(--bg)] border border-[var(--line)] rounded-xl space-y-1.5">
                   <p className="font-bold text-[11px] uppercase flex items-center gap-1.5 text-emerald-400">
-                    <span>🤖</span> Android (Google Chrome)
+                    <span>🤖</span> Android (Chrome)
                   </p>
                   <ol className="list-decimal list-inside space-y-1 text-[11px] text-[var(--muted)] leading-relaxed">
                     <li>Tap the <strong>Lock (🔒)</strong> or <strong>Tune (🎛️)</strong> icon to the left of the URL.</li>
                     <li>Tap <strong>Permissions</strong>.</li>
                     <li>Toggle ON both <strong>Camera</strong> and <strong>Microphone</strong>.</li>
-                    <li>Return to the page and tap <strong>"Allow Media Access"</strong>.</li>
+                    <li>Return to the page and tap <strong>"Try Granting Access Now"</strong>.</li>
                   </ol>
                 </div>
               </div>

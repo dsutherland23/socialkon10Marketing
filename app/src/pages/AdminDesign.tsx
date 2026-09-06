@@ -3334,7 +3334,7 @@ export function DesignStudio() {
         <p className="font-meta text-[10px] text-[var(--muted)] max-w-2xl">
           Graphic Design &amp; Website commerce control (PRD §32) — every service, category, size preset, production add-on, website Power Up add-on, bundle package, and discount tier is database-driven. Changes go live instantly site-wide.
         </p>
-        <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar pt-3" role="tablist" aria-label="Design studio sections">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-2 whitespace-nowrap" role="tablist" aria-label="Design studio sections">
           {SUBS.map((s) => (
             <button
               key={s}

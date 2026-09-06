@@ -20,7 +20,9 @@ export interface ConnectionQualityStats {
   bitrateKbps: number;
 }
 
-/** Enumerate available camera, microphone and speaker devices */
+/** Enumerate available camera, microphone and speaker devices.
+ *  Call again after getUserMedia succeeds — browsers only populate
+ *  device labels once permission has been granted. */
 export async function getMediaDevices(): Promise<MediaDeviceList> {
   if (!navigator.mediaDevices?.enumerateDevices) {
     return { audioInputs: [], videoInputs: [], audioOutputs: [] };
@@ -294,7 +296,9 @@ export class WebRTCMeshSession {
   }
 }
 
-/** Request screen share stream (window, specific app software, tab, or entire display) */
+/** Request screen share stream (window, specific app software, tab, or entire display).
+ *  systemAudio and selfBrowserSurface are Chrome-only hints — guarded with
+ *  feature detection so Safari/Firefox don't receive unsupported constraint keys. */
 export async function getDisplayMediaStream(options?: {
   preferWindow?: boolean;
   withAudio?: boolean;
@@ -302,15 +306,31 @@ export async function getDisplayMediaStream(options?: {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error("Screen sharing is not supported in this browser.");
   }
-  return navigator.mediaDevices.getDisplayMedia({
-    video: {
-      cursor: "always",
-      displaySurface: options?.preferWindow ? "window" : undefined,
-    } as any,
+
+  // Build constraints progressively — Chrome-only hints are only added when supported
+  const videoConstraints: Record<string, unknown> = {
+    cursor: "always",
+  };
+  if (options?.preferWindow) {
+    videoConstraints.displaySurface = "window";
+  }
+
+  const constraints: Record<string, unknown> = {
+    video: videoConstraints,
     audio: options?.withAudio ?? true,
-    selfBrowserSurface: "include",
-    systemAudio: "include",
-  } as any);
+  };
+
+  // selfBrowserSurface & systemAudio are Chrome-specific; guard with duck-typing
+  // to avoid breaking Safari / Firefox which reject unknown constraint keys.
+  const testConstraints = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
+  if ("selfBrowserSurface" in testConstraints || /Chrome/.test(navigator.userAgent)) {
+    constraints.selfBrowserSurface = "include";
+  }
+  if ("systemAudio" in testConstraints || /Chrome/.test(navigator.userAgent)) {
+    constraints.systemAudio = "include";
+  }
+
+  return navigator.mediaDevices.getDisplayMedia(constraints as any);
 }
 
 /** Stop all tracks on a media stream */
@@ -321,6 +341,18 @@ export function stopMediaStream(stream?: MediaStream | null): void {
       track.stop();
     } catch {}
   });
+}
+
+/** Ensure AudioContext is running — resumes suspended context caused by
+ *  browser autoplay policy restrictions after page load without interaction. */
+async function resumeAudioContext(ctx: AudioContext): Promise<void> {
+  if (ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch {
+      // Non-fatal — audio may still play in some browsers even when suspended
+    }
+  }
 }
 
 /** Create a real-time Audio Level Monitor (VU meter) using Web Audio API */
@@ -340,37 +372,44 @@ export function createAudioLevelMeter(
   let animationId = 0;
   let isRunning = true;
 
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return () => {};
+  const init = async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
 
-    audioCtx = new AudioCtx();
-    source = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.8;
-    source.connect(analyser);
+      audioCtx = new AudioCtx();
+      // Resume suspended context — required after page load without user interaction
+      await resumeAudioContext(audioCtx);
 
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.8;
+      source.connect(analyser);
 
-    const tick = () => {
-      if (!isRunning || !analyser) return;
-      analyser.getByteFrequencyData(dataArray);
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        sum += dataArray[i];
-      }
-      const avg = sum / dataArray.length;
-      // Convert to a scaled percentage (0 to 100)
-      const pct = Math.min(100, Math.round((avg / 128) * 100));
-      onVolume(pct);
-      animationId = requestAnimationFrame(tick);
-    };
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    tick();
-  } catch (e) {
-    console.warn("Audio meter initialization error:", e);
-  }
+      const tick = () => {
+        if (!isRunning || !analyser) return;
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        // Convert to a scaled percentage (0 to 100)
+        const pct = Math.min(100, Math.round((avg / 128) * 100));
+        onVolume(pct);
+        animationId = requestAnimationFrame(tick);
+      };
+
+      tick();
+    } catch (e) {
+      console.warn("Audio meter initialization error:", e);
+    }
+  };
+
+  init();
 
   return () => {
     isRunning = false;
@@ -386,41 +425,41 @@ export function createAudioLevelMeter(
 /** Play a pleasant speaker test chime using Web Audio API oscillator */
 export function playSpeakerTestSound(): Promise<void> {
   return new Promise((resolve) => {
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) {
+    (async () => {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) { resolve(); return; }
+        const ctx = new AudioCtx();
+        await resumeAudioContext(ctx);
+
+        // Play a dual-tone chime: 523.25 Hz (C5) then 659.25 Hz (E5)
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(523.25, now);
+        osc.frequency.setValueAtTime(659.25, now + 0.15);
+        osc.frequency.setValueAtTime(783.99, now + 0.30); // G5
+
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.3, now + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.75);
+
+        setTimeout(() => {
+          ctx.close();
+          resolve();
+        }, 800);
+      } catch {
         resolve();
-        return;
       }
-      const ctx = new AudioCtx();
-
-      // Play a dual-tone chime: 523.25 Hz (C5) then 659.25 Hz (E5)
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(523.25, now);
-      osc.frequency.setValueAtTime(659.25, now + 0.15);
-      osc.frequency.setValueAtTime(783.99, now + 0.30); // G5
-
-      gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(0.3, now + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + 0.75);
-
-      setTimeout(() => {
-        ctx.close();
-        resolve();
-      }, 800);
-    } catch {
-      resolve();
-    }
+    })();
   });
 }
 
@@ -429,45 +468,48 @@ export function playIncomingCallRingtone(): () => void {
   let isRinging = true;
   let audioCtx: AudioContext | null = null;
 
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return () => {};
+  (async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
 
-    audioCtx = new AudioCtx();
+      audioCtx = new AudioCtx();
+      await resumeAudioContext(audioCtx);
 
-    const ringCycle = () => {
-      if (!isRinging || !audioCtx) return;
-      const now = audioCtx.currentTime;
-      const osc1 = audioCtx.createOscillator();
-      const osc2 = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
+      const ringCycle = () => {
+        if (!isRinging || !audioCtx) return;
+        const now = audioCtx.currentTime;
+        const osc1 = audioCtx.createOscillator();
+        const osc2 = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
 
-      osc1.type = "sine";
-      osc2.type = "sine";
-      osc1.frequency.value = 440; // A4
-      osc2.frequency.value = 480; // Standard US ringtone frequency pair
+        osc1.type = "sine";
+        osc2.type = "sine";
+        osc1.frequency.value = 440; // A4
+        osc2.frequency.value = 480; // Standard US ringtone frequency pair
 
-      gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(0.2, now + 0.05);
-      gain.gain.setValueAtTime(0.2, now + 1.2);
-      gain.gain.linearRampToValueAtTime(0.001, now + 1.5);
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.05);
+        gain.gain.setValueAtTime(0.2, now + 1.2);
+        gain.gain.linearRampToValueAtTime(0.001, now + 1.5);
 
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(audioCtx.destination);
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(audioCtx.destination);
 
-      osc1.start(now);
-      osc2.start(now);
-      osc1.stop(now + 1.5);
-      osc2.stop(now + 1.5);
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 1.5);
+        osc2.stop(now + 1.5);
 
-      setTimeout(ringCycle, 3000);
-    };
+        setTimeout(ringCycle, 3000);
+      };
 
-    ringCycle();
-  } catch (e) {
-    console.warn("Ringtone error:", e);
-  }
+      ringCycle();
+    } catch (e) {
+      console.warn("Ringtone error:", e);
+    }
+  })();
 
   return () => {
     isRinging = false;
@@ -488,177 +530,181 @@ export function triggerHapticFeedback(pattern: number | number[] = 50): void {
 
 /** Play a soft, pleasant chat message incoming sound */
 export function playMessageNotificationSound(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+  (async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      await resumeAudioContext(ctx);
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
 
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(880, now); // A5
-    osc.frequency.exponentialRampToValueAtTime(1174.66, now + 0.08); // D6
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now); // A5
+      osc.frequency.exponentialRampToValueAtTime(1174.66, now + 0.08); // D6
 
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.15, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.15, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
 
-    osc.connect(gain);
-    gain.connect(ctx.destination);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
 
-    osc.start(now);
-    osc.stop(now + 0.2);
+      osc.start(now);
+      osc.stop(now + 0.2);
 
-    setTimeout(() => {
-      ctx.close();
-    }, 250);
-  } catch {}
+      setTimeout(() => { ctx.close(); }, 250);
+    } catch {}
+  })();
 }
 
 /** Play a distinctive 3-tone meeting starting reminder chime */
 export function playMeetingReminderChime(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+  (async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      await resumeAudioContext(ctx);
+      const now = ctx.currentTime;
 
-    const notes = [523.25, 659.25, 880.0]; // C5, E5, A5
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const start = now + i * 0.12;
+      const notes = [523.25, 659.25, 880.0]; // C5, E5, A5
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = now + i * 0.12;
 
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, start);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, start);
 
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.2, start + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.45);
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(0.2, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.45);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
 
-      osc.start(start);
-      osc.stop(start + 0.5);
-    });
+        osc.start(start);
+        osc.stop(start + 0.5);
+      });
 
-    setTimeout(() => {
-      ctx.close();
-    }, 1000);
-  } catch {}
+      setTimeout(() => { ctx.close(); }, 1000);
+    } catch {}
+  })();
 }
 
 /** Play a doorbell chime when a participant enters the waiting room */
 export function playDoorbellChime(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+  (async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      await resumeAudioContext(ctx);
+      const now = ctx.currentTime;
 
-    // Two-tone Ding-Dong (G5 783.99 Hz, then E5 659.25 Hz)
-    const tones = [
-      { freq: 783.99, start: now, dur: 0.6 },
-      { freq: 659.25, start: now + 0.35, dur: 0.8 },
-    ];
+      // Two-tone Ding-Dong (G5 783.99 Hz, then E5 659.25 Hz)
+      const tones = [
+        { freq: 783.99, start: now, dur: 0.6 },
+        { freq: 659.25, start: now + 0.35, dur: 0.8 },
+      ];
 
-    tones.forEach(({ freq, start, dur }) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      tones.forEach(({ freq, start, dur }) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, start);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, start);
 
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
 
-      osc.start(start);
-      osc.stop(start + dur + 0.05);
-    });
+        osc.start(start);
+        osc.stop(start + dur + 0.05);
+      });
 
-    setTimeout(() => {
-      ctx.close();
-    }, 1500);
-  } catch {}
+      setTimeout(() => { ctx.close(); }, 1500);
+    } catch {}
+  })();
 }
 
 /** Play an attention-grabbing dual-bell chime when a participant raises their hand */
 export function playHandRaiseChime(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+  (async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      await resumeAudioContext(ctx);
+      const now = ctx.currentTime;
 
-    const notes = [440.0, 880.0]; // A4 -> A5 ascending octave chime
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const start = now + i * 0.15;
+      const notes = [440.0, 880.0]; // A4 -> A5 ascending octave chime
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = now + i * 0.15;
 
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, start);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, start);
 
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.5);
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.5);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
 
-      osc.start(start);
-      osc.stop(start + 0.55);
-    });
+        osc.start(start);
+        osc.stop(start + 0.55);
+      });
 
-    setTimeout(() => {
-      ctx.close();
-    }, 1000);
-  } catch {}
+      setTimeout(() => { ctx.close(); }, 1000);
+    } catch {}
+  })();
 }
 
 /** Play a celebratory success chime when a deliverable concept is approved */
 export function playSuccessChime(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+  (async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      await resumeAudioContext(ctx);
+      const now = ctx.currentTime;
 
-    // Harmonious major triad arpeggio (C5 523.25 Hz, E5 659.25 Hz, G5 783.99 Hz, C6 1046.50 Hz)
-    const tones = [
-      { freq: 523.25, start: now, dur: 0.35 },
-      { freq: 659.25, start: now + 0.1, dur: 0.35 },
-      { freq: 783.99, start: now + 0.2, dur: 0.45 },
-      { freq: 1046.5, start: now + 0.32, dur: 0.9 },
-    ];
+      // Harmonious major triad arpeggio (C5 523.25 Hz, E5 659.25 Hz, G5 783.99 Hz, C6 1046.50 Hz)
+      const tones = [
+        { freq: 523.25, start: now, dur: 0.35 },
+        { freq: 659.25, start: now + 0.1, dur: 0.35 },
+        { freq: 783.99, start: now + 0.2, dur: 0.45 },
+        { freq: 1046.5, start: now + 0.32, dur: 0.9 },
+      ];
 
-    tones.forEach(({ freq, start, dur }) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      tones.forEach(({ freq, start, dur }) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, start);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, start);
 
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.22, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(0.22, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
 
-      osc.start(start);
-      osc.stop(start + dur + 0.05);
-    });
+        osc.start(start);
+        osc.stop(start + dur + 0.05);
+      });
 
-    setTimeout(() => {
-      ctx.close();
-    }, 1800);
-  } catch {}
+      setTimeout(() => { ctx.close(); }, 1800);
+    } catch {}
+  })();
 }
-
