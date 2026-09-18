@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { onSnapshot, collection, query, where, orderBy, doc, updateDoc } from "firebase/firestore";
 import { db, firebaseReady } from "../lib/firebase";
@@ -10,16 +10,39 @@ import { playIncomingCallRingtone } from "../lib/webrtc";
    GLOBAL INCOMING CALL NOTIFICATION MODAL (Instant Voice & Video)
    - Plays Web Audio API ringing chime
    - Displays caller details and call type (Voice vs Video)
-   - 1-click Accept (routes to /meet/:roomId) or Decline
+   - 1-click Accept (routes to /meet/:roomId) or Decline/Dismiss
 ------------------------------------------------------------------- */
+
+const DISMISSED_CALLS_KEY = "sk_dismissed_call_ids";
+
+function getDismissedCalls(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(DISMISSED_CALLS_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markCallDismissed(callId: string) {
+  try {
+    const set = getDismissedCalls();
+    set.add(callId);
+    sessionStorage.setItem(DISMISSED_CALLS_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
+}
 
 export function IncomingCallModal() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [activeCall, setActiveCall] = useState<CallHistoryRecord | null>(null);
+  const autoDismissTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!user?.email) return;
+    if (!user?.email) {
+      setActiveCall(null);
+      return;
+    }
     const userEmail = user.email.toLowerCase();
 
     // Listen for incoming ringing calls directed at the current user
@@ -36,9 +59,16 @@ export function IncomingCallModal() {
         (snap) => {
           if (!snap.empty) {
             const call = snap.docs[0].data() as CallHistoryRecord;
-            // Only alert if call started less than 45 seconds ago
-            const callAge = Date.now() - new Date(call.startedAt).getTime();
-            if (callAge < 45000) {
+            const dismissed = getDismissedCalls();
+            if (call.id && dismissed.has(call.id)) {
+              setActiveCall(null);
+              return;
+            }
+
+            // Only alert if call started less than 35 seconds ago and not in future
+            const callTime = new Date(call.startedAt).getTime();
+            const callAge = Date.now() - callTime;
+            if (!isNaN(callAge) && callAge >= 0 && callAge < 35000) {
               setActiveCall(call);
             } else {
               setActiveCall(null);
@@ -54,6 +84,35 @@ export function IncomingCallModal() {
     }
   }, [user?.email]);
 
+  // Auto-dismiss after 30 seconds of ringing if unanswered
+  useEffect(() => {
+    if (!activeCall) {
+      if (autoDismissTimer.current) {
+        window.clearTimeout(autoDismissTimer.current);
+        autoDismissTimer.current = null;
+      }
+      return;
+    }
+
+    const callTime = new Date(activeCall.startedAt).getTime();
+    const callAge = Date.now() - callTime;
+    const remainingMs = Math.max(1000, 35000 - (isNaN(callAge) ? 0 : callAge));
+
+    autoDismissTimer.current = window.setTimeout(() => {
+      if (activeCall?.id) {
+        markCallDismissed(activeCall.id);
+      }
+      setActiveCall(null);
+    }, remainingMs);
+
+    return () => {
+      if (autoDismissTimer.current) {
+        window.clearTimeout(autoDismissTimer.current);
+        autoDismissTimer.current = null;
+      }
+    };
+  }, [activeCall]);
+
   // Handle ringtone while modal is open
   useEffect(() => {
     if (!activeCall) return;
@@ -64,6 +123,9 @@ export function IncomingCallModal() {
   if (!activeCall) return null;
 
   const handleAccept = async () => {
+    if (activeCall?.id) {
+      markCallDismissed(activeCall.id);
+    }
     if (firebaseReady && db) {
       try {
         await updateDoc(doc(db, "call_history", activeCall.id), {
@@ -78,24 +140,37 @@ export function IncomingCallModal() {
   };
 
   const handleDecline = async () => {
-    if (firebaseReady && db) {
-      try {
-        await updateDoc(doc(db, "call_history", activeCall.id), {
-          status: "declined",
-          endedAt: new Date().toISOString(),
-        });
-      } catch {}
+    if (activeCall?.id) {
+      markCallDismissed(activeCall.id);
+      if (firebaseReady && db) {
+        try {
+          await updateDoc(doc(db, "call_history", activeCall.id), {
+            status: "declined",
+            endedAt: new Date().toISOString(),
+          });
+        } catch {}
+      }
     }
     setActiveCall(null);
   };
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none flex items-start justify-center p-4 sm:p-6 animate-in slide-in-from-top-6 duration-300">
-      <div className="pointer-events-auto max-w-md w-full bg-neutral-950 text-white border-2 border-[var(--dept)] rounded-2xl shadow-2xl p-5 backdrop-blur-xl">
-        <div className="flex items-center gap-4">
+      <div className="pointer-events-auto max-w-md w-full bg-neutral-950 text-white border-2 border-[var(--dept)] rounded-2xl shadow-2xl p-5 backdrop-blur-xl relative">
+        {/* Top-right close button to immediately dismiss */}
+        <button
+          onClick={handleDecline}
+          className="absolute top-3 right-3 text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800 transition-colors"
+          title="Dismiss incoming call"
+          aria-label="Dismiss incoming call"
+        >
+          ✕
+        </button>
+
+        <div className="flex items-center gap-4 pr-6">
           <div className="relative">
             <div className="w-14 h-14 rounded-full bg-[var(--dept)]/20 border border-[var(--dept)] flex items-center justify-center text-2xl font-bold dept-accent">
-              {activeCall.callerName.slice(0, 2).toUpperCase()}
+              {activeCall.callerName ? activeCall.callerName.slice(0, 2).toUpperCase() : "SK"}
             </div>
             <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -137,3 +212,4 @@ export function IncomingCallModal() {
     </div>
   );
 }
+

@@ -1,8 +1,27 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { listUserMeetings, listAllMeetings, type MeetingRecord } from "../lib/meetings";
+import { listUserMeetings, listAllMeetings, updateMeeting, type MeetingRecord } from "../lib/meetings";
 import { playMeetingReminderChime, triggerHapticFeedback } from "../lib/webrtc";
+
+const DISMISSED_MEETING_ALERTS_KEY = "sk_dismissed_meeting_alerts";
+
+function getDismissedMeetingAlerts(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(DISMISSED_MEETING_ALERTS_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function dismissMeetingAlert(meetingId: string) {
+  try {
+    const set = getDismissedMeetingAlerts();
+    set.add(meetingId);
+    sessionStorage.setItem(DISMISSED_MEETING_ALERTS_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
+}
 
 export function MeetingProximityAlert() {
   const { user, isAdmin } = useAuth();
@@ -11,8 +30,6 @@ export function MeetingProximityAlert() {
 
   const [activeMeeting, setActiveMeeting] = useState<MeetingRecord | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
-  const [isSnoozed, setIsSnoozed] = useState(false);
-  const [snoozeUntil, setSnoozeUntil] = useState<number>(0);
 
   // Track triggered alerts to prevent duplicate sound/haptics in the same window
   const alertedMarks = useRef<Set<string>>(new Set());
@@ -41,13 +58,32 @@ export function MeetingProximityAlert() {
         if (!isMounted) return;
 
         const now = Date.now();
+        const dismissed = getDismissedMeetingAlerts();
+
         // Find meetings that are scheduled within next 15 minutes OR currently live
         const urgentMeetings = meetings.filter((m) => {
+          if (!m || !m.id) return false;
+          if (dismissed.has(m.id)) return false;
           if (m.status === "completed" || m.status === "cancelled") return false;
+
           const startTime = new Date(m.scheduledStart).getTime();
+          if (isNaN(startTime)) return false;
+
+          const ageMs = now - startTime;
+
+          // If status is "live":
+          // Auto-retire stale live meetings that started more than 60 minutes ago
+          if (m.status === "live") {
+            if (ageMs > 60 * 60 * 1000) {
+              void updateMeeting(m.id, { status: "completed" });
+              return false;
+            }
+            return ageMs >= -5 * 60 * 1000 && ageMs <= 60 * 60 * 1000;
+          }
+
+          // Upcoming meetings: within 15 minutes before start (or up to 15 mins past start)
           const diffMs = startTime - now;
-          // Live or within 15 minutes before start (or up to 60 mins past start if not completed)
-          return (m.status === "live") || (diffMs <= 15 * 60 * 1000 && diffMs >= -60 * 60 * 1000);
+          return diffMs <= 15 * 60 * 1000 && diffMs >= -15 * 60 * 1000;
         });
 
         if (urgentMeetings.length > 0) {
@@ -83,14 +119,6 @@ export function MeetingProximityAlert() {
       const startTime = new Date(activeMeeting.scheduledStart).getTime();
       const diffSec = Math.floor((startTime - now) / 1000);
       setSecondsRemaining(diffSec);
-
-      // Check if snoozed
-      if (snoozeUntil && now < snoozeUntil) {
-        setIsSnoozed(true);
-        return;
-      } else if (isSnoozed) {
-        setIsSnoozed(false);
-      }
 
       // Check Chime & Haptic Alert Thresholds: 10 mins (600s), 5 mins (300s), 1 min (60s), Starting Now (0s)
       const thresholds = [
@@ -128,9 +156,9 @@ export function MeetingProximityAlert() {
     const timer = setInterval(updateCountdown, 1000);
 
     return () => clearInterval(timer);
-  }, [activeMeeting, snoozeUntil, isSnoozed]);
+  }, [activeMeeting]);
 
-  if (!activeMeeting || isInMeetingRoom || isSnoozed) return null;
+  if (!activeMeeting || isInMeetingRoom) return null;
 
   const isLive = activeMeeting.status === "live" || (secondsRemaining !== null && secondsRemaining <= 0);
 
@@ -143,10 +171,11 @@ export function MeetingProximityAlert() {
     return `Starts in ${mins}:${secs < 10 ? "0" : ""}${secs}`;
   };
 
-  const handleSnooze = () => {
-    // Snooze for 4 minutes
-    setSnoozeUntil(Date.now() + 4 * 60 * 1000);
-    setIsSnoozed(true);
+  const handleDismiss = () => {
+    if (activeMeeting?.id) {
+      dismissMeetingAlert(activeMeeting.id);
+    }
+    setActiveMeeting(null);
   };
 
   return (
@@ -182,7 +211,7 @@ export function MeetingProximityAlert() {
           </div>
         </div>
 
-        {/* Right: Join & Snooze Actions */}
+        {/* Right: Join & Dismiss Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={() => {
@@ -194,9 +223,10 @@ export function MeetingProximityAlert() {
           </button>
 
           <button
-            onClick={handleSnooze}
-            className="text-neutral-400 hover:text-white p-1 text-xs rounded hover:bg-neutral-800"
-            title="Snooze reminder for 4 minutes"
+            onClick={handleDismiss}
+            className="text-neutral-400 hover:text-white p-1.5 text-xs rounded hover:bg-neutral-800 transition-colors"
+            title="Dismiss reminder"
+            aria-label="Dismiss reminder"
           >
             ✕
           </button>

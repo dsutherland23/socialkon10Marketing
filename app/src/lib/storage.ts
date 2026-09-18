@@ -115,7 +115,7 @@ export const safeStorage = {
   },
 };
 
-/** Runs once on app startup to free space if localStorage is near or over quota. */
+/** Runs once on app startup to free space if localStorage is near or over quota and cleans stale meeting/call states. */
 export function cleanStorageIfNeeded(): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
@@ -126,4 +126,51 @@ export function cleanStorageIfNeeded(): void {
     console.warn("[safeStorage] Storage quota full on startup. Evicting heavy non-critical caches...");
     evictNonCriticalStorage();
   }
+
+  // Auto-clean stale "live" meetings and "ringing" calls so they do not keep popping up
+  try {
+    const rawMeetings = localStorage.getItem("sk_meetings");
+    if (rawMeetings) {
+      const meetings = JSON.parse(rawMeetings);
+      if (Array.isArray(meetings)) {
+        const now = Date.now();
+        let modified = false;
+        const cleaned = meetings.map((m: any) => {
+          if (m && m.status === "live") {
+            const start = new Date(m.scheduledStart || m.createdAt || 0).getTime();
+            if (isNaN(start) || now - start > 60 * 60 * 1000) {
+              modified = true;
+              return { ...m, status: "completed" };
+            }
+          }
+          return m;
+        });
+        if (modified) {
+          localStorage.setItem("sk_meetings", JSON.stringify(cleaned));
+        }
+      }
+    }
+
+    const rawCalls = localStorage.getItem("sk_call_history");
+    if (rawCalls) {
+      const calls = JSON.parse(rawCalls);
+      if (Array.isArray(calls)) {
+        const now = Date.now();
+        let modified = false;
+        const cleaned = calls.map((c: any) => {
+          if (c && c.status === "ringing") {
+            const start = new Date(c.startedAt || 0).getTime();
+            if (isNaN(start) || now - start > 45 * 1000) {
+              modified = true;
+              return { ...c, status: "missed" };
+            }
+          }
+          return c;
+        });
+        if (modified) {
+          localStorage.setItem("sk_call_history", JSON.stringify(cleaned));
+        }
+      }
+    }
+  } catch {}
 }
