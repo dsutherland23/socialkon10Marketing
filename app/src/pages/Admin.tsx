@@ -2934,8 +2934,16 @@ function PortfolioManager() {
       const url = await uploadImage(file, "portfolio");
       setDraft((d) => ({ ...d, image: url }));
       toast.success(firebaseReady ? "Cover image uploaded" : "Image attached (demo preview)");
-    } catch {
-      toast.error("Image upload failed");
+    } catch (e) {
+      console.error("Cover image upload failed:", e);
+      const code = (e as { code?: string })?.code;
+      toast.error(
+        e instanceof Error && e.message && !/^\[/.test(e.message)
+          ? e.message
+          : code === "storage/unauthorized"
+          ? "Upload denied — sign out and back in as an admin, then retry."
+          : "Image upload failed — check your connection and try again."
+      );
     }
     setUploading(false);
   };
@@ -2950,8 +2958,9 @@ function PortfolioManager() {
         return { ...d, gallery: existing ? `${existing}\n${url}` : url };
       });
       toast.success(firebaseReady ? "Gallery exhibit uploaded" : "Gallery exhibit attached (demo preview)");
-    } catch {
-      toast.error("Gallery asset upload failed");
+    } catch (e) {
+      console.error("Gallery image upload failed:", e);
+      toast.error(e instanceof Error && e.message ? e.message : "Gallery asset upload failed");
     }
     setGalleryUploading(false);
     if (galleryFileRef.current) galleryFileRef.current.value = "";
@@ -3672,45 +3681,43 @@ function PortfolioManager() {
                 <input className={`${inputCls} !py-1 text-xs`} value={draft.image ?? ""} onChange={(e) => setDraft((d) => ({ ...d, image: e.target.value }))} placeholder="/covers/pinstripes-rentals.webp or https://..." />
               </div>
               {draft.image && (
-                <div className="mt-3 space-y-3">
-                  <div className="flex items-center gap-4">
-                    <img src={draft.image} alt="Cover preview" className={`w-32 h-20 border border-[var(--line)] ${draft.imageFit === "cover" ? "object-cover" : "object-contain bg-black/40"}`} />
-                    <div>
-                      <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors block" onClick={() => setDraft((d) => ({ ...d, image: "" }))}>Remove image</button>
-                      <span className="font-meta text-[9px] text-[var(--muted)] block mt-1">Preview shows {draft.imageFit === "cover" ? "Crop to Fill" : "Fit Full Artwork"}</span>
-                    </div>
-                  </div>
-
-                  {/* DISPLAY FIT OPTION */}
-                  <div className="p-3 border border-[var(--line)] rounded bg-[var(--panel)]">
-                    <span className="font-meta text-[10px] font-bold uppercase tracking-wider block mb-1.5 text-[var(--ink)]">Artwork Display Mode on Website:</span>
-                    <div className="flex flex-wrap gap-4 font-meta text-[10px]">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="imageFit"
-                          value="contain"
-                          checked={draft.imageFit !== "cover"}
-                          onChange={() => setDraft((d) => ({ ...d, imageFit: "contain" }))}
-                          className="accent-[var(--dept)]"
-                        />
-                        <span><strong>Fit Design (100% Full View)</strong> — Recommended for flyers, logos & graphics (no cutoff)</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="imageFit"
-                          value="cover"
-                          checked={draft.imageFit === "cover"}
-                          onChange={() => setDraft((d) => ({ ...d, imageFit: "cover" }))}
-                          className="accent-[var(--dept)]"
-                        />
-                        <span><strong>Fill Card (Crop)</strong> — Standard bleed cover style</span>
-                      </label>
-                    </div>
+                <div className="mt-3 flex items-center gap-4">
+                  <img src={draft.image} alt="Cover preview" className={`w-32 h-20 border border-[var(--line)] ${draft.imageFit === "cover" ? "object-cover" : "object-contain bg-black/40"}`} />
+                  <div>
+                    <button className="font-meta text-[10px] text-[var(--muted)] hover:text-red-600 transition-colors block" onClick={() => setDraft((d) => ({ ...d, image: "" }))}>Remove image</button>
+                    <span className="font-meta text-[9px] text-[var(--muted)] block mt-1">Preview shows {draft.imageFit === "cover" ? "Crop to Fill" : "Fit Full Artwork"}</span>
                   </div>
                 </div>
               )}
+
+              {/* DISPLAY FIT OPTION — always visible so it can be set before/while uploading */}
+              <div className="mt-3 p-3 border border-[var(--line)] rounded bg-[var(--panel)]">
+                <span className="font-meta text-[10px] font-bold uppercase tracking-wider block mb-1.5 text-[var(--ink)]">Artwork Display Mode on Website:</span>
+                <div className="flex flex-wrap gap-4 font-meta text-[10px]">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="imageFit"
+                      value="contain"
+                      checked={draft.imageFit !== "cover"}
+                      onChange={() => setDraft((d) => ({ ...d, imageFit: "contain" }))}
+                      className="accent-[var(--dept)]"
+                    />
+                    <span><strong>Fit Design (100% Full View)</strong> — Recommended for flyers, logos &amp; graphics (no cutoff)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="imageFit"
+                      value="cover"
+                      checked={draft.imageFit === "cover"}
+                      onChange={() => setDraft((d) => ({ ...d, imageFit: "cover" }))}
+                      className="accent-[var(--dept)]"
+                    />
+                    <span><strong>Fill Card (Crop)</strong> — Standard bleed cover style</span>
+                  </label>
+                </div>
+              </div>
             </div>
 
             {/* MULTI-ASSET EXHIBITS / GALLERY */}
