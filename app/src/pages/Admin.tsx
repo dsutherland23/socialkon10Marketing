@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { toast } from "sonner";
 import { CONTACT, FAQS, PROJECTS, PROMO_CODES, SERVICES, SOCIAL_LINKS, TESTIMONIALS, CURRENCIES, WORK_FILTERS, type CurrencyCode } from "../lib/data";
@@ -2712,6 +2712,99 @@ interface UnifiedProject {
   };
 }
 
+/* ------------------------------------------------------------------
+   IMAGE DROPZONE — drag & drop / click / paste image upload surface.
+   2026 best practices: full-zone drop target with depth counter (no
+   flicker over child elements), keyboard + screen-reader accessible,
+   clipboard paste support, inline busy state, format & size hints.
+------------------------------------------------------------------- */
+function ImageDropzone({
+  onFiles, multiple = false, busy = false, busyText, title, hint, compact = false, inputRef,
+}: {
+  onFiles: (files: File[]) => void;
+  multiple?: boolean;
+  busy?: boolean;
+  busyText?: string;
+  title: string;
+  hint?: string;
+  compact?: boolean;
+  inputRef?: RefObject<HTMLInputElement | null>;
+}) {
+  const [dragDepth, setDragDepth] = useState(0);
+  const localRef = useRef<HTMLInputElement>(null);
+  const ref = inputRef ?? localRef;
+  const active = dragDepth > 0;
+
+  const extractImages = (dt: DataTransfer | null): File[] => {
+    if (!dt) return [];
+    const files = Array.from(dt.files ?? []).filter(
+      (f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|avif|svg|gif)$/i.test(f.name)
+    );
+    return multiple ? files : files.slice(0, 1);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={title}
+      aria-busy={busy}
+      onClick={() => !busy && ref.current?.click()}
+      onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !busy) { e.preventDefault(); ref.current?.click(); } }}
+      onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragDepth((d) => d + 1); }}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "copy"; }}
+      onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragDepth((d) => Math.max(0, d - 1)); }}
+      onDrop={(e) => {
+        e.preventDefault(); e.stopPropagation(); setDragDepth(0);
+        if (busy) return;
+        const fs = extractImages(e.dataTransfer);
+        if (fs.length) onFiles(fs);
+      }}
+      onPaste={(e) => {
+        if (busy) return;
+        const fs = extractImages(e.clipboardData);
+        if (fs.length) { e.preventDefault(); onFiles(fs); }
+      }}
+      className={`relative flex flex-col items-center justify-center gap-1.5 text-center border-2 border-dashed rounded cursor-pointer select-none transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-[var(--dept)] ${
+        compact ? "px-4 py-3" : "px-6 py-7"
+      } ${active ? "border-[var(--dept)] bg-[var(--dept)]/10 scale-[1.01]" : "border-[var(--line-strong)]/50 hover:border-[var(--dept)]/70 hover:bg-[var(--panel)]"} ${busy ? "opacity-60 pointer-events-none" : ""}`}
+    >
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*"
+        multiple={multiple}
+        className="hidden"
+        aria-hidden
+        tabIndex={-1}
+        onChange={(e) => {
+          const fs = Array.from(e.target.files ?? []);
+          if (fs.length) onFiles(fs);
+          e.target.value = "";
+        }}
+      />
+      {busy ? (
+        <>
+          <span className="inline-block w-5 h-5 border-2 border-[var(--dept)] border-t-transparent rounded-full animate-spin" aria-hidden />
+          <span className="font-meta text-[10px] text-[var(--muted)]">{busyText || "Uploading…"}</span>
+        </>
+      ) : (
+        <>
+          <svg width={compact ? 18 : 26} height={compact ? 18 : 26} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={active ? "dept-accent" : "text-[var(--muted)]"} aria-hidden>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          <span className={`font-meta ${compact ? "text-[10px]" : "text-[11px]"} font-bold ${active ? "dept-accent" : "text-[var(--ink)]"}`}>
+            {active ? "Drop it right here!" : title}
+          </span>
+          {hint && !active && <span className="font-meta text-[9px] text-[var(--muted)]">{hint}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function PortfolioManager() {
   const [managedItems, setManagedItems] = useState<ManagedItem[]>([]);
   const [search, setSearch] = useState("");
@@ -2722,6 +2815,7 @@ function PortfolioManager() {
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [uploading, setUploading] = useState(false);
   const [galleryUploading, setGalleryUploading] = useState(false);
+  const [galleryProgress, setGalleryProgress] = useState<{ done: number; total: number } | null>(null);
   const [showCaseStudy, setShowCaseStudy] = useState(false);
   const [hoveredImage, setHoveredImage] = useState<{ src: string; title: string; client: string; fit: string; x: number; y: number } | null>(null);
   const [inspectProject, setInspectProject] = useState<UnifiedProject | null>(null);
@@ -2948,21 +3042,30 @@ function PortfolioManager() {
     setUploading(false);
   };
 
-  const pickGalleryImage = async (file: File | undefined) => {
-    if (!file) return;
+  const pickGalleryImages = async (files: File[]) => {
+    if (!files.length) return;
     setGalleryUploading(true);
-    try {
-      const url = await uploadImage(file, "portfolio");
-      setDraft((d) => {
-        const existing = d.gallery ? String(d.gallery).trim() : "";
-        return { ...d, gallery: existing ? `${existing}\n${url}` : url };
-      });
-      toast.success(firebaseReady ? "Gallery exhibit uploaded" : "Gallery exhibit attached (demo preview)");
-    } catch (e) {
-      console.error("Gallery image upload failed:", e);
-      toast.error(e instanceof Error && e.message ? e.message : "Gallery asset upload failed");
+    setGalleryProgress({ done: 0, total: files.length });
+    let ok = 0;
+    const failed: string[] = [];
+    for (const f of files) {
+      try {
+        const url = await uploadImage(f, "portfolio");
+        setDraft((d) => {
+          const existing = d.gallery ? String(d.gallery).trim() : "";
+          return { ...d, gallery: existing ? `${existing}\n${url}` : url };
+        });
+        ok++;
+      } catch (e) {
+        console.error("Gallery image upload failed:", f.name, e);
+        failed.push(f.name);
+      }
+      setGalleryProgress({ done: ok + failed.length, total: files.length });
     }
     setGalleryUploading(false);
+    setGalleryProgress(null);
+    if (ok > 0) toast.success(firebaseReady ? `${ok} exhibit image${ok > 1 ? "s" : ""} uploaded` : `${ok} exhibit${ok > 1 ? "s" : ""} attached (demo preview)`);
+    if (failed.length) toast.error(`${failed.length} image${failed.length > 1 ? "s" : ""} failed: ${failed.join(", ")}`);
     if (galleryFileRef.current) galleryFileRef.current.value = "";
   };
 
@@ -3672,9 +3775,15 @@ function PortfolioManager() {
 
             <div className="sm:col-span-2 lg:col-span-3">
               <span className={labelCls}>COVER / PREVIEW IMAGE</span>
-              <div className="mt-1 flex flex-wrap items-center gap-4">
-                <input ref={fileRef} type="file" accept="image/*" className="text-sm" onChange={(e) => pickImage(e.target.files?.[0])} aria-label="Upload cover image" />
-                {uploading && <span className="font-meta text-[10px] text-[var(--muted)]">Uploading to storage…</span>}
+              <div className="mt-1">
+                <ImageDropzone
+                  inputRef={fileRef}
+                  busy={uploading}
+                  busyText="Uploading to storage…"
+                  title="Drag & drop cover image here, click to browse, or paste"
+                  hint="JPG · PNG · WebP · AVIF · SVG — up to 12 MB"
+                  onFiles={(fs) => pickImage(fs[0])}
+                />
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <span className="font-meta text-[9px] text-[var(--muted)]">OR Image URL:</span>
@@ -3731,18 +3840,19 @@ function PortfolioManager() {
                     Add extra posters, packaging angles, branding mockups, stationery, and collateral images to showcase in high-res zoom.
                   </span>
                 </div>
-                <label className="btn btn-ghost !py-1.5 !text-xs cursor-pointer">
-                  + Upload Exhibit Image
-                  <input
-                    ref={galleryFileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => pickGalleryImage(e.target.files?.[0])}
-                  />
-                </label>
               </div>
-              {galleryUploading && <span className="font-meta text-[10px] text-[var(--muted)] block mt-2">Uploading gallery asset…</span>}
+              <div className="mt-2">
+                <ImageDropzone
+                  inputRef={galleryFileRef}
+                  multiple
+                  compact
+                  busy={galleryUploading}
+                  busyText={galleryProgress ? `Uploading ${galleryProgress.done} of ${galleryProgress.total}…` : "Uploading gallery assets…"}
+                  title="Drag & drop exhibit images here — multiple at once"
+                  hint="Click to browse or paste · JPG · PNG · WebP · AVIF · SVG"
+                  onFiles={(fs) => void pickGalleryImages(fs)}
+                />
+              </div>
               <div className="mt-3">
                 <label className={labelCls}>EXHIBIT IMAGE URLS (1 PER LINE)</label>
                 <textarea
