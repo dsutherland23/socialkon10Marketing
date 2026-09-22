@@ -14,6 +14,7 @@ import {
   listAllOrders, listLeads, uploadImage,
 } from "../lib/backend";
 import { sendEmail } from "../lib/email";
+import { ImageDropzone } from "../components/ImageDropzone";
 import { CONTACT, SERVICES } from "../lib/data";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -3538,8 +3539,7 @@ function BusinessSettingsManager({
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleLogoFile = async (file: File | undefined) => {
     if (!file) return;
     setUploadingLogo(true);
     try {
@@ -3548,7 +3548,7 @@ function BusinessSettingsManager({
       toast.success("Logo uploaded! Remember to click 'Save Business Settings'.");
     } catch (err) {
       console.error("Logo upload failed:", err);
-      toast.error("Failed to upload logo image.");
+      toast.error(err instanceof Error && err.message ? err.message : "Failed to upload logo image.");
     } finally {
       setUploadingLogo(false);
       if (logoInputRef.current) logoInputRef.current.value = "";
@@ -3639,21 +3639,6 @@ function BusinessSettingsManager({
                 onChange={(e) => setLogoUrl(e.target.value)}
                 placeholder="/assets/sk-logo-full.png"
               />
-              <input
-                ref={logoInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleLogoUpload}
-              />
-              <button
-                type="button"
-                className="btn btn-dept px-3 py-1.5 text-xs font-semibold"
-                onClick={() => logoInputRef.current?.click()}
-                disabled={uploadingLogo}
-              >
-                {uploadingLogo ? "Uploading…" : "📁 Upload Logo"}
-              </button>
               <button
                 type="button"
                 className="btn btn-ghost px-2.5 py-1.5 text-xs"
@@ -3664,6 +3649,17 @@ function BusinessSettingsManager({
               >
                 Reset Default
               </button>
+            </div>
+            <div className="pt-1">
+              <ImageDropzone
+                inputRef={logoInputRef}
+                compact
+                busy={uploadingLogo}
+                busyText="Uploading logo…"
+                title="Drag & drop logo here, click to browse, or paste"
+                hint="PNG · SVG · WebP with transparency recommended"
+                onFiles={(fs) => void handleLogoFile(fs[0])}
+              />
             </div>
           </div>
           <div>

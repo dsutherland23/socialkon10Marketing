@@ -13,6 +13,7 @@ import {
   type Template, type TemplateReview, type TemplateStatus, type TemplateVersion,
 } from "../lib/templates";
 import { useMoney } from "../lib/money";
+import { ImageDropzone } from "../components/ImageDropzone";
 
 /* ------------------------------------------------------------------
    ADMIN — TEMPLATE STUDIO (Templates PRD §37–§43)
@@ -51,18 +52,32 @@ function TemplateForm({ initial, managedId, onDone }: {
 }) {
   const [f, setF] = useState<Template>(initial);
   const [busy, setBusy] = useState(false);
+  const [previewProgress, setPreviewProgress] = useState<{ done: number; total: number } | null>(null);
   const { categories } = useTemplates();
   const set = <K extends keyof Template>(k: K, v: Template[K]) => setF((x) => ({ ...x, [k]: v }));
   const csv = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
-  const uploadPreview = async (file: File) => {
+  const uploadPreviews = async (files: File[]) => {
+    if (!files.length) return;
     setBusy(true);
-    try {
-      const url = await uploadImage(file, "template-previews");
-      set("previewImages", [...f.previewImages, url]);
-      toast.success("Preview uploaded — remember to Save.");
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Upload failed."); }
+    setPreviewProgress({ done: 0, total: files.length });
+    let ok = 0;
+    const failed: string[] = [];
+    for (const file of files) {
+      try {
+        const url = await uploadImage(file, "template-previews");
+        setF((x) => ({ ...x, previewImages: [...x.previewImages, url] }));
+        ok++;
+      } catch (e) {
+        console.error("Preview upload failed:", file.name, e);
+        failed.push(file.name);
+      }
+      setPreviewProgress({ done: ok + failed.length, total: files.length });
+    }
     setBusy(false);
+    setPreviewProgress(null);
+    if (ok > 0) toast.success(`${ok} preview${ok > 1 ? "s" : ""} uploaded — remember to Save.`);
+    if (failed.length) toast.error(`${failed.length} preview${failed.length > 1 ? "s" : ""} failed: ${failed.join(", ")}`);
   };
 
   const uploadPrivate = async (file: File) => {
@@ -219,7 +234,15 @@ function TemplateForm({ initial, managedId, onDone }: {
               </span>
             ))}
           </div>
-          <input type="file" accept="image/*" disabled={busy} onChange={(e) => e.target.files?.[0] && uploadPreview(e.target.files[0])} className="text-sm" />
+          <ImageDropzone
+            multiple
+            compact
+            busy={busy}
+            busyText={previewProgress ? `Uploading ${previewProgress.done} of ${previewProgress.total}…` : "Uploading…"}
+            title="Drag & drop preview images — multiple at once"
+            hint="Click to browse or paste · JPG · PNG · WebP · AVIF · SVG"
+            onFiles={(fs) => void uploadPreviews(fs)}
+          />
           {!firebaseReady && <p className="font-meta text-[9px] text-[var(--muted)] mt-1">Demo mode — uploads preview locally only.</p>}
         </div>
         <div>
@@ -228,7 +251,18 @@ function TemplateForm({ initial, managedId, onDone }: {
             {f.privateFilePath ? `✓ Stored: ${f.privateFilePath.slice(0, 48)}…` : "No file uploaded yet — downloads deliver a readme stub."}
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <input type="file" accept=".psd,.psb,.ai,.indd,.zip,.pdf" disabled={busy} onChange={(e) => e.target.files?.[0] && uploadPrivate(e.target.files[0])} className="text-sm" />
+            <div className="min-w-[260px] flex-1">
+              <ImageDropzone
+                compact
+                busy={busy}
+                busyText="Uploading source file…"
+                title="Drag & drop source file here"
+                hint="PSD · PSB · AI · INDD · ZIP · PDF — stored privately"
+                accept=".psd,.psb,.ai,.indd,.zip,.pdf"
+                fileFilter={(file) => /\.(psd|psb|ai|indd|zip|pdf)$/i.test(file.name)}
+                onFiles={(fs) => fs[0] && void uploadPrivate(fs[0])}
+              />
+            </div>
             {f.privateFilePath && (
               <button type="button" onClick={() => void reparsePrivatePsd()} disabled={busy} className="font-meta text-[9px] px-2 py-1 border border-[var(--dept)] text-[var(--dept)] hover:bg-[var(--dept)] hover:text-[var(--on-dept)] transition-colors">
                 ↻ Re-parse PSD to Canvas
