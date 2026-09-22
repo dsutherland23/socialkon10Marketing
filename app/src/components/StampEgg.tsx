@@ -76,7 +76,7 @@ export default function StampEgg() {
   if (!active) return null;
 
   return (
-    <div className="fixed inset-0 z-[92] pointer-events-none" aria-hidden>
+    <div className="fixed inset-0 z-[92] pointer-events-none overflow-hidden" aria-hidden>
       <div
         className="absolute left-0 top-0 text-[var(--ink)]"
         style={{

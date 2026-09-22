@@ -43,7 +43,7 @@ export function MouseFlyIn({
   return (
     <section
       ref={containerRef}
-      className={`relative z-20 w-full overflow-x-clip select-none pt-12 md:pt-16 pb-20 md:pb-28 ${className}`}
+      className={`relative z-20 w-full overflow-hidden select-none pt-12 md:pt-16 pb-20 md:pb-28 ${className}`}
       style={{
         background: "var(--panel)",
       }}
@@ -53,7 +53,7 @@ export function MouseFlyIn({
       <div className="absolute inset-0 pointer-events-none opacity-[0.06] blueprint-grid" />
 
       {/* DEDICATED MOUSE RUNWAY: Sits naturally above the writing */}
-      <div className="relative w-full h-44 sm:h-56 md:h-72 flex items-center justify-center overflow-visible pointer-events-none mb-6 md:mb-10 z-30">
+      <div className="relative w-full h-44 sm:h-56 md:h-72 flex items-center justify-center overflow-hidden pointer-events-none mb-6 md:mb-10 z-30">
         {/* Dynamic Glowing Trail Line along the upper line */}
         <motion.div
           className="absolute left-0 top-1/2 -translate-y-1/2 h-px bg-gradient-to-r from-transparent via-[var(--dept)] to-[var(--dept)] opacity-40 blur-[1px]"

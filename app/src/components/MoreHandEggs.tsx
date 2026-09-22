@@ -53,7 +53,9 @@ function IdleNudge() {
 
   return (
     <div
-      className="fixed right-0 top-1/3 z-[87] pointer-events-none flex items-start transition-transform duration-500"
+      className={`fixed right-0 top-1/3 z-[87] pointer-events-none flex items-start transition-transform duration-500 overflow-hidden ${
+        show ? "opacity-100" : "opacity-0 invisible"
+      }`}
       style={{ transform: show ? "translateX(0)" : "translateX(105%)", transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)" }}
       aria-hidden
     >
@@ -124,7 +126,7 @@ function ScrollTug() {
 
   if (!active) return null;
   return (
-    <div className="fixed inset-0 z-[89] pointer-events-none" aria-hidden>
+    <div className="fixed inset-0 z-[89] pointer-events-none overflow-hidden" aria-hidden>
       <div
         className="absolute text-[var(--ink)]"
         style={{

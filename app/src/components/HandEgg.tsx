@@ -159,7 +159,7 @@ export default function HandEgg() {
   if (!active) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] pointer-events-none" aria-hidden>
+    <div className="fixed inset-0 z-[90] pointer-events-none overflow-hidden" aria-hidden>
       {/* the hand */}
       <div
         className="absolute left-0 top-0 text-[var(--ink)]"

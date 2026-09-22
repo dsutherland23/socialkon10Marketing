@@ -118,7 +118,7 @@ function BottomReward() {
   if (!show) return null;
   return (
     <div
-      className="sk-pop fixed bottom-4 left-1/2 z-[84] flex items-center gap-3 px-4 py-3 border border-[var(--line-strong)] shadow-lg"
+      className="sk-pop fixed bottom-4 left-1/2 z-[84] flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 px-4 py-3 border border-[var(--line-strong)] shadow-lg w-[calc(100vw-2rem)] max-w-md"
       style={{ background: "var(--bg)", transform: "translateX(-50%)" }}
       role="status"
     >

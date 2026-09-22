@@ -144,7 +144,7 @@ function Shell() {
       <ScrollProgress />
       <div className="grain-overlay" aria-hidden="true" />
       <SiteHeader onOpenCommand={() => setCmdOpen(true)} />
-      <main id="main">
+      <main id="main" className="w-full max-w-full overflow-x-clip">
         <ErrorBoundary>
           <Suspense fallback={<div className="wrap pt-24 pb-32 min-h-[50vh]"><span className="font-meta text-[10px] text-[var(--muted)]">Loading…</span></div>}>
             <div key={pathname} className="page-enter">

@@ -259,7 +259,7 @@ function FeaturedWork() {
   }, [projects]);
 
   return (
-    <section className="rule-t overflow-x-clip select-none" aria-label="Featured work">
+    <section className="rule-t overflow-hidden select-none" aria-label="Featured work">
       <div className="wrap py-20 md:py-28">
         <SectionHead
           index="/selected-work"

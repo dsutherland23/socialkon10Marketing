@@ -327,17 +327,17 @@ export function CardFanCarousel({ cards, className = "" }: SocialCardsProps) {
   if (!totalCards) return null;
 
   return (
-    <div className={`flex flex-col items-center w-full py-2 sm:py-4 relative select-none ${className}`}>
+    <div className={`flex flex-col items-center w-full max-w-full py-2 sm:py-4 relative select-none overflow-hidden ${className}`}>
       {/* 3D Curved Fanned Stage */}
       <div
-        className="flex items-center justify-center w-full max-w-[96rem] overflow-visible touch-pan-y"
+        className="flex items-center justify-center w-full max-w-[96rem] overflow-hidden touch-pan-y"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
         <div
           ref={containerRef}
-          className="relative flex justify-center items-center w-full h-[380px] sm:h-[480px] md:h-[580px] overflow-visible"
+          className="relative flex justify-center items-center w-full max-w-full h-[380px] sm:h-[480px] md:h-[580px] overflow-hidden"
         >
           {cards.map((card, index) => {
             const cardContent = (
