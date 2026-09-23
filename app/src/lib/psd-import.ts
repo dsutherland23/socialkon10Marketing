@@ -281,6 +281,19 @@ function walkLayers(
             imgObj.kFontSize = layer.text?.style?.fontSize ?? 36;
             imgObj.kFontColor = psdColor(layer.text?.style?.fillColor as { r: number; g: number; b: number } | undefined) || "#ffffff";
             imgObj.kFontFamily = layer.text?.style?.font?.name || "Bebas Neue, Impact, sans-serif";
+            // Extended typography metadata so "Convert to Live Text" matches the original render
+            const tStyle = layer.text?.style;
+            if (tStyle) {
+              imgObj.kFontWeight = tStyle.fauxBold ? "700" : "400";
+              imgObj.kFontStyle = tStyle.fauxItalic ? "italic" : "normal";
+              if (typeof tStyle.tracking === "number" && tStyle.tracking !== 0) imgObj.kTracking = tStyle.tracking; // 1/1000 em, same unit as Fabric charSpacing
+              if (typeof tStyle.leading === "number" && tStyle.leading > 0) imgObj.kLeading = tStyle.leading; // px
+              if (typeof tStyle.fontCaps === "number" && tStyle.fontCaps > 0) imgObj.kFontCaps = tStyle.fontCaps; // 1 = all caps, 2 = small caps
+              if (tStyle.underline) imgObj.kUnderline = true;
+              if (tStyle.strikethrough) imgObj.kStrikethrough = true;
+            }
+            const justification = layer.text?.paragraphStyle?.justification;
+            if (justification) imgObj.kTextAlign = justification;
             const fieldId = `field_${nextId()}`;
             imgObj.kPlaceholder = fieldId;
             fields.push({

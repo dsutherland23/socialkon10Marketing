@@ -40,7 +40,7 @@ import {
   type CustomerDesign, type DesignVersion,
 } from "../lib/editor-store";
 import {
-  ELEMENTS, ensureFontLoaded, normalizeHex, runDesignChecks, starPoints,
+  ELEMENTS, ensureFontLoaded, normalizeHex, resolvePsdFont, runDesignChecks, starPoints,
   type DesignCheck, type ElementKind,
 } from "../lib/editor-studio";
 import { ColorField, FontField, Tip, Toggle } from "./editor/ui";
@@ -773,6 +773,7 @@ export default function Editor() {
   const [design, setDesign] = useState<CustomerDesign | null>(null);
   const [sel, setSel] = useState<SelInfo>({ kind: "none", obj: null });
   const [saveState, setSaveState] = useState<SaveState>("saved");
+  const syncRetryRef = useRef(0);
   const [zoom, setZoom] = useState(0.5);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab | null>("text");
@@ -1130,11 +1131,20 @@ export default function Editor() {
         await saveDesign(targetId, { canvasJson: json, thumbnail: thumb });
       }
       setSaveState("saved");
+      syncRetryRef.current = 0;
       track("design_saved", { template: slug });
     } catch (err) {
       console.warn("Auto-save sync error:", err);
-      // Local draft is already saved in IndexedDB, so work is never lost
-      setSaveState("saved");
+      // Local draft is already saved in IndexedDB, so work is never lost —
+      // but say so honestly and retry the cloud sync a few times (§53).
+      setSaveState("failed");
+      if (syncRetryRef.current < 3) {
+        syncRetryRef.current += 1;
+        const attempt = syncRetryRef.current;
+        setTimeout(() => {
+          if (syncRetryRef.current === attempt) void persistNow(targetId);
+        }, 12000);
+      }
     }
   }, [serialize, canvasSize, slug, isAuthor, tpl, design]);
 
@@ -1271,8 +1281,11 @@ export default function Editor() {
     if (!text || /^layer \d+$/i.test(text.trim()) || /^image/i.test(text.trim()) || /^bitmap/i.test(text.trim())) {
       text = "Your Text Here";
     }
+    // Photoshop "All Caps" character setting — preserve the rendered look
+    if ((raw.kFontCaps as number) === 1) text = text.toUpperCase();
+
     const fill = (raw.kFontColor as string) || (typeof imgObj.fill === "string" ? imgObj.fill : "#ffffff");
-    const fontFamily = (raw.kFontFamily as string) || "Archivo, Bebas Neue, Impact, sans-serif";
+    const rawFontName = (raw.kFontFamily as string) || "";
     const origLeft = imgObj.left ?? 0;
     const origTop = imgObj.top ?? 0;
     const angle = imgObj.angle ?? 0;
@@ -1284,29 +1297,55 @@ export default function Editor() {
 
     const lines = text.split(/\r?\n/).filter(Boolean);
     const lineCount = Math.max(lines.length, 1);
-    const approxLineH = boxH / lineCount;
 
-    // Detect if text layer was centered on the canvas (within 8% margin of center)
+    // Typography metadata captured at PSD import; fall back to pixel measurement
+    const psdFontSize = Number(raw.kFontSize) || 0;
+    const psdLeading = Number(raw.kLeading) || 0;
+    const lineHeight = psdLeading > 0 && psdFontSize > 0
+      ? Math.min(Math.max(psdLeading / psdFontSize, 0.8), 3)
+      : 1.16;
+    const derivedFontSize = Math.round(boxH / lineCount / lineHeight);
+    const fontSize = Math.max(psdFontSize > 0 ? Math.round(psdFontSize) : derivedFontSize, 8);
+    const charSpacing = typeof raw.kTracking === "number" ? Math.round(raw.kTracking as number) : 0;
+    const fontWeight = (raw.kFontWeight as string) || "400";
+    const fontStyle = ((raw.kFontStyle as string) || "normal") as "normal" | "italic";
+    const underline = raw.kUnderline === true;
+    const linethrough = raw.kStrikethrough === true;
+
+    // Alignment: Photoshop paragraph justification first, else canvas-center heuristic
     const centerX = origLeft + boxW / 2;
     const isCanvasCentered = Math.abs(centerX - canvasSize.width / 2) < canvasSize.width * 0.08;
+    const psdAlign = String(raw.kTextAlign || "");
+    const align = psdAlign === "center" || psdAlign === "justify-center" ? "center"
+      : psdAlign === "right" || psdAlign === "justify-right" ? "right"
+      : psdAlign.startsWith("justify") ? "justify"
+      : psdAlign === "left" ? "left"
+      : isCanvasCentered ? "center" : "left";
+    const centered = align === "center";
 
-    // Derive accurate font size from rendered pixel height so live text matches visual size exactly
-    const derivedFontSize = Math.round(approxLineH * 0.85);
-    const fontSize = Math.max((raw.kFontSize as number) || 0, derivedFontSize, 18);
     // 30% width buffer prevents unwanted word wrapping
     const width = Math.max(boxW * 1.3, 160);
+    // Fabric centres glyphs inside a fontSize*lineHeight line box; shift up by
+    // half the leading gap so the glyphs land exactly where the bitmap was.
+    const topGap = (fontSize * lineHeight - fontSize) / 2;
 
     const textbox = new Textbox(text, {
-      left: isCanvasCentered ? centerX : origLeft,
-      top: origTop,
+      left: centered ? centerX : origLeft,
+      top: origTop - topGap,
       width,
       fontSize,
       fill,
-      fontFamily,
+      fontFamily: "Archivo, Bebas Neue, Impact, sans-serif", // replaced once the original font resolves
+      fontWeight,
+      fontStyle,
+      charSpacing,
+      lineHeight,
+      underline,
+      linethrough,
       opacity,
       angle,
-      textAlign: isCanvasCentered ? "center" : "left",
-      originX: isCanvasCentered ? "center" : "left",
+      textAlign: align,
+      originX: centered ? "center" : "left",
       originY: "top",
       scaleX: 1,
       scaleY: 1,
@@ -1343,6 +1382,21 @@ export default function Editor() {
     textbox.setCoords();
     c.setActiveObject(textbox);
     c.renderAll();
+
+    // Resolve the original PSD font (curated catalog → Google Fonts → fallback),
+    // then apply it and re-render so the live text matches the original render.
+    void resolvePsdFont(rawFontName).then(({ stack, available }) => {
+      try {
+        textbox.set("fontFamily", stack);
+        textbox.setCoords();
+        c.renderAll();
+      } catch (err) {
+        console.warn("Font apply after conversion failed:", err);
+      }
+      if (!available && rawFontName) {
+        toast.warning(`Original font "${rawFontName}" isn't available — closest match applied. You can swap it in the font panel.`);
+      }
+    });
 
     requestAnimationFrame(() => {
       try {
@@ -1615,7 +1669,8 @@ export default function Editor() {
           }
 
           return resolvedMaster;
-        } catch {
+        } catch (err) {
+          console.warn("Saved design resolution failed — falling back to the master template:", err);
           return resolvedMaster;
         }
       })();

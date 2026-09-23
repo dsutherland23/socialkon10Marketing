@@ -67,6 +67,63 @@ export async function ensureFontLoaded(entry: FontEntry): Promise<void> {
   } catch { /* offline or blocked — canvas falls back to the stack's generic family */ }
 }
 
+/* ---------------- PSD font resolution (import fidelity) ---------------- */
+
+/** Normalize a Photoshop/PostScript font name ("BebasNeue-Regular", "ArialMT") to a family name ("Bebas Neue", "Arial"). */
+export function normalizePsdFontName(raw: string): string {
+  let n = (raw || "").trim();
+  n = n.replace(/[-_ ](regular|bold|italic|oblique|light|medium|semibold|semi bold|black|thin|extrabold|extra bold|extralight|extra light|heavy|book|roman|normal|condensed|narrow|display|text)$/i, "");
+  n = n.replace(/MT$/i, ""); // ArialMT → Arial
+  n = n.replace(/([a-z0-9])([A-Z])/g, "$1 $2"); // BebasNeue → Bebas Neue
+  return n.replace(/[-_]+/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+const psdFontCache = new Map<string, Promise<{ stack: string; matched: string | null; available: boolean }>>();
+
+/**
+ * Resolve a PSD font name to the best available font stack.
+ * 1. Match the curated catalog (lazy-loads the webfont).
+ * 2. Try Google Fonts directly by normalized name.
+ * 3. Fall back to a display stack; `available: false` tells the UI to warn the user.
+ */
+export function resolvePsdFont(rawName: string): Promise<{ stack: string; matched: string | null; available: boolean }> {
+  const key = (rawName || "").toLowerCase();
+  const cached = psdFontCache.get(key);
+  if (cached) return cached;
+
+  const task = (async () => {
+    const normalized = normalizePsdFontName(rawName);
+    if (!normalized) return { stack: "Archivo, sans-serif", matched: null, available: true };
+
+    const entry = FONT_CATALOG.find((f) => f.family.toLowerCase() === normalized.toLowerCase());
+    if (entry) {
+      await ensureFontLoaded(entry);
+      return { stack: entry.stack, matched: entry.family, available: true };
+    }
+
+    // Dynamic Google Fonts attempt for fonts outside the catalog
+    try {
+      const familyParam = encodeURIComponent(normalized).replace(/%20/g, "+");
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = `https://fonts.googleapis.com/css2?family=${familyParam}:wght@400;700&display=swap`;
+      document.head.appendChild(link);
+      await Promise.race([
+        document.fonts.load(`400 24px "${normalized}"`),
+        new Promise((r) => setTimeout(r, 2600)),
+      ]);
+      if (document.fonts.check(`16px "${normalized}"`)) {
+        return { stack: `"${normalized}", sans-serif`, matched: normalized, available: true };
+      }
+    } catch { /* offline / font not on Google Fonts */ }
+
+    return { stack: `${normalized}, Archivo, sans-serif`, matched: null, available: false };
+  })();
+
+  psdFontCache.set(key, task);
+  return task;
+}
+
 /* ---------------- recent items (§48) ---------------- */
 
 const RECENT_KEY = (kind: string) => `sk-studio-recent-${kind}`;
