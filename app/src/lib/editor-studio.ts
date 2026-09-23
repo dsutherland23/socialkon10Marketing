@@ -124,6 +124,80 @@ export function resolvePsdFont(rawName: string): Promise<{ stack: string; matche
   return task;
 }
 
+/** Suggest similar catalog fonts when a PSD font isn't available. */
+export function suggestFontAlternatives(rawName: string, count = 3): FontEntry[] {
+  const n = normalizePsdFontName(rawName).toLowerCase();
+  if (!n) return [];
+  const tokens = n.split(/\s+/).filter(Boolean);
+  const scored = FONT_CATALOG.map((f) => {
+    const fam = f.family.toLowerCase();
+    let score = 0;
+    tokens.forEach((t) => { if (fam.includes(t) || t.includes(fam)) score += 10; });
+    if (/serif|roman|times|georgia|baskerville|playfair/.test(n) && f.category === "Serif") score += 5;
+    if (/script|hand|cursive|brush|signature/.test(n) && f.category === "Script") score += 5;
+    if (/mono|code|courier|typewriter/.test(n) && f.category === "Mono") score += 5;
+    if (/bebas|anton|impact|display|headline|condensed|oswald|gotham|futura|poster|bungee/.test(n) && f.category === "Display") score += 5;
+    if (/sans|grot|helvetica|arial|inter|roboto|open|lato|montserrat|poppins/.test(n) && f.category === "Sans") score += 4;
+    return { f, score };
+  });
+  const hits = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).map((s) => s.f);
+  // No signal at all → flyer-safe display defaults
+  return (hits.length ? hits : scored.filter((s) => s.f.category === "Display").map((s) => s.f)).slice(0, count);
+}
+
+/* ---------------- PSD per-character style runs → Fabric styles ---------------- */
+
+export interface PsdStyleRun {
+  start: number;
+  end: number;
+  fill?: string;
+  fontSize?: number;
+  fontWeight?: string;
+  fontStyle?: string;
+  tracking?: number;
+  underline?: boolean;
+  strikethrough?: boolean;
+  fontFamily?: string;
+}
+
+/**
+ * Build Fabric's per-character `styles` map from PSD style runs.
+ * Fabric indexes styles as styles[lineIndex][charIndexInLine].
+ * `resolvedFonts` maps raw PSD font names to loaded stacks (optional).
+ */
+export function buildFabricTextStyles(
+  text: string,
+  runs: PsdStyleRun[],
+  resolvedFonts?: Record<string, string>,
+): Record<number, Record<number, Record<string, unknown>>> {
+  const styles: Record<number, Record<number, Record<string, unknown>>> = {};
+  let abs = 0;
+  const lines = text.split("\n");
+  lines.forEach((line, li) => {
+    for (let ci = 0; ci < line.length; ci++) {
+      const run = runs.find((r) => abs >= r.start && abs < r.end);
+      if (run) {
+        const props: Record<string, unknown> = {};
+        if (run.fill) props.fill = run.fill;
+        if (run.fontSize) props.fontSize = Math.max(8, Math.round(run.fontSize));
+        if (run.fontWeight && run.fontWeight !== "400") props.fontWeight = run.fontWeight;
+        if (run.fontStyle && run.fontStyle !== "normal") props.fontStyle = run.fontStyle;
+        if (typeof run.tracking === "number" && run.tracking !== 0) props.charSpacing = Math.round(run.tracking);
+        if (run.underline) props.underline = true;
+        if (run.strikethrough) props.linethrough = true;
+        const fam = run.fontFamily ? (resolvedFonts?.[run.fontFamily] ?? run.fontFamily) : undefined;
+        if (fam) props.fontFamily = fam;
+        if (Object.keys(props).length) {
+          (styles[li] ??= {})[ci] = props;
+        }
+      }
+      abs++;
+    }
+    abs++; // the newline itself
+  });
+  return styles;
+}
+
 /* ---------------- recent items (§48) ---------------- */
 
 const RECENT_KEY = (kind: string) => `sk-studio-recent-${kind}`;

@@ -294,6 +294,27 @@ function walkLayers(
             }
             const justification = layer.text?.paragraphStyle?.justification;
             if (justification) imgObj.kTextAlign = justification;
+            // Per-character style runs (mixed colors/sizes/weights in one layer)
+            const runs = layer.text?.styleRuns;
+            if (runs && runs.length > 1) {
+              let off = 0;
+              imgObj.kStyleRuns = runs.map((r) => {
+                const start = off;
+                off += r.length;
+                return {
+                  start,
+                  end: off,
+                  fill: psdColor(r.style?.fillColor as { r: number; g: number; b: number } | undefined),
+                  fontSize: r.style?.fontSize,
+                  fontWeight: r.style?.fauxBold ? "700" : "400",
+                  fontStyle: r.style?.fauxItalic ? "italic" : "normal",
+                  tracking: typeof r.style?.tracking === "number" ? r.style.tracking : undefined,
+                  underline: r.style?.underline || undefined,
+                  strikethrough: r.style?.strikethrough || undefined,
+                  fontFamily: r.style?.font?.name || undefined,
+                };
+              });
+            }
             const fieldId = `field_${nextId()}`;
             imgObj.kPlaceholder = fieldId;
             fields.push({

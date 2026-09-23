@@ -1,5 +1,6 @@
 import { addManaged, attachFiles, idbGet, idbSet, listManaged, postMessage, removeManaged, setOrderStatus, updateManaged } from "./backend";
-import { firebaseReady } from "./firebase";
+import { db, firebaseReady } from "./firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
 /* ------------------------------------------------------------------
    KON10 EDITOR — DESIGN STORAGE (Editor PRD §26/§27, §51/§52)
@@ -149,9 +150,30 @@ export async function createDesign(d: Omit<CustomerDesign, "id" | "createdAt" | 
   return { id: assignedId, ...rec };
 }
 
+/** Unique ID for this editor tab/session — stamped on every save for conflict detection. */
+export const STUDIO_SESSION_ID: string = (() => {
+  try { return crypto.randomUUID(); } catch { return `s-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+})();
+
 export async function saveDesign(id: string, patch: Partial<Pick<CustomerDesign, "canvasJson" | "thumbnail" | "title">>): Promise<void> {
   if (!firebaseReady && id.startsWith("local-")) return; // unraced demo insert — draft covers us
-  await updateManaged("customerDesigns", id, { ...patch, updatedAt: new Date().toISOString() });
+  await updateManaged("customerDesigns", id, { ...patch, updatedAt: new Date().toISOString(), lastWriter: STUDIO_SESSION_ID });
+}
+
+/**
+ * Watch a design for edits made by OTHER tabs/devices.
+ * Fires only when the remote doc was written by a different session.
+ */
+export function subscribeDesignRemote(id: string, onRemoteChange: (updatedAt: string) => void): () => void {
+  if (!firebaseReady || !db || id.startsWith("local-") || id.startsWith("author-")) return () => {};
+  const unsub = onSnapshot(doc(db, "customerDesigns", id), (snap) => {
+    if (!snap.exists() || snap.metadata.hasPendingWrites) return;
+    const data = snap.data() as { updatedAt?: string; lastWriter?: string };
+    if (data.lastWriter && data.lastWriter !== STUDIO_SESSION_ID) {
+      onRemoteChange(data.updatedAt || "");
+    }
+  }, (err) => console.warn("design watch error:", err));
+  return unsub;
 }
 
 export async function bumpDesignVersion(id: string, version: number): Promise<void> {

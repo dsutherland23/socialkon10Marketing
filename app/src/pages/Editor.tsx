@@ -36,12 +36,12 @@ import {
   type EditorObject, type Kon10Doc, type Kon10Field, type FadeMaskDirection,
 } from "../lib/editor";
 import {
-  clearDraft, createDesign, deleteVersion, deliverProofToOrder, findDesignFor, getCustomerDesignById, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion,
+  clearDraft, createDesign, deleteVersion, deliverProofToOrder, findDesignFor, getCustomerDesignById, listVersions, readDraft, readDraftAsync, saveDesign, saveDraft, saveVersion, subscribeDesignRemote,
   type CustomerDesign, type DesignVersion,
 } from "../lib/editor-store";
 import {
-  ELEMENTS, ensureFontLoaded, normalizeHex, resolvePsdFont, runDesignChecks, starPoints,
-  type DesignCheck, type ElementKind,
+  ELEMENTS, ensureFontLoaded, normalizeHex, resolvePsdFont, suggestFontAlternatives, buildFabricTextStyles, runDesignChecks, starPoints,
+  type DesignCheck, type ElementKind, type PsdStyleRun,
 } from "../lib/editor-studio";
 import { ColorField, FontField, Tip, Toggle } from "./editor/ui";
 import { GRAPHICS_LIBRARY, type GraphicItem } from "../lib/graphics-library";
@@ -1158,6 +1158,17 @@ export default function Editor() {
     saveTimer.current = setTimeout(() => persistNow(targetId), isEditing ? 2500 : 1200);
   }, [design, isAuthor, tpl?.slug, slug, persistNow]);
 
+  // Conflict detection — warn when another tab/device edits this design (§53)
+  useEffect(() => {
+    if (!design?.id) return;
+    return subscribeDesignRemote(design.id, () => {
+      toast.warning(
+        "This design was just edited in another tab or device — save a named version before continuing so nothing gets overwritten.",
+        { id: `remote-edit-${design.id}`, duration: 12000 }
+      );
+    });
+  }, [design?.id]);
+
   const pushHistory = useCallback(() => {
     const c = fc.current;
     if (!c || applyingRef.current) return;
@@ -1275,12 +1286,14 @@ export default function Editor() {
     if (h.idx < h.stack.length - 1) { h.idx += 1; void applyHistory(h.idx); }
   }, [applyHistory]);
 
-  const convertPsdTextToLiveTextbox = useCallback((imgObj: FabricObject) => {
+  const convertPsdTextToLiveTextbox = useCallback((imgObj: FabricObject, opts?: { batch?: boolean }) => {
     const raw = imgObj as unknown as EditorObject;
     let text = (raw.kPsdText as string) || (raw.text as string) || (typeof raw.kName === "string" ? raw.kName : "");
     if (!text || /^layer \d+$/i.test(text.trim()) || /^image/i.test(text.trim()) || /^bitmap/i.test(text.trim())) {
       text = "Your Text Here";
     }
+    // Photoshop uses \r line breaks; Fabric uses \n
+    text = text.replace(/\r\n?/g, "\n");
     // Photoshop "All Caps" character setting — preserve the rendered look
     if ((raw.kFontCaps as number) === 1) text = text.toUpperCase();
 
@@ -1380,42 +1393,103 @@ export default function Editor() {
       c.add(textbox);
     }
     textbox.setCoords();
-    c.setActiveObject(textbox);
+    if (!opts?.batch) c.setActiveObject(textbox);
     c.renderAll();
 
     // Resolve the original PSD font (curated catalog → Google Fonts → fallback),
     // then apply it and re-render so the live text matches the original render.
-    void resolvePsdFont(rawFontName).then(({ stack, available }) => {
+    const styleRuns = Array.isArray(raw.kStyleRuns) ? (raw.kStyleRuns as PsdStyleRun[]) : null;
+    void (async () => {
       try {
-        textbox.set("fontFamily", stack);
+        const main = await resolvePsdFont(rawFontName);
+        textbox.set("fontFamily", main.stack);
+
+        // Per-character styles for mixed-format PSD text layers
+        if (styleRuns?.length) {
+          const uniqueFonts = [...new Set(styleRuns.map((r) => r.fontFamily).filter(Boolean))] as string[];
+          const fontMap: Record<string, string> = {};
+          await Promise.all(uniqueFonts.map(async (name) => {
+            const res = await resolvePsdFont(name);
+            fontMap[name] = res.stack;
+          }));
+          textbox.set("styles", buildFabricTextStyles(text, styleRuns, fontMap));
+          (textbox as unknown as { initDimensions?: () => void }).initDimensions?.();
+        }
+
         textbox.setCoords();
         c.renderAll();
-      } catch (err) {
-        console.warn("Font apply after conversion failed:", err);
-      }
-      if (!available && rawFontName) {
-        toast.warning(`Original font "${rawFontName}" isn't available — closest match applied. You can swap it in the font panel.`);
-      }
-    });
 
-    requestAnimationFrame(() => {
-      try {
-        textbox.enterEditing();
-        if (textbox.hiddenTextarea) {
-          textbox.hiddenTextarea.focus();
-          textbox.hiddenTextarea.select();
+        if (!main.available && rawFontName) {
+          const alts = suggestFontAlternatives(rawFontName);
+          if (alts.length) {
+            const pick = alts[0];
+            toast.warning(`Original font "${rawFontName}" isn't available — closest match applied.`, {
+              duration: 9000,
+              action: {
+                label: `Use ${pick.label}`,
+                onClick: () => {
+                  void ensureFontLoaded(pick).then(() => {
+                    try {
+                      textbox.set("fontFamily", pick.stack);
+                      textbox.setCoords();
+                      c.renderAll();
+                      pushHistory();
+                      toast.success(`Font swapped to ${pick.label}.`);
+                    } catch (err) { console.warn("Font suggestion apply failed:", err); }
+                  });
+                },
+              },
+            });
+          } else {
+            toast.warning(`Original font "${rawFontName}" isn't available — closest match applied. You can swap it in the font panel.`);
+          }
         }
-        textbox.selectAll();
-        c.renderAll();
       } catch (err) {
-        console.error("Text editing trigger:", err);
+        console.warn("Font resolve after conversion failed:", err);
       }
-    });
+    })();
 
+    if (!opts?.batch) {
+      requestAnimationFrame(() => {
+        try {
+          textbox.enterEditing();
+          if (textbox.hiddenTextarea) {
+            textbox.hiddenTextarea.focus();
+            textbox.hiddenTextarea.select();
+          }
+          textbox.selectAll();
+          c.renderAll();
+        } catch (err) {
+          console.error("Text editing trigger:", err);
+        }
+      });
+
+      refreshLayers();
+      pushHistory();
+      toast.success("Converted to live editable text!");
+    }
+  }, [canvasSize.width, pushHistory, refreshLayers]);
+
+  /** One-click: convert every remaining flattened PSD text layer to live text (§ batch). */
+  const convertAllPsdTextLayers = useCallback(() => {
+    const c = fc.current;
+    if (!c) return;
+    const targets = c.getObjects().filter((o) => {
+      const r = o as unknown as EditorObject;
+      return r.kIsPsdText === true && !isText(o);
+    });
+    if (!targets.length) {
+      toast.info("No flattened text layers left to convert.");
+      return;
+    }
+    targets.forEach((t) => convertPsdTextToLiveTextbox(t, { batch: true }));
+    c.discardActiveObject();
+    c.renderAll();
     refreshLayers();
     pushHistory();
-    toast.success("Converted to live editable text!");
-  }, [canvasSize.width, pushHistory, refreshLayers]);
+    toast.success(`Converted ${targets.length} text layer${targets.length > 1 ? "s" : ""} to live editable text!`);
+    track("psd_text_convert_all", { template: slug, count: targets.length });
+  }, [convertPsdTextToLiveTextbox, pushHistory, refreshLayers, slug]);
 
   const expandTextToFit = useCallback((target?: FabricObject | null) => {
     const c = fc.current;
@@ -5377,6 +5451,18 @@ export default function Editor() {
                       </button>
                     </div>
                     <p className="font-meta text-[9px] text-[var(--s-muted)] mb-1">Drag rows to restack · drop on folder to group · ⌘G</p>
+                    {(() => {
+                      const psdTextCount = layers.filter((o) => (o as unknown as EditorObject).kIsPsdText === true && !isText(o)).length;
+                      return psdTextCount > 0 ? (
+                        <button
+                          className="s-list-btn justify-center w-full mb-2"
+                          title="Convert every flattened Photoshop text layer into live editable text in one click"
+                          onClick={convertAllPsdTextLayers}
+                        >
+                          🔤 Convert all {psdTextCount} text layer{psdTextCount > 1 ? "s" : ""} to live text
+                        </button>
+                      ) : null;
+                    })()}
                     {!layers.length && <p className="text-[12px] text-[var(--s-muted)] text-center py-6">Your design layers will appear here.</p>}
 
                     {(() => {
