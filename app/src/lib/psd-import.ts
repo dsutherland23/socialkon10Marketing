@@ -278,11 +278,24 @@ function walkLayers(
             imgObj.kIsPsdText = true;
             imgObj.kPsdText = rawText;
             imgObj.kLayerType = "text";
-            imgObj.kFontSize = layer.text?.style?.fontSize ?? 36;
-            imgObj.kFontColor = psdColor(layer.text?.style?.fillColor as { r: number; g: number; b: number } | undefined) || "#ffffff";
-            imgObj.kFontFamily = layer.text?.style?.font?.name || "Bebas Neue, Impact, sans-serif";
+
+            // Some PSDs store styling ONLY in styleRuns (top-level style empty) —
+            // fall back to the dominant (longest) run for the primary style.
+            const topStyle = layer.text?.style;
+            const styleRuns = layer.text?.styleRuns;
+            let tStyle = topStyle;
+            if (styleRuns?.length && (topStyle?.fontSize == null || !topStyle?.font?.name)) {
+              const dominant = [...styleRuns].sort((a, b) => b.length - a.length)[0]?.style;
+              if (dominant) {
+                const defined = Object.fromEntries(Object.entries(topStyle ?? {}).filter(([, v]) => v !== undefined));
+                tStyle = { ...dominant, ...defined };
+              }
+            }
+
+            imgObj.kFontSize = tStyle?.fontSize ?? 36;
+            imgObj.kFontColor = (tStyle?.fillColor ? psdColor(tStyle.fillColor as { r: number; g: number; b: number }) : "") || "#ffffff";
+            imgObj.kFontFamily = tStyle?.font?.name || "Bebas Neue, Impact, sans-serif";
             // Extended typography metadata so "Convert to Live Text" matches the original render
-            const tStyle = layer.text?.style;
             if (tStyle) {
               imgObj.kFontWeight = tStyle.fauxBold ? "700" : "400";
               imgObj.kFontStyle = tStyle.fauxItalic ? "italic" : "normal";
@@ -295,7 +308,7 @@ function walkLayers(
             const justification = layer.text?.paragraphStyle?.justification;
             if (justification) imgObj.kTextAlign = justification;
             // Per-character style runs (mixed colors/sizes/weights in one layer)
-            const runs = layer.text?.styleRuns;
+            const runs = styleRuns;
             if (runs && runs.length > 1) {
               let off = 0;
               imgObj.kStyleRuns = runs.map((r) => {
@@ -304,7 +317,7 @@ function walkLayers(
                 return {
                   start,
                   end: off,
-                  fill: psdColor(r.style?.fillColor as { r: number; g: number; b: number } | undefined),
+                  fill: r.style?.fillColor ? psdColor(r.style.fillColor as { r: number; g: number; b: number }) : undefined,
                   fontSize: r.style?.fontSize,
                   fontWeight: r.style?.fauxBold ? "700" : "400",
                   fontStyle: r.style?.fauxItalic ? "italic" : "normal",

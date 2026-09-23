@@ -1294,8 +1294,8 @@ export default function Editor() {
     }
     // Photoshop uses \r line breaks; Fabric uses \n
     text = text.replace(/\r\n?/g, "\n");
-    // Photoshop "All Caps" character setting — preserve the rendered look
-    if ((raw.kFontCaps as number) === 1) text = text.toUpperCase();
+    // Photoshop "All Caps" / "Small Caps" character setting — preserve the rendered look
+    if ((raw.kFontCaps as number) >= 1) text = text.toUpperCase();
 
     const fill = (raw.kFontColor as string) || (typeof imgObj.fill === "string" ? imgObj.fill : "#ffffff");
     const rawFontName = (raw.kFontFamily as string) || "";
