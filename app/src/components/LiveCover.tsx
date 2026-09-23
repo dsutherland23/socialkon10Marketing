@@ -21,6 +21,7 @@ export function LiveCover({
   const [scale, setScale] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   // measure the banner so the desktop-width render scales to fit exactly
   useEffect(() => {
@@ -31,12 +32,17 @@ export function LiveCover({
     return () => ro.disconnect();
   }, []);
 
-  // if the frame never signals load, keep the generative art permanently
+  // Cold-start tolerance: free-tier hosts (Render etc.) sleep and can take
+  // 30–60s to wake. Retry with a fresh iframe up to 3 times before giving up
+  // and keeping the generative art as the permanent fallback.
   useEffect(() => {
     if (loaded) return;
-    const t = window.setTimeout(() => setFailed(true), 10000);
+    const t = window.setTimeout(() => {
+      if (attempt < 3) setAttempt((a) => a + 1);
+      else setFailed(true);
+    }, 12000);
     return () => window.clearTimeout(t);
-  }, [loaded]);
+  }, [loaded, attempt]);
 
   const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } })();
 
@@ -52,9 +58,10 @@ export function LiveCover({
         <ProjectCover seed={seed} hue={hue} title={title} image={image} className="!h-full" />
       </div>
 
-      {/* live render, scaled into the banner */}
+      {/* live render, scaled into the banner (key remounts on cold-start retries) */}
       {!failed && scale > 0 && (
         <iframe
+          key={attempt}
           src={url}
           title={`Live render of ${title}`}
           onLoad={() => setLoaded(true)}
