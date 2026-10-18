@@ -8,6 +8,7 @@ import { Reveal } from "../lib/motion";
 import { useAuth } from "../lib/auth";
 import {
   claimOrders,
+  orderStatusIndex,
   listMyOrders,
   subscribeMyOrders,
   recordPayment,
@@ -23,6 +24,7 @@ import {
   type OrderStatus,
 } from "../lib/backend";
 import { activeProviders } from "../lib/payments";
+import { useCheckoutSettings } from "../lib/checkout";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
 import { useContent } from "../lib/content";
@@ -144,8 +146,25 @@ function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void 
   const [error, setError] = useState<string | null>(null);
   const money = useMoney();
   const { currency } = useShop();
-  const provider = activeProviders()[0];
-  if (!provider || order.balanceDue <= 0) return null;
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const provider = activeProviders(checkoutSettings)[0];
+  if (order.balanceDue <= 0) return null;
+
+  // Online payment disabled site-wide (default): guide the customer to the
+  // studio instead of presenting a card flow that cannot work.
+  if (!provider) {
+    return (
+      <div className="mt-3 border border-[var(--line)] px-4 py-3" style={{ background: "var(--panel)" }}>
+        <p className="font-meta text-[9px] dept-accent mb-1 uppercase font-bold">
+          Balance due — {money(order.balanceDue)}
+        </p>
+        <p className="text-[12px] text-[var(--muted)]">
+          Online payment isn't enabled yet. Reply to your confirmation email or contact the studio
+          ({CONTACT.email} · {CONTACT.phone}) quoting reference <strong>{order.reference ?? order.id}</strong> to arrange payment.
+        </p>
+      </div>
+    );
+  }
 
   const label = order.amountPaid === 0
     ? `Pay deposit — ${money(Math.round(order.total * 0.5))}`
@@ -155,7 +174,7 @@ function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void 
     setPaying(true); setError(null);
     const amount = order.amountPaid === 0 ? Math.round(order.total * 0.5) : order.balanceDue;
     track("payment_start", { value: amount, mode: "balance", order: order.id });
-    const res = await provider.pay({ orderId: order.id, amountUsd: amount, description: `Social Kon10 order ${order.id}`, kind: order.amountPaid === 0 ? "deposit" : "balance" });
+    const res = await provider.pay({ orderId: order.reference ?? order.id, amountUsd: amount, description: `Social Kon10 order ${order.reference ?? order.id}`, kind: order.amountPaid === 0 ? "deposit" : "balance" });
     if (!res.ok) {
       setPaying(false);
       setError(res.error ?? "Payment failed — no charge was made. Try again.");
@@ -163,10 +182,10 @@ function PayBalance({ order, onPaid }: { order: OrderRecord; onPaid: () => void 
       return;
     }
     try {
-      await recordPayment(order.id, amount);
+      await recordPayment(order.id, amount, { method: "online_gateway", by: "gateway:pending-webhook" });
       toast.success("Payment recorded successfully!");
     } catch {
-      // live mode: payment recording confirmed by provider
+      // live mode: payment recording confirmed by provider webhook
       toast.success("Payment received! Updating project record…");
     }
     track("purchase", { value: amount, transaction_id: res.transactionId });
@@ -1035,7 +1054,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     );
   }
 
-  const stepIndex = ORDER_STATUSES.indexOf(current.status);
+  const stepIndex = orderStatusIndex(current.status);
   const progressPct = Math.round(((stepIndex + 1) / ORDER_STATUSES.length) * 100);
 
   const getStatusColor = (status: OrderRecord["status"]) => {
@@ -1052,7 +1071,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
       const nextStatus: OrderStatus = current.status === "CLIENT REVIEW" ? "FINAL APPROVAL" : "COMPLETED";
       await postMessage(current.id, "client", `✅ Deliverable approved by client. Ready for ${nextStatus.toLowerCase()}.`, user?.email ?? "Client");
       try {
-        await setOrderStatus(current.id, nextStatus);
+        await setOrderStatus(current.id, nextStatus, `client:${user?.email ?? "unknown"}`);
       } catch (err) {
         console.warn("Status update fallback:", err);
       }
@@ -1072,7 +1091,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
     try {
       await postMessage(current.id, "client", `🔄 Revision requested:\n\n${revisionText.trim()}`, user?.email ?? "Client");
       try {
-        await setOrderStatus(current.id, "REVISION");
+        await setOrderStatus(current.id, "REVISION", `client:${user?.email ?? "unknown"}`);
       } catch (err) {
         console.warn("Status update fallback:", err);
       }
@@ -1232,7 +1251,7 @@ function ProjectsWorkspace({ orders, onReload }: { orders: OrderRecord[]; onRelo
           {filteredOrders.map((o) => {
             const isSelected = o.id === current.id;
             const hasUnread = orderHasUnreadStudioMessage(o);
-            const sIdx = ORDER_STATUSES.indexOf(o.status);
+            const sIdx = orderStatusIndex(o.status);
             const pct = Math.round(((sIdx + 1) / ORDER_STATUSES.length) * 100);
             return (
               <div

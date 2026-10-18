@@ -16,6 +16,7 @@ import { formatMoney } from "./data";
 
 export type EmailType =
   | "order_confirmation"
+  | "order_request_confirmation"
   | "admin_new_order"
   | "intake_received"
   | "admin_intake"
@@ -116,24 +117,63 @@ export function orderConfirmationEmail(args: {
   };
 }
 
+/* ---------------- order request confirmation (client, no payment taken) ---------------- */
+
+export function orderRequestConfirmationEmail(args: {
+  to: string; name: string; reference: string;
+  items: { name: string; price?: number }[];
+  total: number; currency?: string; quoteRequired?: boolean; portalUrl?: string;
+}): EmailPayload {
+  const totalRow = args.quoteRequired
+    ? `<tr><td style="padding:10px 0;font-size:14px;font-weight:bold">Estimated total</td>
+         <td align="right" style="padding:10px 0;font-size:14px;font-weight:bold">${formatMoney(args.total, "USD")} (estimate)</td></tr>`
+    : `<tr><td style="padding:10px 0;font-size:14px;font-weight:bold">Total</td>
+         <td align="right" style="padding:10px 0;font-size:14px;font-weight:bold">${formatMoney(args.total, "USD")}</td></tr>`;
+  const body = `
+    <p>Hi ${args.name || "there"},</p>
+    <p>Your order request has been received — thank you. <strong>No payment has been collected.</strong></p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0">
+      ${itemRows(args.items)}
+      ${totalRow}
+    </table>
+    <p style="font-size:13px;color:#555">Order reference: <strong>${args.reference}</strong></p>
+    ${args.quoteRequired ? `<p style="border-left:3px solid #d97706;padding:10px 14px;background:#fffbeb;font-size:13px">Your request includes custom-quoted work — the total above is an estimate. The studio will confirm final pricing with you before anything is charged.</p>` : ""}
+    <p>What happens next:</p>
+    <ol style="padding-left:18px;font-size:14px;line-height:1.8">
+      <li>The studio reviews your request (usually within 1 business day)</li>
+      <li>You receive confirmation${args.quoteRequired ? " and your final quote" : ""} by email</li>
+      <li>Payment is arranged only after you approve — never before</li>
+    </ol>
+    <p>Questions? Just reply to this email and quote your reference.</p>`;
+  return {
+    to: args.to,
+    subject: `Order request received — ${args.reference}`,
+    html: shell("Your order request has been received!", body, args.portalUrl ? { label: "Track your request", href: args.portalUrl } : undefined),
+    type: "order_request_confirmation",
+  };
+}
+
 /* ---------------- new order alert (studio) ---------------- */
 
 export function adminNewOrderEmail(args: {
   name: string; email: string; orderId: string;
   items: { name: string; price?: number }[]; total: number; adminUrl?: string;
+  checkoutMethod?: "order_request" | "online_payment"; quoteRequired?: boolean; reference?: string;
 }): EmailPayload {
+  const isRequest = args.checkoutMethod === "order_request";
+  const refLine = args.reference ?? args.orderId;
   const body = `
-    <p><strong>${args.name}</strong> (${args.email}) just placed an order.</p>
+    <p><strong>${args.name}</strong> (${args.email}) ${isRequest ? "submitted an <strong>order request</strong> — no payment collected" : "just placed an order"}.</p>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0">
       ${itemRows(args.items)}
-      <tr><td style="padding:10px 0;font-size:14px;font-weight:bold">Total</td>
-          <td align="right" style="padding:10px 0;font-size:14px;font-weight:bold">${formatMoney(args.total, "USD")}</td></tr>
+      <tr><td style="padding:10px 0;font-size:14px;font-weight:bold">${args.quoteRequired ? "Estimated total" : "Total"}</td>
+          <td align="right" style="padding:10px 0;font-size:14px;font-weight:bold">${formatMoney(args.total, "USD")}${args.quoteRequired ? " (estimate)" : ""}</td></tr>
     </table>
-    <p style="font-size:13px;color:#555">Order: ${args.orderId}</p>`;
+    <p style="font-size:13px;color:#555">Reference: ${refLine} · ${isRequest ? "UNPAID — review and contact the customer" : "Online payment"}</p>`;
   return {
     to: STUDIO_EMAIL,
-    subject: `🛒 New order — ${formatMoney(args.total, "USD")} · ${args.name}`,
-    html: shell("New order received.", body, args.adminUrl ? { label: "Open Studio Admin", href: args.adminUrl } : undefined),
+    subject: `${isRequest ? "📋 New order request" : "🛒 New order"} — ${formatMoney(args.total, "USD")} · ${args.name}`,
+    html: shell(isRequest ? "New order request received." : "New order received.", body, args.adminUrl ? { label: "Open Studio Admin", href: args.adminUrl } : undefined),
     type: "admin_new_order",
   };
 }

@@ -52,14 +52,47 @@ firebase deploy             # hosting + firestore rules + storage rules
 
 ## Data model
 
-- `orders/{id}` — client info, items, totals, payMode, amountPaid, balanceDue, status, files, details
+- `orders/{id}` — client info, items (immutable snapshot), totals, payMode, amountPaid, balanceDue, status, files, details, plus: `reference` (SK10-…), `checkoutMethod` (order_request | online_payment), `paymentStatus` (UNPAID | PARTIAL | PAID | REFUNDED | PENDING), `pricingStatus` (FIXED | ESTIMATE | QUOTE_REQUIRED), `paymentHistory[]`, `statusHistory[]`
+- `orderRefs/{reference}` — create-only reference reservation (collision-proof order numbers; ID pattern `SK10-YYMMDD-XXXXX`)
 - `orders/{id}/messages/{mid}` — from (studio|client), text, author, createdAt
 - `leads/{id}` — intent, dept, service, contact, message, status
 - `serviceOverrides/{slug}` — price, depositPct, revisions, enabled
 - `portfolio/{id}` — admin-added archive projects
 - `promos/{id}` — code, type (pct|fixed), value, label
-- `settings/site` — phone, email, location, socials[]
+- `settings/site` — phone, email, location, socials[], plus `checkout` (dual-mode checkout config, below)
 - `testimonials/{id}`, `faqs/{id}` — admin-added content
+
+## Dual-mode checkout (order requests vs online payment)
+
+The site ships in **ORDER_REQUEST** mode: checkout collects no money, the
+customer submits an order request, and the studio confirms pricing/schedule
+by email. Orders are created `UNPAID` with a unique `SK10-…` reference.
+
+Three modes are available under **Admin → Settings → Checkout**:
+
+1. `ORDER_REQUEST` (default) — no gateway; "Submit Order Request" flow.
+2. `ONLINE_PAYMENT` — gateway-only checkout. Locked until a real provider
+   (PayPal/Stripe) passes the built-in readiness verification (code wiring,
+   env credentials, webhook endpoint).
+3. `HYBRID` — customer chooses: pay online now or submit an order request.
+   Also locked until gateway verification passes.
+
+Safe degradation is automatic: if verification is revoked or credentials
+disappear, `ONLINE_PAYMENT`/`HYBRID` fall back to `ORDER_REQUEST` at runtime —
+the site can never present a broken "Pay Now".
+
+**Rules redeploy required after pulling these changes** (new `orderRefs`
+collection + hardened orders/storage rules):
+
+```bash
+firebase deploy --only firestore:rules,storage
+```
+
+Key rule guarantees: non-admin order creates must have `amountPaid == 0` and
+`paymentStatus ∈ {UNPAID, PENDING}` (nobody can forge a paid order);
+`orderRefs` docs are create-only; order file reads in Storage are limited to
+the order owner and admins; template files require sign-in.
+
 
 ## 5. Email automation (PRD §65)
 
@@ -99,8 +132,11 @@ check it in `isAdmin()`-style helpers, and scope the Orders tab by
 
 ## 7. Production checklist
 
-- [ ] Replace the demo payment provider in `src/lib/payments.ts` with PayPal
-      (server-side order creation; never put secrets in the frontend)
+- [ ] Wire a real payment provider (PayPal/Stripe) in `src/lib/payments.ts`
+      (server-side order creation; never put secrets in the frontend), then
+      verify it in Admin → Settings → Checkout to unlock ONLINE_PAYMENT/HYBRID.
+      The demo provider is dev-only (`import.meta.env.DEV`) and never ships
+      to production builds.
 - [ ] **Payment recording** (`recordPayment`) must move to a PayPal webhook →
       Cloud Function. Firestore rules intentionally deny client writes to
       `amountPaid`/`balanceDue` so nobody can mark their own order paid.

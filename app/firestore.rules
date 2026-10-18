@@ -19,30 +19,50 @@ service cloud.firestore {
 
     // Orders: Anyone checking out can create, client reads own, admin manages all
     match /orders/{orderId} {
+      // Customers can open an order — but NEVER with money already marked paid.
+      // Payment fields are admin/server-only; a client-created order must start
+      // unpaid so a forged "paid" state can never be written from the browser.
       allow create: if true
         && request.resource.data.email is string
         && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 100
+        && request.resource.data.total is number
+        && (isAdmin() || (
+          request.resource.data.amountPaid == 0
+          && (!request.resource.data.keys().hasAny(['paymentStatus'])
+              || request.resource.data.paymentStatus in ['UNPAID', 'PENDING'])
+        ))
         && (request.resource.data.uid == null
             || (signedIn() && request.resource.data.uid == request.auth.uid));
-      
+
       allow read: if isAdmin()
         || (signedIn()
             && (resource.data.uid == request.auth.uid
                 || (resource.data.email is string && request.auth.token.email != null && resource.data.email.lower() == request.auth.token.email.lower())));
-      
+
+      // Clients may only touch workflow fields on their own orders — never
+      // prices, payment fields, checkout method, or references.
       allow update: if isAdmin()
         || (signedIn()
             && resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes', 'lastClientMessageAt', 'lastClientMessageBy', 'clientReadAt', 'completedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'files', 'revisionFeedback', 'approvedAt', 'notes', 'lastClientMessageAt', 'lastClientMessageBy', 'clientReadAt', 'completedAt', 'statusHistory'])
             && (request.resource.data.status == resource.data.status
-                || request.resource.data.status in ['REVISION', 'FINAL APPROVAL', 'CLIENT REVIEW']))
+                || request.resource.data.status in ['REVISION', 'FINAL APPROVAL', 'CLIENT REVIEW', 'COMPLETED']))
         || (signedIn()
             && request.auth.token.email != null
             && resource.data.email.lower() == request.auth.token.email.lower()
             && request.resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid']));
-            
+
       allow delete: if isAdmin();
+
+      // Communication activity (WhatsApp follow-up log) — studio-only.
+      // Events are append-only: prepared/opened, never "delivered".
+      match /events/{eventId} {
+        allow read, create: if isAdmin();
+        allow update, delete: if false;
+      }
 
       // Project messaging
       match /messages/{messageId} {
@@ -67,6 +87,19 @@ service cloud.firestore {
         && request.resource.data.email is string
         && request.resource.data.message is string;
       allow read, update, delete: if isAdmin();
+    }
+
+    // Public order references (SK10-YYMMDD-XXXXX): reservation tokens.
+    // Create-only so a reference can never be reassigned or deleted;
+    // document ID must match the reference format; no public reads, so a
+    // reference can never be used to look up customer information.
+    match /orderRefs/{refId} {
+      allow create: if true
+        && refId.matches('SK10-[0-9]{6}-[A-Z0-9]{5}')
+        && request.resource.data.keys().hasOnly(['createdAt'])
+        && request.resource.data.createdAt is string;
+      allow read: if isAdmin();
+      allow update, delete: if false;
     }
 
     // Website client intakes (project briefs + signed agreements)
@@ -286,9 +319,52 @@ service cloud.firestore {
     // Documents are viewable via direct client share links; writes are strictly admin-only.
     // Audit log is append-only (immutable).
 
+
+    // Token-gated customer quote decisions. A quote may move sent →
+    // accepted/declined by an anonymous client ONLY while carrying a valid,
+    // unexpired docAccess token scoped to that document, touching nothing
+    // but the decision evidence fields. Prices, items, and totals are
+    // never writable here.
+    function validQuoteDecision(docId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.type == "quote"
+        && before.status == "sent"
+        && after.status in ["accepted", "declined"]
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(["status", "decisionAt", "decisionBy", "decisionToken", "updatedAt"])
+        && after.decisionToken is string
+        && exists(/databases/$(database)/documents/docAccess/$(after.decisionToken))
+        && get(/databases/$(database)/documents/docAccess/$(after.decisionToken)).data.docId == docId
+        && get(/databases/$(database)/documents/docAccess/$(after.decisionToken)).data.kind == "quote_approval"
+        && get(/databases/$(database)/documents/docAccess/$(after.decisionToken)).data.expiresAtMs > request.time.toMillis()
+      ;
+    }
+
     match /financeDocuments/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
+      // Single-doc GET stays open because the unguessable doc ID is the
+      // share credential. LIST is admin-only — an enumerable document
+      // number must never expose every customer's invoice.
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || validQuoteDecision(id);
+    }
+
+    // Scoped, expiring access grants for quote approval links. The token
+    // (document ID) is the credential: anyone holding it may read the
+    // grant; only admins can mint one.
+    match /docAccess/{token} {
+      allow get: if true;
+      allow list, create, update, delete: if isAdmin();
+    }
+
+    // Future-ready payment links. The link ID is the bearer credential for
+    // the status page; all writes are admin-only (a future provider webhook
+    // will arrive through a Cloud Function with admin credentials).
+    match /paymentLinks/{id} {
+      allow get: if true;
+      allow list, create, update, delete: if isAdmin();
     }
     match /financePayments/{id} {
       allow read, write: if isAdmin();

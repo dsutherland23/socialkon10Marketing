@@ -11,11 +11,28 @@ service firebase.storage {
         && request.auth.token.email != null
         && request.auth.token.email.lower() in ['socialkon10@gmail.com', 'maddcre8tive@gmail.com'];
     }
+    // Cross-service: read the owning order document to authorize file access
+    function ownsOrder(orderId) {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/orders/$(orderId))
+        && (
+          firestore.get(/databases/(default)/documents/orders/$(orderId)).data.uid == request.auth.uid
+          || (request.auth.token.email != null
+              && firestore.get(/databases/(default)/documents/orders/$(orderId)).data.email is string
+              && firestore.get(/databases/(default)/documents/orders/$(orderId)).data.email.lower() == request.auth.token.email.lower())
+        );
+    }
+    function safeUpload(maxMb) {
+      return request.resource.size < maxMb * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp|gif|svg\\+xml)|application/pdf|application/zip|application/x-zip-compressed|application/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document|video/mp4|audio/mpeg|audio/mp4|application/octet-stream');
+    }
 
-    // Orders attachments: upload during checkout / order details / chat uploads
+    // Orders attachments: guests may upload during checkout (size + type limited);
+    // reading project files requires the order owner or an admin — customer
+    // project files are never publicly readable.
     match /orders/{orderId}/{allPaths=**} {
-      allow write: if request.resource.size < 25 * 1024 * 1024;
-      allow read: if true;
+      allow write: if safeUpload(25);
+      allow read: if isAdmin() || ownsOrder(orderId);
     }
 
     // Portfolio + CMS image uploads: admin writes, public reads
@@ -31,11 +48,13 @@ service firebase.storage {
       allow read: if true;
     }
 
-    // Template files & design assets: admin writes, public / buyer reads
+    // Template files & design assets (PAID digital goods): admin writes;
+    // reads require sign-in so masters are never anonymously downloadable.
+    // (Full per-purchase signed URLs need a Cloud Function — see audit report.)
     match /template-files/{allPaths=**} {
       allow write: if isAdmin()
         && request.resource.size < 100 * 1024 * 1024;
-      allow read: if true;
+      allow read: if isAdmin() || request.auth != null;
     }
 
     // Template preview images: anyone can upload preview images

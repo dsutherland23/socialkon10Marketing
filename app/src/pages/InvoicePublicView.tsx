@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db, firebaseReady } from "../lib/firebase";
 import { getSettings, type SiteSettings } from "../lib/backend";
 import {
@@ -53,13 +53,9 @@ export default function InvoicePublicView() {
           return;
         }
 
-        // Otherwise query by document number (e.g. INV-2026-0001)
-        const q = query(collection(db, "financeDocuments"), where("number", "==", id));
-        const qSnap = await getDocs(q);
-        if (!qSnap.empty) {
-          const first = qSnap.docs[0];
-          setFinDoc({ id: first.id, ...first.data() } as FinDocument);
-        }
+        // Number-based lookup removed: anonymous users cannot list the
+        // collection (an enumerable number would expose every customer's
+        // invoice). Share links carry the unguessable document ID.
       } catch (err) {
         console.error("Failed to load invoice public view:", err);
       } finally {

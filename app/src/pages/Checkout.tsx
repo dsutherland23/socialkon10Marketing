@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Trash2, Copy, Bookmark, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Trash2, Copy, Bookmark, Download, ChevronDown, ChevronUp, Printer, Check } from "lucide-react";
 import { CONTACT, formatMoney, serviceBySlug } from "../lib/data";
 import { useDepartment } from "../lib/dept";
 import { useShop } from "../lib/shop";
@@ -17,21 +17,31 @@ import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
 import { IntakeWizard, type IntakeOrderContext } from "../components/IntakeWizard";
 import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type IntakePackage, type ClientProfile } from "../lib/intake";
 import { useContent } from "../lib/content";
-import { sendEmail, orderConfirmationEmail, adminNewOrderEmail } from "../lib/email";
+import { sendEmail, orderConfirmationEmail, orderRequestConfirmationEmail, adminNewOrderEmail } from "../lib/email";
+import { validateUploadFile } from "../lib/uploads";
 import { DeliverablesPopover } from "../components/DeliverablesPopover";
 import { DuplicateOrderModal } from "../components/DuplicateOrderModal";
+import { useCheckoutSettings, reserveOrderReference } from "../lib/checkout";
+import {
+  effectiveCheckoutMode, orderRequestEnabled, cartPricingStatus, repriceCartLines,
+  toCents, fromCents, type PricingStatus,
+} from "../lib/order-utils";
 import {
   auditCartOverlaps, computeOrderFingerprint, checkRecentDuplicateOrder,
   recordCompletedOrder, acquirePaymentLock, releasePaymentLock, type RecentOrderRecord,
 } from "../lib/orderConflict";
 
 /* ------------------------------------------------------------------
-   CHECKOUT (PRD §29–31)
-   PROJECT → DETAILS → FILES → PAYMENT → DONE
-   Streamlined, accessible, 100% full payment upfront.
+   CHECKOUT (PRD §29–31 + Dual-Mode Checkout, 2026)
+   PROJECT → DETAILS → FILES → REVIEW/PAYMENT → DONE
+
+   Active mode comes from Settings → Checkout (server-stored):
+   • ORDER_REQUEST  — customers submit carts without paying (default)
+   • ONLINE_PAYMENT — verified gateway only
+   • HYBRID         — customer chooses
 ------------------------------------------------------------------- */
 
-const STEPS = ["Project", "Details", "Files", "Payment", "Done"] as const;
+const STEPS_BASE = ["Project", "Details", "Files"] as const;
 const ACCEPTED = [".pdf", ".jpg", ".jpeg", ".png", ".svg", ".docx", ".zip", ".mp4", ".mp3"];
 const MAX_MB = 25;
 
@@ -54,8 +64,19 @@ export default function Checkout() {
   useDepartment(null);
   const { items, remove, currency, promo, applyPromo, clearPromo, subtotal: shopSubtotal, discount: shopDiscount, clear, add } = useShop();
   const pkg = useDesignPackage();
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const mode = effectiveCheckoutMode(checkoutSettings);
+  const allowOrderRequest = orderRequestEnabled(checkoutSettings);
+  const STEPS = [...STEPS_BASE, mode === "ONLINE_PAYMENT" ? "Payment" : "Review", "Done"] as const;
   const [step, setStep] = useState(0);
   const payMode = "full" as const;
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [orderReference, setOrderReference] = useState<string | null>(null);
+  const [submittedPricing, setSubmittedPricing] = useState<PricingStatus>("CONFIRMED");
+  const [submittedMethod, setSubmittedMethod] = useState<"order_request" | "online_payment">("order_request");
+  const [orderSnapshot, setOrderSnapshot] = useState<{ items: { name: string; price: number }[]; subtotal: number; discount: number; total: number } | null>(null);
+  const [submitPersistWarning, setSubmitPersistWarning] = useState<string | null>(null);
+  const [copiedRef, setCopiedRef] = useState(false);
   const [promoInput, setPromoInput] = useState("");
   const [promoError, setPromoError] = useState<string | null>(null);
   const [details, setDetails] = useState<Details>({ name: "", company: "", email: "", phone: "", extra: "" });
@@ -87,16 +108,44 @@ export default function Checkout() {
   const cartOverlaps = useMemo(() => auditCartOverlaps(items, pkg.items), [items, pkg.items]);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const pendingMethod = useRef<"order_request" | "online_payment">("order_request");
   const { user, signUp, signInGoogle, sendMagicLink } = useAuth();
   const { services } = useContent();
   const priceFor = (slug: string) => services.find((s) => s.slug === slug)?.price ?? 0;
 
   // Unified items and pricing across main cart and custom design packages (2026 unified commerce standard)
   const hasAnyItems = items.length > 0 || pkg.lines.length > 0;
-  const subtotal = shopSubtotal + pkg.subtotal;
-  const discount = shopDiscount + (pkg.discount?.amount ?? 0);
-  const total = Math.max(0, subtotal - discount);
+
+  // Server-authoritative pricing (Phase 6): recompute every agency line from
+  // the trusted catalog (rate sheet + admin overrides) — never trust prices
+  // stored in browser storage. Tier/variant/template lines keep their quoted
+  // price and are flagged for admin review instead of silent alteration.
+  const { lines: repricedLines, changedCount: repricedCount } = useMemo(
+    () => repriceCartLines(items, services),
+    [items, services]
+  );
+
+  // Order math in integer cents — floats never decide a financial total.
+  const agencySubtotalCents = repricedLines.reduce((s, l) => {
+    const base = toCents(l.unitPrice) + l.addons.reduce((a, x) => a + toCents(x.price), 0);
+    return s + (l.rush ? Math.round(base * 1.25) : base);
+  }, 0);
+  const agencySubRepriced = fromCents(agencySubtotalCents);
+  // Keep promo semantics while applying them to the corrected prices.
+  const agencyDiscount = shopSubtotal > 0 ? shopDiscount * (agencySubRepriced / shopSubtotal) : 0;
+  const subtotal = agencySubRepriced + pkg.subtotal;
+  const discount = agencyDiscount + (pkg.discount?.amount ?? 0);
+  const total = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
   const dueToday = total;
+
+  const pricingStatus: PricingStatus = useMemo(() => {
+    const lines = [
+      ...items.map((i) => ({ serviceSlug: i.serviceSlug, addons: i.addons, templateSlug: i.templateSlug })),
+      ...pkg.lines.map(() => ({ tierLabel: "Design package" })),
+    ];
+    return cartPricingStatus(lines, services);
+  }, [items, pkg.lines, services]);
+  const quoteRequired = pricingStatus === "QUOTE_REQUIRED";
 
   const pkgOrderItems = pkg.lines.map((l) => ({
     name: `${l.service.name}${l.tier ? ` (${l.tier.name})` : ""}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""}${l.qty > 1 ? ` × ${l.qty}` : ""}`,
@@ -321,8 +370,10 @@ export default function Checkout() {
       "",
       "--- SERVICES & PACKAGES ---",
       ...activeAgency.map(
-        (i, idx) =>
-          `${idx + 1}. ${i.name} [${i.billing === "monthly" ? "Retainer" : "Project"}] — ${formatMoney((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1), currency)}\n   Inclusions: ${serviceBySlug(i.serviceSlug)?.deliverables.join(", ") || "Standard scope"}\n   Deposit: ${i.depositPct}% upfront`
+        (i, idx) => {
+          const rl = repricedLines.find((r) => r.key === i.key) ?? i;
+          return `${idx + 1}. ${i.name} [${i.billing === "monthly" ? "Retainer" : "Project"}] — ${formatMoney((rl.unitPrice + rl.addons.reduce((s, a) => s + a.price, 0)) * (rl.rush ? 1.25 : 1), currency)}\n   Inclusions: ${serviceBySlug(i.serviceSlug)?.deliverables.join(", ") || "Standard scope"}\n   Deposit: ${i.depositPct}% upfront`;
+        }
       ),
       ...activePkg.map(
         (l, idx) =>
@@ -366,35 +417,60 @@ export default function Checkout() {
     if (!list) return;
     setFileError(null);
     const next = [...files];
-    for (const f of Array.from(list)) {
-      const ext = `.${f.name.split(".").pop()?.toLowerCase()}`;
-      if (!ACCEPTED.includes(ext)) { setFileError(`${f.name}: file type not accepted (${ACCEPTED.join(" ")})`); continue; }
-      if (f.size > MAX_MB * 1024 * 1024) { setFileError(`${f.name}: exceeds ${MAX_MB}MB limit`); continue; }
-      next.push({ file: f, name: f.name, size: f.size });
-      track("file_upload", { name: f.name, size: f.size });
-    }
-    setFiles(next);
+    const candidates = Array.from(list);
+    // Phase 2 upload security: extension AND size are pre-checked, then the
+    // file head is sniffed — a renamed executable can never slip through as
+    // an "image". Async per-file so the UI stays responsive.
+    void (async () => {
+      for (const f of candidates) {
+        const ext = `.${f.name.split(".").pop()?.toLowerCase()}`;
+        if (!ACCEPTED.includes(ext)) { setFileError(`${f.name}: file type not accepted (${ACCEPTED.join(" ")})`); continue; }
+        if (f.size > MAX_MB * 1024 * 1024) { setFileError(`${f.name}: exceeds ${MAX_MB}MB limit`); continue; }
+        const verdict = await validateUploadFile(f);
+        if (!verdict.ok) { setFileError(`${f.name}: ${verdict.error}`); continue; }
+        next.push({ file: f, name: f.name, size: f.size });
+        track("file_upload", { name: f.name, size: f.size });
+        setFiles([...next]);
+      }
+    })();
   };
 
-  const pay = async (forceDuplicate: boolean = false) => {
-    // hard guard: never charge without a reachable customer identity
+  /** Immutable order line items built from the REPRICED catalog values. */
+  const buildOrderItems = () => {
+    const agency = items.map((item, idx) => {
+      const base = cartToOrderItems([item])[0];
+      const r = repricedLines[idx];
+      return r ? { ...base, unitPrice: r.unitPrice, addons: r.addons.map((a) => ({ name: a.name, price: a.price })) } : base;
+    });
+    return [...agency, ...pkgOrderItems];
+  };
+
+  /**
+   * Dual-mode submit (Phase 4/5).
+   * order_request  → saves the order with paymentStatus UNPAID; no charge is attempted.
+   * online_payment → charges the verified gateway first, then saves the order.
+   */
+  const submit = async (method: "order_request" | "online_payment", forceDuplicate: boolean = false) => {
+    // hard guard: never submit without a reachable customer identity
     if (!details.name.trim() || !/.+@.+\..+/.test(details.email)) {
-      setPayError("We need your name and a valid email before payment — so we can deliver your order and receipt.");
+      setPayError(`We need your name and a valid email before ${method === "online_payment" ? "payment" : "submitting"} — so we can deliver your order and updates.`);
       setStep(1);
+      return;
+    }
+    if (method === "order_request" && !agreeTerms) {
+      setPayError("Please agree to the terms and privacy notice before submitting your order request.");
       return;
     }
 
     const allItemNames = [...items.map((i) => i.name), ...pkg.lines.map((l) => `${l.service.name}${l.sizeLabel ? ` (${l.sizeLabel})` : ""}`)];
-    const allOrderItems = [
-      ...cartToOrderItems(items),
-      ...pkgOrderItems,
-    ];
+    const allOrderItems = buildOrderItems();
     const fingerprint = computeOrderFingerprint(details.email, allOrderItems, dueToday);
 
-    // 2026 Duplicate Order Guard: check for identical order placed in last 10 minutes
+    // 2026 Duplicate Order Guard: identical order placed in the last 10 minutes
     if (forceDuplicate !== true) {
       const dupCheck = checkRecentDuplicateOrder(fingerprint);
       if (dupCheck.isDuplicate && dupCheck.recentOrder) {
+        pendingMethod.current = method;
         setDuplicateModal({
           isOpen: true,
           recentOrder: dupCheck.recentOrder,
@@ -404,36 +480,58 @@ export default function Checkout() {
       }
     }
 
-    // Atomic payment lock to prevent double-clicks & concurrent tabs
+    // Atomic submission lock to prevent double-clicks & concurrent tabs
     if (!acquirePaymentLock()) {
-      setPayError("A payment submission is already in progress. Please wait a moment.");
+      setPayError("A submission is already in progress. Please wait a moment.");
       return;
     }
 
     setPaying(true);
     setPayError(null);
-    track("payment_start", { value: dueToday, mode: payMode });
-    const provider = activeProviders()[0];
-    const res = await provider.pay({
-      orderId: `SK-${Date.now()}`,
-      amountUsd: dueToday,
-      description: allItemNames.join(", ") || "Services and design package",
-      kind: "full",
-    });
-    if (!res.ok) {
+    setSubmitPersistWarning(null);
+
+    // 1) Reserve the unique public order reference (server-side, collision-checked)
+    let reference: string;
+    try {
+      reference = await reserveOrderReference();
+    } catch {
       releasePaymentLock();
       setPaying(false);
-      setPayError(res.error ?? "Payment failed — no charge was made. Try again.");
-      track("payment_failed", {});
+      setPayError("We couldn't allocate an order reference — please try again.");
       return;
     }
-    // persist the order (Firestore when configured, local demo otherwise)
-    let finalOid = `SK-${String(Date.now()).slice(-6)}`;
+
+    // 2) Online payment path: charge the verified gateway BEFORE saving the order
+    let transactionId: string | undefined;
+    if (method === "online_payment") {
+      track("payment_start", { value: dueToday, mode: payMode });
+      const provider = activeProviders(checkoutSettings)[0];
+      if (!provider) {
+        releasePaymentLock();
+        setPaying(false);
+        setPayError("Online payment isn't available right now — please submit an order request instead.");
+        return;
+      }
+      const res = await provider.pay({
+        orderId: reference,
+        amountUsd: dueToday,
+        description: allItemNames.join(", ") || "Services and design package",
+        kind: "full",
+      });
+      if (!res.ok) {
+        releasePaymentLock();
+        setPaying(false);
+        setPayError(res.error ?? "Payment failed — no charge was made. Try again.");
+        track("payment_failed", {});
+        return;
+      }
+      transactionId = res.transactionId;
+    }
+
+    // 3) Persist the order — immutable snapshot of items + catalog-verified prices
+    const paid = method === "online_payment" ? dueToday : 0;
+    let finalOid = reference;
     try {
-      const allOrderItems = [
-        ...cartToOrderItems(items),
-        ...pkgOrderItems,
-      ];
       const attribution = getSessionAttribution();
       const oid = await createOrder(
         {
@@ -445,9 +543,15 @@ export default function Checkout() {
           discount: Math.round(discount * 100) / 100,
           total: Math.round(total * 100) / 100,
           payMode,
-          amountPaid: dueToday,
-          balanceDue: Math.max(0, Math.round((total - dueToday) * 100) / 100),
+          amountPaid: paid,
+          balanceDue: Math.max(0, Math.round((total - paid) * 100) / 100),
           promo: promo ? promo : (pkg.discount ? `PACKAGE:${pkg.discount.name}` : null),
+          reference,
+          checkoutMethod: method,
+          paymentStatus: paid > 0 && paid >= total ? "PAID" : "UNPAID",
+          pricingStatus,
+          currency,
+          paymentHistory: [],
           details: {
             ...details,
             hasDesignPackage: pkg.lines.length > 0 ? "true" : "false",
@@ -465,10 +569,30 @@ export default function Checkout() {
       finalOid = oid;
       setOrderId(oid);
       window.dispatchEvent(new CustomEvent("sk-order-complete"));
-    } catch {
-      // order persistence must not block a paid confirmation
-      setOrderId(finalOid);
+    } catch (err) {
+      console.error("Order persistence failed:", err);
+      if (method === "online_payment") {
+        // A charge happened — never conceal it. Confirm with an explicit warning.
+        setOrderId(finalOid);
+        setSubmitPersistWarning(`Your payment was received, but saving the order hit a problem. Please contact us at ${CONTACT.email} quoting reference ${reference} — we will complete your order manually.`);
+      } else {
+        // Order request: nothing was charged, nothing was saved — say so plainly.
+        releasePaymentLock();
+        setPaying(false);
+        setPayError("We couldn't save your order request — nothing was submitted. Please try again in a moment.");
+        return;
+      }
     }
+    setOrderReference(reference);
+    setSubmittedMethod(method);
+    setSubmittedPricing(pricingStatus);
+    setOrderSnapshot({
+      items: allOrderItems.map((i) => ({
+        name: i.name,
+        price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
+      })),
+      subtotal, discount, total: method === "online_payment" ? dueToday : total,
+    });
 
     // save details to the account for one-tap future checkouts (opt-out checkbox)
     // merge-safe: never clobbers profile fields checkout doesn't collect
@@ -483,7 +607,7 @@ export default function Checkout() {
     }
 
     // website packages → the intake brief doubles as the project agreement;
-    // pop it immediately post-purchase (highest-intent moment).
+    // pop it immediately post-submission (highest-intent moment).
     // Snapshot the order BEFORE clear() so the brief can prefill + detect scope shifts.
     const webItem = items.find((i) => isIntakePackage(i.serviceSlug));
     if (webItem) {
@@ -491,7 +615,7 @@ export default function Checkout() {
       setIntakeOrderId(finalOid);
       setIntakeOrderCtx({
         id: finalOid,
-        amountPaid: dueToday,
+        amountPaid: paid,
         packageUnitPrice: webItem.unitPrice,
         addonNames: items.flatMap((i) => [
           ...i.addons.map((a) => a.name),
@@ -502,25 +626,28 @@ export default function Checkout() {
       });
     }
 
-    // transactional email: client receipt + studio alert (fire-and-forget, never blocks)
+    // transactional email: client confirmation + studio alert (fire-and-forget, never blocks;
+    // delivery state is tracked independently in the email audit log)
     const portalUrl = `${window.location.origin}/client`;
-    const lineItems = [
-      ...items.map((i) => ({
-        name: i.name,
-        price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
-      })),
-      ...pkg.lines.map((l) => ({
-        name: `${l.service.name}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""}${l.qty > 1 ? ` × ${l.qty}` : ""}`,
-        price: Math.round(l.lineTotal),
-      })),
-    ];
-    void sendEmail(orderConfirmationEmail({
-      to: details.email, name: details.name, orderId: finalOid,
-      items: lineItems, total: dueToday, portalUrl,
+    const lineItems = allOrderItems.map((i) => ({
+      name: i.name,
+      price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
     }));
+    if (method === "order_request") {
+      void sendEmail(orderRequestConfirmationEmail({
+        to: details.email, name: details.name, reference,
+        items: lineItems, total, currency, quoteRequired, portalUrl,
+      }));
+    } else {
+      void sendEmail(orderConfirmationEmail({
+        to: details.email, name: details.name, orderId: reference,
+        items: lineItems, total: paid, portalUrl,
+      }));
+    }
     void sendEmail(adminNewOrderEmail({
       name: details.name, email: details.email, orderId: finalOid,
-      items: lineItems, total: dueToday,
+      items: lineItems, total, reference,
+      checkoutMethod: method, quoteRequired,
       adminUrl: `${window.location.origin}/admin`,
     }));
 
@@ -532,26 +659,69 @@ export default function Checkout() {
 
     // Record completed order fingerprint for duplicate order prevention
     recordCompletedOrder(
-      finalOid,
+      reference,
       fingerprint,
-      dueToday,
+      method === "online_payment" ? dueToday : total,
       details.email,
       allItemNames
     );
     releasePaymentLock();
 
     setPaying(false);
-    track("purchase", { value: dueToday, transaction_id: res.transactionId });
+    if (method === "online_payment") {
+      track("purchase", { value: dueToday, transaction_id: transactionId });
+    } else {
+      track("order_request_submitted", { value: total, reference });
+    }
     // First-party checkout complete event (Firestore + GA4 purchase + Meta Pixel Purchase)
     trackCheckoutComplete({
-      orderId: finalOid,
-      total: dueToday,
+      orderId: reference,
+      total: method === "online_payment" ? dueToday : total,
       itemCount: items.length + pkg.lines.length,
     });
     setStep(4);
     if (webItem) setIntakeOpen(true);
     clear();
     pkg.clear();
+  };
+
+  const pay = (forceDuplicate: boolean = false) => submit("online_payment", forceDuplicate);
+  const submitRequest = (forceDuplicate: boolean = false) => submit("order_request", forceDuplicate);
+
+  /** Printable/downloadable order summary from the post-submit snapshot. */
+  const downloadOrderSummary = () => {
+    if (!orderSnapshot || !orderReference) return;
+    const lines = [
+      "============================================================",
+      " SOCIAL KON10 MARKETING — ORDER SUMMARY",
+      ` Reference: ${orderReference}`,
+      ` Date: ${new Date().toLocaleString()} | Currency: ${currency}`,
+      ` Customer: ${details.name}${details.company ? ` (${details.company})` : ""} · ${details.email}`,
+      ` Type: ${submittedMethod === "order_request" ? "ORDER REQUEST — no payment collected" : "ONLINE PAYMENT — paid"}`,
+      "============================================================",
+      "",
+      "--- ITEMS ---",
+      ...orderSnapshot.items.map((i, idx) => `${idx + 1}. ${i.name} — ${formatMoney(i.price, currency)}`),
+      "",
+      "------------------------------------------------------------",
+      ` Subtotal:  ${formatMoney(orderSnapshot.subtotal, currency)}`,
+      orderSnapshot.discount > 0 ? ` Discount: -${formatMoney(orderSnapshot.discount, currency)}` : "",
+      ` ${submittedPricing === "QUOTE_REQUIRED" ? "Estimated total" : "Total"}: ${formatMoney(orderSnapshot.total, currency)}${submittedPricing === "QUOTE_REQUIRED" ? " (estimate — final quote to follow)" : ""}`,
+      "============================================================",
+      submittedMethod === "order_request"
+        ? " No payment has been collected. The studio will contact you\n to confirm pricing and arrange payment after your approval."
+        : " Payment received in full. Thank you.",
+      ` Questions? ${CONTACT.email} | ${CONTACT.phone} | Kingston, Jamaica`,
+    ].filter(Boolean).join("\n");
+
+    const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SocialKon10_Order_${orderReference}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Order summary downloaded");
   };
 
   /** Post-purchase: create the client account with email + password and claim this order. */
@@ -715,10 +885,13 @@ export default function Checkout() {
                   <div>
                     {pkg.lines.length > 0 && <span className="idx block mb-3">/agency-services</span>}
                     <ul className="space-y-2">
-                      {items.map((i) => {
+                      {items.map((i, iIdx) => {
                         const matchedSvc = serviceBySlug(i.serviceSlug);
                         const isSelected = selectedKeys.includes(i.key);
-                        const itemPrice = (i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1);
+                        // Display the catalog-repriced line so the row always
+                        // matches the totals (never the stale stored price).
+                        const rl = repricedLines[iIdx] ?? i;
+                        const itemPrice = (rl.unitPrice + rl.addons.reduce((s, a) => s + a.price, 0)) * (rl.rush ? 1.25 : 1);
 
                         return (
                           <li
@@ -1068,43 +1241,86 @@ export default function Checkout() {
             )}
             <div className="mt-8 flex justify-between">
               <button className="btn btn-ghost" onClick={() => setStep(1)}>← Back</button>
-              <button className="btn btn-fill" onClick={() => setStep(3)}>Payment <span className="btn-arrow" aria-hidden>→</span></button>
+              <button className="btn btn-fill" onClick={() => setStep(3)}>{mode === "ONLINE_PAYMENT" ? "Payment" : "Review"} <span className="btn-arrow" aria-hidden>→</span></button>
             </div>
           </div>
         )}
 
-        {/* STEP 4 — payment */}
+        {/* STEP 4 — review & submit / payment (mode-aware) */}
         {step === 3 && (
           <div className="grid md:grid-cols-2 gap-10">
             <div>
               <span className="idx">/order-summary</span>
               <div className="mt-4 border border-[var(--line)] p-6 flex flex-col gap-4" style={{ background: "var(--panel)" }}>
                 <div>
-                  <h3 className="font-display text-base font-bold uppercase">Payment Breakdown</h3>
-                  <p className="font-meta text-[9px] text-[var(--muted)] mt-1">100% full payment upfront · instant access & kickoff</p>
+                  <h3 className="font-display text-base font-bold uppercase">Order Summary</h3>
+                  <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
+                    {mode === "ONLINE_PAYMENT"
+                      ? "100% full payment upfront · instant access & kickoff"
+                      : quoteRequired
+                        ? "Estimate — the studio confirms final pricing before anything is charged"
+                        : "No payment is collected today — the studio confirms your order first"}
+                  </p>
                 </div>
+                <ul className="rule-t pt-4 flex flex-col gap-2 text-sm">
+                  {items.map((i, iIdx) => {
+                    const rl = repricedLines[iIdx] ?? i;
+                    return (
+                    <li key={i.key} className="flex justify-between gap-3">
+                      <span className="text-[var(--muted)]">{i.name}{rl.rush ? " (rush)" : ""}</span>
+                      <span>{formatMoney((rl.unitPrice + rl.addons.reduce((s, a) => s + a.price, 0)) * (rl.rush ? 1.25 : 1), currency)}</span>
+                    </li>
+                    );
+                  })}
+                  {pkg.lines.map((l) => (
+                    <li key={l.key} className="flex justify-between gap-3">
+                      <span className="text-[var(--muted)]">{l.service.name}{l.qty > 1 ? ` × ${l.qty}` : ""}</span>
+                      <span>{formatMoney(l.lineTotal, currency)}</span>
+                    </li>
+                  ))}
+                </ul>
                 <div className="flex flex-col gap-2 rule-t pt-4 text-sm">
                   <div className="flex justify-between"><span className="text-[var(--muted)]">Subtotal</span><span>{formatMoney(subtotal, currency)}</span></div>
                   {discount > 0 && <div className="flex justify-between dept-accent"><span>Discount</span><span>−{formatMoney(discount, currency)}</span></div>}
                   <div className="flex justify-between font-display text-lg font-bold rule-t pt-2 mt-1">
-                    <span>Total Due Now</span>
+                    <span>{mode === "ONLINE_PAYMENT" ? "Total Due Now" : quoteRequired ? "Estimated Total" : "Order Total"}</span>
                     <span className="dept-accent">{formatMoney(total, currency)}</span>
                   </div>
+                  {quoteRequired && (
+                    <p className="font-meta text-[9.5px] text-amber-600 leading-relaxed">
+                      ⚠ Your cart includes custom-quoted work — this total is an estimate, not a guaranteed price. SocialKon10 confirms the final amount with you first.
+                    </p>
+                  )}
                 </div>
                 <div className="rule-t pt-3 flex flex-col gap-1.5 font-meta text-[9.5px] text-[var(--muted)]">
-                  <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Instant order confirmation & receipt</p>
-                  <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Immediate access to digital files & editor</p>
-                  <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Direct kickoff & project onboarding</p>
+                  {mode === "ONLINE_PAYMENT" ? (
+                    <>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Instant order confirmation & receipt</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Immediate access to digital files & editor</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Direct kickoff & project onboarding</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> No payment collected at submission</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Studio reviews & confirms within 1 business day</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Unique order reference for tracking</p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
             <div>
-              <span className="idx">/provider</span>
+              <span className="idx">/{mode === "ONLINE_PAYMENT" ? "provider" : "submit"}</span>
               <div className="mt-4 border border-[var(--line-strong)] p-6" style={{ background: "var(--panel)" }}>
                 <div className="flex justify-between items-baseline">
-                  <span className="text-[var(--muted)] text-sm">Total Due Today</span>
-                  <span className="font-display text-3xl font-bold">{formatMoney(dueToday, currency)}</span>
+                  <span className="text-[var(--muted)] text-sm">{mode === "ONLINE_PAYMENT" ? "Total Due Today" : quoteRequired ? "Estimated Total" : "Order Total"}</span>
+                  <span className="font-display text-3xl font-bold">{formatMoney(mode === "ONLINE_PAYMENT" ? dueToday : total, currency)}</span>
                 </div>
+                {repricedCount > 0 && (
+                  <p className="mt-3 font-meta text-[9.5px] text-[var(--muted)] border border-[var(--line)] px-3 py-2">
+                    Prices refreshed to the current studio rate sheet ({repricedCount} line{repricedCount === 1 ? "" : "s"} updated).
+                  </p>
+                )}
                 <div className="mt-6 flex flex-col gap-2">
                   {(!details.name.trim() || !/.+@.+\..+/.test(details.email)) && (
                     <button
@@ -1114,16 +1330,54 @@ export default function Checkout() {
                       ⚠ Add your name &amp; email first — we need them to deliver your order and receipt. <span className="underline font-bold">Fill in details →</span>
                     </button>
                   )}
-                  {activeProviders().map((p) => (
-                    <button key={p.id} disabled={paying} onClick={() => pay(false)} className="btn btn-dept justify-center disabled:opacity-60">
+
+                  {allowOrderRequest && (
+                    <>
+                      <label className="flex items-start gap-3 cursor-pointer text-[12px] text-[var(--muted)] border border-[var(--line)] px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 accent-[var(--dept)] mt-0.5 shrink-0"
+                          checked={agreeTerms}
+                          onChange={(e) => setAgreeTerms(e.target.checked)}
+                        />
+                        <span>
+                          I agree to the <Link to="/terms" className="underline dept-accent" target="_blank">terms of service</Link> and{" "}
+                          <Link to="/privacy" className="underline dept-accent" target="_blank">privacy notice</Link>.
+                        </span>
+                      </label>
+                      <button
+                        disabled={paying || !agreeTerms}
+                        onClick={() => void submitRequest(false)}
+                        className="btn btn-dept justify-center disabled:opacity-60"
+                      >
+                        {paying ? "Submitting…" : "Submit Order Request"} <span className="btn-arrow" aria-hidden>→</span>
+                      </button>
+                      <p className="font-meta text-[8.5px] text-[var(--muted)] leading-relaxed">
+                        No payment is taken. The studio reviews your request and confirms pricing &amp; schedule by email.
+                      </p>
+                    </>
+                  )}
+
+                  {mode === "HYBRID" && allowOrderRequest && (
+                    <div className="flex items-center gap-3 my-1">
+                      <div className="flex-1 h-px bg-[var(--line)]" />
+                      <span className="font-meta text-[9px] text-[var(--muted)]">OR PAY ONLINE NOW</span>
+                      <div className="flex-1 h-px bg-[var(--line)]" />
+                    </div>
+                  )}
+
+                  {activeProviders(checkoutSettings).map((p) => (
+                    <button key={p.id} disabled={paying} onClick={() => pay(false)} className="btn btn-fill justify-center disabled:opacity-60">
                       {paying ? "Processing…" : `Pay with ${p.name}`} <span className="btn-arrow" aria-hidden>→</span>
                     </button>
                   ))}
                 </div>
                 {payError && <p className="font-meta text-[10px] text-red-600 mt-3" role="alert">{payError}</p>}
-                <p className="font-meta text-[8.5px] text-[var(--muted)] mt-5 leading-relaxed">
-                  Cards are processed securely by the payment provider — we never see or store card data. 256-bit SSL encryption.
-                </p>
+                {mode !== "ORDER_REQUEST" && (
+                  <p className="font-meta text-[8.5px] text-[var(--muted)] mt-5 leading-relaxed">
+                    Cards are processed securely by the payment provider — we never see or store card data. 256-bit SSL encryption.
+                  </p>
+                )}
               </div>
               <div className="mt-6"><button className="btn btn-ghost" onClick={() => setStep(2)}>← Back</button></div>
             </div>
@@ -1133,19 +1387,74 @@ export default function Checkout() {
         {/* STEP 5 — confirmation */}
         {step === 4 && (
           <div className="border border-[var(--line-strong)] p-8 md:p-14 text-center" style={{ background: "var(--panel)" }}>
-            <span className="idx">/order-{orderId}</span>
-            <h2 className="display-section mt-4">Order confirmed.</h2>
+            <span className="idx">/order-{orderReference ?? orderId}</span>
+            <h2 className="display-section mt-4">
+              {submittedMethod === "order_request" ? "Your Order Request Has Been Received!" : "Order confirmed."}
+            </h2>
             <p className="mt-4 text-[var(--muted)] max-w-md mx-auto">
-              Payment received in full. Your project is in the queue — next step: complete your project questionnaire.
+              {submittedMethod === "order_request"
+                ? "No payment has been collected. The studio reviews your request and confirms pricing & next steps by email — usually within 1 business day."
+                : "Payment received in full. Your project is in the queue — next step: complete your project questionnaire."}
             </p>
+
+            {submitPersistWarning && (
+              <p className="mt-4 max-w-md mx-auto border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 px-4 py-3 text-[12px]" role="alert">
+                {submitPersistWarning}
+              </p>
+            )}
+
+            {/* unique order reference + copy */}
+            {orderReference && (
+              <div className="mt-8 max-w-sm mx-auto border border-[var(--line)] p-5" style={{ background: "var(--bg)" }}>
+                <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">Your order reference</p>
+                <p className="font-display text-2xl font-bold mt-1 tracking-wide">{orderReference}</p>
+                <div className="mt-3 flex justify-center gap-2">
+                  <button
+                    className="btn btn-ghost !py-2 !px-3 text-[11px] flex items-center gap-1.5"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(orderReference).then(() => {
+                        setCopiedRef(true);
+                        setTimeout(() => setCopiedRef(false), 2000);
+                      });
+                    }}
+                  >
+                    {copiedRef ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedRef ? "Copied" : "Copy reference"}
+                  </button>
+                  <button className="btn btn-ghost !py-2 !px-3 text-[11px] flex items-center gap-1.5" onClick={downloadOrderSummary}>
+                    <Download className="w-3.5 h-3.5" /> Download summary
+                  </button>
+                  <button className="btn btn-ghost !py-2 !px-3 text-[11px] flex items-center gap-1.5" onClick={() => window.print()}>
+                    <Printer className="w-3.5 h-3.5" /> Print
+                  </button>
+                </div>
+                <p className="font-meta text-[8.5px] text-[var(--muted)] mt-3">
+                  Quote this reference when contacting us — it identifies your order but does not share your private details.
+                </p>
+              </div>
+            )}
+
             <div className="mt-8 max-w-sm mx-auto text-left">
-              {["Confirmation email with your receipt", "Project questionnaire link", "Onboarding instructions + file upload access", "Kickoff scheduling within 1 business day"].map((s, i) => (
+              {(submittedMethod === "order_request"
+                ? [
+                    "Confirmation email with your reference & summary",
+                    "Studio reviews your request (≤ 1 business day)",
+                    submittedPricing === "QUOTE_REQUIRED" ? "Final quote sent for your approval" : "Order confirmation sent by email",
+                    "Payment arranged only after you approve",
+                  ]
+                : ["Confirmation email with your receipt", "Project questionnaire link", "Onboarding instructions + file upload access", "Kickoff scheduling within 1 business day"]
+              ).map((s, i) => (
                 <div key={s} className="file-row grid-cols-[36px_1fr] !py-3 !cursor-default">
                   <span className="idx">{String(i + 1).padStart(2, "0")}</span>
                   <span className="text-sm">{s}</span>
                 </div>
               ))}
             </div>
+            {submittedMethod === "order_request" && (
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-4">
+                Status: <strong className="dept-accent">Order received · {submittedPricing === "QUOTE_REQUIRED" ? "estimated total" : "unpaid"}</strong> — nothing has been charged.
+              </p>
+            )}
             {/* website packages: the project brief is the next step (also the agreement) */}
             {intakePkg && (
               <div className="mt-8 max-w-sm mx-auto border border-[var(--dept)] p-5 text-left" style={{ background: "var(--dept-soft)" }}>
@@ -1249,7 +1558,7 @@ export default function Checkout() {
           onClose={() => setDuplicateModal({ isOpen: false, recentOrder: null, minutesAgo: 0 })}
           recentOrder={duplicateModal.recentOrder}
           minutesAgo={duplicateModal.minutesAgo}
-          onConfirmDuplicate={() => pay(true)}
+          onConfirmDuplicate={() => void submit(pendingMethod.current, true)}
         />
       )}
     </section>

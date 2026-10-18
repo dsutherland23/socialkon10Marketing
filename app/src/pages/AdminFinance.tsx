@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { issueQuoteApprovalLink } from "../lib/phase2";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
 import {
@@ -71,6 +72,25 @@ export interface FinDocument {
   sentAt?: string;
   voidedAt?: string;
   voidReason?: string;
+  /* ---- Phase 2: quote versioning & secure customer approval ---- */
+  /** quote revision number — bumps every time a sent quote is edited */
+  version?: number;
+  /** archived snapshots of previously issued quote versions (never overwritten) */
+  revisions?: {
+    version: number;
+    at: string;
+    by: string;
+    items: FinLineItem[];
+    subtotalCents: number;
+    discountCents: number;
+    taxCents: number;
+    totalCents: number;
+    notes?: string;
+  }[];
+  /** customer approval evidence (written via the token-gated public flow) */
+  decisionAt?: string;
+  decisionBy?: string;
+  decisionToken?: string;
 }
 
 export interface FinPayment {
@@ -994,7 +1014,7 @@ function DocumentPreview({
             type="button"
             className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xs transition-colors flex items-center gap-1 cursor-pointer text-xs"
             onClick={() => {
-              const url = `${window.location.origin}/invoice/${finDoc.number}`;
+              const url = `${window.location.origin}/invoice/${finDoc.id}`;
               navigator.clipboard.writeText(url);
               toast.success(`Client link copied: ${url}`);
             }}
@@ -1786,9 +1806,35 @@ function DocEditor({ initial, clients, taxRates, services, profile, actor, onSav
 
       let savedId: string;
       if (initial?.id) {
-        await patchDoc(initial.id, docData);
+        // Quote revision history: editing a quote that was already issued
+        // archives the previous version instead of silently overwriting it.
+        if (initial.type === "quote" && (initial.status === "sent" || initial.status === "accepted")) {
+          const prevVersion = initial.version ?? 1;
+          const archive = {
+            version: prevVersion,
+            at: initial.updatedAt ?? now,
+            by: initial.createdBy ?? actor,
+            items: initial.items,
+            subtotalCents: initial.subtotalCents,
+            discountCents: initial.discountCents,
+            taxCents: initial.taxCents,
+            totalCents: initial.totalCents,
+            notes: initial.notes ?? undefined,
+          };
+          docData.version = prevVersion + 1;
+          docData.revisions = [...(initial.revisions ?? []), archive];
+          // An edited quote supersedes the customer's earlier decision.
+          docData.decisionAt = undefined;
+          docData.decisionBy = undefined;
+          docData.decisionToken = undefined;
+        } else {
+          docData.version = initial.version;
+          docData.revisions = initial.revisions;
+        }
+        await patchDoc(initial.id, sanitizeForFirestore(docData));
         savedId = initial.id;
       } else {
+        docData.version = type === "quote" ? 1 : undefined;
         savedId = await saveDoc(docData);
       }
 
@@ -2721,9 +2767,24 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
   };
 
   const copyClientLink = (d: FinDocument) => {
-    const url = `${window.location.origin}/invoice/${d.number}`;
+    // The doc ID (unguessable) is the share credential — never the sequential
+    // number, which would make every invoice enumerable.
+    const url = `${window.location.origin}/invoice/${d.id}`;
     navigator.clipboard.writeText(url);
     toast.success(`Client link copied: ${url}`);
+  };
+
+  const copyQuoteApprovalLink = async (d: FinDocument) => {
+    try {
+      const res = await issueQuoteApprovalLink(d.id, actor);
+      if (!res.token) { toast.error(res.error ?? "Could not issue approval link"); return; }
+      const url = `${window.location.origin}/quote/${res.token}`;
+      navigator.clipboard.writeText(url);
+      toast.success(`Secure approval link copied (expires in 14 days): ${url}`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not issue approval link.");
+    }
   };
 
   const splitDepositInvoices = async (d: FinDocument) => {
@@ -2814,7 +2875,7 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
 
   const sendReminder = async (d: FinDocument) => {
     if (!d.clientEmail) { toast.error("No client email found."); return; }
-    const url = `${window.location.origin}/invoice/${d.number}`;
+    const url = `${window.location.origin}/invoice/${d.id}`;
     const subject = `Friendly Reminder: ${DOC_TYPE_LABELS[d.type]} ${d.number} is due (${centsToDisplay(d.balanceDueCents)})`;
     const html = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f4f2ee;padding:24px 0">
       <table width="560" align="center" style="background:#fff;border:1px solid #e3ded6;padding:28px">
@@ -3122,6 +3183,16 @@ function DocList({ docs, profile, onEdit, onNew, onRefresh, actor }: DocListProp
                         onClick={() => splitDepositInvoices(d)}
                       >
                         <span>⚡</span> <span>Split 50/50 Deposit</span>
+                      </button>
+                    )}
+
+                    {d.type === "quote" && (d.status === "sent" || d.status === "draft") && (
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-2 cursor-pointer"
+                        onClick={() => void copyQuoteApprovalLink(d)}
+                      >
+                        <span>✅</span> <span>Copy Approval Link</span>
                       </button>
                     )}
 
@@ -4156,6 +4227,21 @@ export function FinanceManager() {
   const [loading, setLoading] = useState(true);
 
   const profile = useMemo(() => getFinanceProfile(siteSettings), [siteSettings]);
+
+  // "Create quote from order" handoff: the Orders cockpit drops a prefill
+  // payload in sessionStorage and switches to this tab.
+  useEffect(() => {
+    const raw = sessionStorage.getItem("sk-fin-prefill");
+    if (!raw) return;
+    sessionStorage.removeItem("sk-fin-prefill");
+    void Promise.resolve().then(() => {
+      try {
+        const pre = JSON.parse(raw) as FinDocument;
+        setEditTarget(pre);
+        setView("edit");
+      } catch { /* malformed prefill — ignore */ }
+    });
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);

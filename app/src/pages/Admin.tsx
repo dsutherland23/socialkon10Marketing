@@ -8,7 +8,7 @@ import { useAuth } from "../lib/auth";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
 import {
-  ORDER_STATUSES, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setLeadsStatus, deleteLead, deleteLeads, setOrderStatus, setOrdersStatus, deleteOrder, deleteOrders, deleteOrderFile, isOrderHistory,
+  ORDER_STATUSES, ORDER_STATUS_OPTIONS, orderStatusIndex, listAllOrders, subscribeAllOrders, listLeads, subscribeLeads, setLeadStatus, setLeadsStatus, deleteLead, deleteLeads, setOrderStatus, setOrdersStatus, setPaymentStatus, deleteOrder, deleteOrders, deleteOrderFile, isOrderHistory,
   resetAccountingLedger,
   getServiceOverrides, saveServiceOverride, deleteServiceOverride,
   listManaged, addManaged, removeManaged, updateManaged,
@@ -17,6 +17,13 @@ import {
   markThreadReadForStudio, orderHasUnreadClientMessage,
   type LeadRecord, type ManagedItem, type OrderRecord, type ServiceOverride, type SiteSettings,
 } from "../lib/backend";
+import { getCheckoutSettings, saveCheckoutSettings } from "../lib/checkout";
+import { validateUploadFile } from "../lib/uploads";
+import {
+  CHECKOUT_MODES, PAYMENT_STATUSES, effectiveCheckoutMode,
+  type CheckoutSettings, type PaymentStatus,
+} from "../lib/order-utils";
+import { PAYMENT_PROVIDERS, getProvider } from "../lib/payments";
 import { HOME_SECTIONS } from "../lib/content";
 import { firebaseReady } from "../lib/firebase";
 import { MessageThread } from "../components/messages";
@@ -31,6 +38,8 @@ import { ImageDropzone } from "../components/ImageDropzone";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
 import { FinanceManager } from "./AdminFinance";
+import { WhatsAppPanel, PaymentLinkPanel, WhatsAppTemplatesEditor } from "./AdminPhase2";
+import { createQuoteFromOrder } from "../lib/phase2";
 import { listAllCustomerDesigns, deleteDesign, deleteDesigns, findDesignForOrder, listDesigns, createDesign, type CustomerDesign } from "../lib/editor-store";
 import { useTemplates } from "../lib/templates";
 import {
@@ -92,10 +101,22 @@ function RemoveButton({ onRemove, onDone }: { onRemove: () => Promise<void>; onD
   );
 }
 
+const OFFLINE_PAYMENT_METHODS = [
+  { id: "bank_transfer", label: "Bank transfer" },
+  { id: "cash", label: "Cash" },
+  { id: "card_offline", label: "Card (in person / terminal)" },
+  { id: "cheque", label: "Cheque" },
+  { id: "online_gateway", label: "Online gateway" },
+  { id: "other", label: "Other" },
+] as const;
+
 function RecordPayment({ order, onDone }: { order: OrderRecord; onDone: () => void }) {
   const money = useMoney();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(String(order.balanceDue));
+  const [method, setMethod] = useState<string>("bank_transfer");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   if (order.balanceDue <= 0) return <span className="font-meta text-[9px] dept-accent font-bold">PAID IN FULL</span>;
   if (!open) return (
@@ -104,18 +125,42 @@ function RecordPayment({ order, onDone }: { order: OrderRecord; onDone: () => vo
     </button>
   );
   return (
-    <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-[var(--line)]">
-      <input type="number" min="1" max={order.balanceDue} className={`${inputCls} !w-24 !py-1.5`} value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount received (USD)" />
-      <button className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px]" disabled={busy || !Number(amount)}
-        onClick={async () => {
-          setBusy(true);
-          const okDone = await mutate(() => recordPayment(order.id, Math.min(Number(amount), order.balanceDue)), "Payment recorded");
-          setBusy(false);
-          if (okDone) { setOpen(false); onDone(); }
-        }}>
-        {busy ? "…" : "Mark received"}
-      </button>
-      <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => setOpen(false)}>Cancel</button>
+    <div className="mt-2 pt-2 border-t border-[var(--line)] space-y-2">
+      <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">Record verified offline payment</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="number" min="1" max={order.balanceDue} className={`${inputCls} !w-24 !py-1.5`} value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount received (USD)" />
+        <select className={`${inputCls} !w-40 !py-1.5`} value={method} onChange={(e) => setMethod(e.target.value)} aria-label="Payment method">
+          {OFFLINE_PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+      </div>
+      <input
+        className={`${inputCls} !py-1.5`}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Transaction / receipt reference (optional)"
+        aria-label="Payment reference or note"
+        maxLength={200}
+      />
+      <div className="flex items-center gap-2">
+        <button className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px]" disabled={busy || !Number(amount)}
+          onClick={async () => {
+            setBusy(true);
+            const okDone = await mutate(
+              () => recordPayment(order.id, Math.min(Number(amount), order.balanceDue), {
+                method,
+                note: note.trim() || undefined,
+                by: user?.email ?? "admin",
+              }),
+              "Payment recorded & audited"
+            );
+            setBusy(false);
+            if (okDone) { setOpen(false); setNote(""); onDone(); }
+          }}>
+          {busy ? "…" : "Mark received"}
+        </button>
+        <button className="font-meta text-[10px] text-[var(--muted)]" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+      <p className="font-meta text-[8.5px] text-[var(--muted)]">Only record money you have actually received — this updates the order's payment status and writes an audit entry.</p>
     </div>
   );
 }
@@ -603,11 +648,14 @@ function ResetAccountingModal({
 
 function Orders() {
   const money = useMoney();
+  const { user } = useAuth();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [mobileCockpitOpen, setMobileCockpitOpen] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "REVIEW" | "HISTORY">("ACTIVE");
+  const [payFilter, setPayFilter] = useState<"ALL" | PaymentStatus>("ALL");
+  const [methodFilter, setMethodFilter] = useState<"ALL" | "order_request" | "online_payment">("ALL");
   const [search, setSearch] = useState("");
   const [cockpitTab, setCockpitTab] = useState<"overview" | "chat" | "vault">("overview");
   const [uploadingVault, setUploadingVault] = useState(false);
@@ -642,13 +690,16 @@ function Orders() {
   const filteredOrders = (filter === "HISTORY" ? historyOrders : orders).filter((o) => {
     if (filter === "ACTIVE" && isOrderHistory(o)) return false;
     if (filter === "REVIEW" && !["CLIENT REVIEW", "FINAL APPROVAL"].includes(o.status)) return false;
+    if (payFilter !== "ALL" && (o.paymentStatus ?? "UNPAID") !== payFilter) return false;
+    if (methodFilter !== "ALL" && (o.checkoutMethod ?? "online_payment") !== methodFilter) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       const matchId = o.id.toLowerCase().includes(q);
+      const matchRef = (o.reference ?? "").toLowerCase().includes(q);
       const matchName = o.name.toLowerCase().includes(q);
       const matchEmail = o.email.toLowerCase().includes(q);
       const matchItem = o.items.some((i) => i.name.toLowerCase().includes(q));
-      return matchId || matchName || matchEmail || matchItem;
+      return matchId || matchRef || matchName || matchEmail || matchItem;
     }
     return true;
   });
@@ -705,11 +756,15 @@ function Orders() {
     exportToCsv<OrderRecord>(
       "Orders_Export",
       [
-        { key: "id", header: "Order ID" },
+        { key: "reference", header: "Order Reference", format: (o) => o.reference ?? "" },
+        { key: "id", header: "Internal Order ID" },
         { key: "name", header: "Client Name" },
         { key: "email", header: "Email" },
         { key: "company", header: "Company", format: (o) => o.company || "" },
-        { key: "status", header: "Status" },
+        { key: "status", header: "Order Status" },
+        { key: "paymentStatus", header: "Payment Status", format: (o) => o.paymentStatus ?? "UNPAID" },
+        { key: "checkoutMethod", header: "Checkout Method", format: (o) => o.checkoutMethod ?? "legacy" },
+        { key: "pricingStatus", header: "Pricing", format: (o) => o.pricingStatus ?? "" },
         { key: "total", header: "Total Price (USD)", format: (o) => o.total || 0 },
         { key: "amountPaid", header: "Amount Paid (USD)", format: (o) => o.amountPaid || 0 },
         { key: "balanceDue", header: "Balance Due (USD)", format: (o) => o.balanceDue || 0 },
@@ -729,22 +784,31 @@ function Orders() {
   };
 
   const getStatusColor = (status: OrderRecord["status"]) => {
+    if (status === "CANCELLED") return "bg-red-500/10 text-red-500 border-red-500/30";
     if (["DELIVERED", "COMPLETED"].includes(status)) return "bg-emerald-500/10 text-emerald-500 border-emerald-500/30";
-    if (["CLIENT REVIEW", "FINAL APPROVAL"].includes(status)) return "bg-amber-500/10 text-amber-500 border-amber-500/30";
+    if (["CLIENT REVIEW", "FINAL APPROVAL", "AWAITING CUSTOMER", "QUOTE SENT", "AWAITING PAYMENT"].includes(status)) return "bg-amber-500/10 text-amber-500 border-amber-500/30";
     if (["CONCEPT", "REVISION"].includes(status)) return "bg-purple-500/10 text-purple-500 border-purple-500/30";
     return "bg-cyan-500/10 text-cyan-500 border-cyan-500/30";
   };
 
   const processVaultFiles = async (fileList: FileList | File[]) => {
     if (!current) return;
-    const files = Array.from(fileList);
+    // Phase 2 upload security: sniff every file head before it touches
+    // storage — renamed executables are rejected, not quarantined later.
+    const accepted: File[] = [];
+    for (const f of Array.from(fileList)) {
+      const verdict = await validateUploadFile(f);
+      if (verdict.ok) accepted.push(f);
+      else toast.error(`${f.name}: ${verdict.error}`);
+    }
+    const files = accepted;
     if (files.length === 0) return;
     setUploadingVault(true);
     setUploadProgress({ current: 1, total: files.length, filename: files[0].name });
     try {
       const uploaded = await attachFiles(current.id, files, (curr, tot, name) => {
         setUploadProgress({ current: curr, total: tot, filename: name });
-      });
+      }, { uploadedBy: user?.email ?? "admin", kind: "admin_deliverable" });
       setOrders((prev) =>
         prev.map((o) =>
           o.id === current.id
@@ -795,7 +859,7 @@ function Orders() {
 
   const advanceNextStatus = async () => {
     if (!current) return;
-    const sIdx = ORDER_STATUSES.indexOf(current.status);
+    const sIdx = orderStatusIndex(current.status);
     if (sIdx < ORDER_STATUSES.length - 1) {
       const next = ORDER_STATUSES[sIdx + 1];
       const ok = await mutate(() => setOrderStatus(current.id, next), `Status → ${next}`);
@@ -903,13 +967,34 @@ function Orders() {
           )}
         </div>
 
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search client, ID, email, item…"
-          className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
-        />
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <select
+            value={payFilter}
+            onChange={(e) => setPayFilter(e.target.value as "ALL" | PaymentStatus)}
+            className="bg-transparent border border-[var(--line)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--dept)] rounded-xl"
+            aria-label="Filter by payment status"
+          >
+            <option value="ALL">All payments</option>
+            {PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
+          </select>
+          <select
+            value={methodFilter}
+            onChange={(e) => setMethodFilter(e.target.value as "ALL" | "order_request" | "online_payment")}
+            className="bg-transparent border border-[var(--line)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--dept)] rounded-xl"
+            aria-label="Filter by checkout method"
+          >
+            <option value="ALL">All methods</option>
+            <option value="order_request">Order requests</option>
+            <option value="online_payment">Online payments</option>
+          </select>
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search client, reference, ID, email, item…"
+            className="bg-transparent border border-[var(--line)] px-3 py-1.5 text-xs outline-none focus:border-[var(--dept)] transition-colors rounded-xl w-full sm:w-64"
+          />
+        </div>
       </div>
 
       {/* Closed-business report — visible in the History archive */}
@@ -934,7 +1019,7 @@ function Orders() {
             {filteredOrders.map((o) => {
               const isSelected = current && o.id === current.id;
               const isChecked = selectedOrderIds.includes(o.id);
-              const sIdx = ORDER_STATUSES.indexOf(o.status);
+              const sIdx = orderStatusIndex(o.status);
               const pct = Math.round(((sIdx + 1) / ORDER_STATUSES.length) * 100);
               return (
                 <div
@@ -962,12 +1047,25 @@ function Orders() {
                         aria-label={`Select order ${o.id}`}
                       />
                       <span className="font-meta text-[9px] text-[var(--muted)]">
-                        #ORD-{o.id.slice(0, 7).toUpperCase()}
+                        {o.reference ?? `#ORD-${o.id.slice(0, 7).toUpperCase()}`}
                       </span>
                     </div>
-                    <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded-full border ${getStatusColor(o.status)}`}>
-                      {o.status}
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`font-meta text-[8px] px-1.5 py-0.5 rounded-full border ${
+                        (o.paymentStatus ?? "UNPAID") === "PAID"
+                          ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                          : (o.paymentStatus ?? "UNPAID") === "PARTIALLY_PAID"
+                            ? "bg-blue-500/10 text-blue-500 border-blue-500/30"
+                            : (o.paymentStatus ?? "UNPAID") === "UNPAID"
+                              ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                              : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
+                      }`}>
+                        {(o.paymentStatus ?? "UNPAID").replace(/_/g, " ")}
+                      </span>
+                      <span className={`font-meta text-[8.5px] px-2 py-0.5 rounded-full border ${getStatusColor(o.status)}`}>
+                        {o.status}
+                      </span>
+                    </div>
                   </div>
 
                   <h4 className="font-display text-xs sm:text-sm font-bold uppercase line-clamp-1 leading-snug">
@@ -988,7 +1086,7 @@ function Orders() {
                   )}
 
                   <div className="mt-2.5 flex items-center justify-between text-[10px] sm:text-[11px] font-meta text-[var(--muted)]">
-                    <span>Step {sIdx + 1}/8 · {pct}%</span>
+                    <span>{sIdx >= 0 ? `Step ${sIdx + 1}/8 · ${pct}%` : "Pre-production"}</span>
                     <span className="font-semibold text-[var(--ink)]">
                       {o.balanceDue > 0 ? (
                         <span className="text-amber-600">Balance {money(o.balanceDue)}</span>
@@ -1034,7 +1132,16 @@ function Orders() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="idx">/studio-operations</span>
-                    <span className="font-meta text-[10px] text-[var(--muted)]">· #ORD-{current.id.slice(0, 8).toUpperCase()}</span>
+                    <span className="font-meta text-[10px] text-[var(--muted)]">· {current.reference ?? `#ORD-${current.id.slice(0, 8).toUpperCase()}`}</span>
+                    {current.checkoutMethod && (
+                      <span className={`font-meta text-[8px] px-1.5 py-0.5 rounded-full border font-bold uppercase ${
+                        current.checkoutMethod === "order_request"
+                          ? "bg-blue-500/10 text-blue-500 border-blue-500/30"
+                          : "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                      }`}>
+                        {current.checkoutMethod === "order_request" ? "Order request" : "Online payment"}
+                      </span>
+                    )}
                   </div>
                   <h2 className="font-display text-lg sm:text-xl font-bold uppercase truncate">
                     {current.items.map((i) => i.name).join(" · ")}
@@ -1061,7 +1168,23 @@ function Orders() {
                       }}
                       className={`${inputCls} !w-auto !py-1.5 font-meta text-[10px] font-bold rounded-xl`}
                     >
-                      {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      {ORDER_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="admin-order-payment-select" className="font-meta text-[9px] text-[var(--muted)] uppercase font-bold">Payment:</label>
+                    <select
+                      id="admin-order-payment-select"
+                      aria-label="Payment status"
+                      value={current.paymentStatus ?? "UNPAID"}
+                      onChange={async (e) => {
+                        const next = e.target.value as PaymentStatus;
+                        const ok = await mutate(() => setPaymentStatus(current.id, next, user?.email ?? "admin"), `Payment status → ${next.replace(/_/g, " ")}`);
+                        if (ok) reload();
+                      }}
+                      className={`${inputCls} !w-auto !py-1.5 font-meta text-[10px] font-bold rounded-xl`}
+                    >
+                      {PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
                     </select>
                   </div>
                   <RemoveButton onRemove={() => deleteOrder(current.id)} onDone={reload} />
@@ -1072,13 +1195,13 @@ function Orders() {
               <div className="px-4 sm:px-6 py-3.5 border-b border-[var(--line)] bg-[var(--dept-soft)]/50">
                 <div className="flex items-center justify-between mb-2 gap-2">
                   <span className="font-meta text-[9.5px] sm:text-[10px] uppercase font-bold text-[var(--dept)] tracking-wider truncate">
-                    Phase {ORDER_STATUSES.indexOf(current.status) + 1} of 8: {current.status}
+                    Phase {orderStatusIndex(current.status) + 1} of 8: {current.status}
                   </span>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="font-meta text-[10px] text-[var(--muted)]">
-                      {Math.round(((ORDER_STATUSES.indexOf(current.status) + 1) / ORDER_STATUSES.length) * 100)}%
+                      {Math.round(((orderStatusIndex(current.status) + 1) / ORDER_STATUSES.length) * 100)}%
                     </span>
-                    {ORDER_STATUSES.indexOf(current.status) < ORDER_STATUSES.length - 1 && (
+                    {orderStatusIndex(current.status) < ORDER_STATUSES.length - 1 && (
                       <button
                         onClick={advanceNextStatus}
                         className="btn btn-dept !py-1 !px-2.5 font-meta text-[9px] rounded-lg"
@@ -1086,6 +1209,13 @@ function Orders() {
                         Advance →
                       </button>
                     )}
+                    <button
+                      onClick={() => { createQuoteFromOrder(current); toast.success("Quote draft prepared from the order — review and issue it in the Finance tab."); }}
+                      className="btn btn-ghost !py-1 !px-2.5 font-meta text-[9px] rounded-lg"
+                      title="Turn this order into a quotation in the Finance tab"
+                    >
+                      Create quote →
+                    </button>
                   </div>
                 </div>
 
@@ -1093,7 +1223,7 @@ function Orders() {
                   <div
                     className="h-full transition-all duration-500"
                     style={{
-                      width: `${Math.round(((ORDER_STATUSES.indexOf(current.status) + 1) / ORDER_STATUSES.length) * 100)}%`,
+                      width: `${Math.round(((orderStatusIndex(current.status) + 1) / ORDER_STATUSES.length) * 100)}%`,
                       background: current.status === "COMPLETED" ? "rgb(16 185 129)" : "var(--dept)",
                     }}
                   />
@@ -1230,8 +1360,33 @@ function Orders() {
                     <div>
                       <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Financials &amp; Balance</h4>
                       <div className="border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)] space-y-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[var(--line)]">
+                          <span className={`font-meta text-[9px] px-2 py-0.5 rounded-full border font-bold ${
+                            (current.paymentStatus ?? "UNPAID") === "PAID"
+                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                              : (current.paymentStatus ?? "UNPAID") === "PARTIALLY_PAID"
+                                ? "bg-blue-500/10 text-blue-500 border-blue-500/30"
+                                : "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                          }`}>
+                            {(current.paymentStatus ?? "UNPAID").replace(/_/g, " ")}
+                          </span>
+                          {current.pricingStatus === "QUOTE_REQUIRED" && (
+                            <span className="font-meta text-[9px] px-2 py-0.5 rounded-full border bg-purple-500/10 text-purple-500 border-purple-500/30 font-bold">
+                              QUOTE REQUIRED — total is an estimate
+                            </span>
+                          )}
+                          {current.reference && (
+                            <button
+                              className="font-meta text-[9px] text-[var(--muted)] hover:text-[var(--dept)] ml-auto"
+                              onClick={() => { void navigator.clipboard?.writeText(current.reference!); toast.success("Reference copied"); }}
+                              title="Copy public order reference"
+                            >
+                              {current.reference} ⧉
+                            </button>
+                          )}
+                        </div>
                         <div className="flex justify-between text-[var(--muted)]">
-                          <span>Total Engagement</span>
+                          <span>{current.pricingStatus === "QUOTE_REQUIRED" ? "Estimated Engagement" : "Total Engagement"}</span>
                           <span className="font-bold text-[var(--ink)]">{money(current.total)}</span>
                         </div>
                         {current.discount > 0 && (
@@ -1255,8 +1410,47 @@ function Orders() {
                         </div>
 
                         <RecordPayment order={current} onDone={reload} />
+
+                        {/* Verified payment events — append-only audit trail */}
+                        {(current.paymentHistory ?? []).length > 0 && (
+                          <div className="pt-2 border-t border-[var(--line)]">
+                            <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider mb-1.5">Payment history</p>
+                            <ul className="space-y-1">
+                              {(current.paymentHistory ?? []).map((p, idx) => (
+                                <li key={idx} className="flex items-center justify-between gap-2 font-meta text-[9.5px] text-[var(--muted)]">
+                                  <span>
+                                    {new Date(p.at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                                    {" · "}{p.method.replace(/_/g, " ")}{p.note ? ` · ${p.note}` : ""}{" · by "}{p.by}
+                                  </span>
+                                  <span className="font-bold text-emerald-600">{money(p.amount)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     </div>
+
+                    {/* Lifecycle audit trail */}
+                    {(current.statusHistory ?? []).length > 0 && (
+                      <div>
+                        <h4 className="font-meta text-[10px] text-[var(--muted)] uppercase tracking-wider mb-2">Order History</h4>
+                        <div className="border border-[var(--line)] p-4 rounded-xl bg-[var(--bg)]">
+                          <ul className="space-y-1.5">
+                            {[...(current.statusHistory ?? [])].reverse().map((h, idx) => (
+                              <li key={idx} className="flex items-center justify-between gap-2 font-meta text-[9.5px] text-[var(--muted)]">
+                                <span className="font-bold text-[var(--ink)]">{h.status}</span>
+                                <span>{new Date(h.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {h.by}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Phase 2 — customer communication + future payment links */}
+                    <WhatsAppPanel order={current} />
+                    <PaymentLinkPanel order={current} onChanged={reload} />
                   </div>
                 )}
 
@@ -4467,6 +4661,215 @@ function PortfolioManager() {
 
 /* ================= SETTINGS ================= */
 
+/* ------------------------------------------------------------------
+   SETTINGS → CHECKOUT (Dual-Mode Checkout, Phase 9)
+   Admin-only (route + Firestore rules). Mode changes are validated,
+   gateway activation requires a passing readiness checklist, and every
+   change is audit-logged with before/after state.
+------------------------------------------------------------------- */
+function CheckoutSettingsPanel() {
+  const { user } = useAuth();
+  const [cfg, setCfg] = useState<CheckoutSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+
+  useEffect(() => {
+    void getCheckoutSettings().then(setCfg);
+    const onChange = () => { void getCheckoutSettings().then(setCfg); };
+    window.addEventListener("sk-content-changed", onChange);
+    return () => window.removeEventListener("sk-content-changed", onChange);
+  }, []);
+
+  if (!cfg) return null;
+  const activeMode = effectiveCheckoutMode(cfg);
+
+  const runGatewayVerification = async () => {
+    setVerifying(true);
+    const provider = getProvider(cfg.gateway.providerId);
+    const checks: { id: string; label: string; ok: boolean; detail?: string }[] = [];
+    checks.push({
+      id: "provider_selected",
+      label: "Payment provider selected",
+      ok: !!provider,
+      detail: provider?.name,
+    });
+    checks.push({
+      id: "provider_available",
+      label: "Provider reports available for this environment",
+      ok: !!provider?.available,
+      detail: provider?.note,
+    });
+    checks.push({
+      id: "credentials_present",
+      label: "Server-side credentials configured",
+      ok: cfg.gateway.providerId === "demo"
+        ? import.meta.env.DEV
+        : Boolean(import.meta.env.VITE_PAYPAL_CLIENT_ID),
+      detail: cfg.gateway.providerId === "demo"
+        ? (import.meta.env.DEV ? "Development build" : "Demo gateway never runs in production")
+        : "VITE_PAYPAL_CLIENT_ID env var",
+    });
+    checks.push({
+      id: "environment_declared",
+      label: `Environment declared: ${cfg.gateway.environment}`,
+      ok: cfg.gateway.environment === "sandbox" || cfg.gateway.environment === "live",
+    });
+    checks.push({
+      id: "webhook_plan",
+      label: "Verified-webhook payment confirmation path",
+      ok: cfg.gateway.providerId === "demo",
+      detail: cfg.gateway.providerId === "demo"
+        ? "Demo provider confirms client-side (development only)"
+        : "Real gateways must confirm payment via authenticated webhook / Cloud Function — not yet implemented",
+    });
+    const verified = checks.every((c) => c.ok);
+    const next: CheckoutSettings = {
+      ...cfg,
+      gateway: {
+        ...cfg.gateway,
+        verified,
+        verifiedAt: new Date().toISOString(),
+        verifiedBy: user?.email ?? "admin",
+        checks,
+      },
+    };
+    await mutate(() => saveCheckoutSettings(next, user?.email ?? "admin"), verified ? "Gateway verified — online payment can now be enabled" : "Verification failed — online payment stays disabled");
+    setCfg(next);
+    setVerifying(false);
+  };
+
+  const setMode = async (mode: (typeof CHECKOUT_MODES)[number]) => {
+    if (mode !== "ORDER_REQUEST" && !cfg.gateway.verified) {
+      toast.error("Gateway not verified — run the readiness checks first. Online payment cannot be enabled until every check passes.");
+      return;
+    }
+    setBusy(true);
+    const next = { ...cfg, mode };
+    await mutate(() => saveCheckoutSettings(next, user?.email ?? "admin"), `Checkout mode → ${mode.replace(/_/g, " ")}`);
+    setCfg(next);
+    setBusy(false);
+  };
+
+  const MODES: { id: (typeof CHECKOUT_MODES)[number]; label: string; desc: string }[] = [
+    { id: "ORDER_REQUEST", label: "Order Request Only", desc: "Customers submit carts without paying. Studio reviews, confirms pricing, and arranges payment offline." },
+    { id: "ONLINE_PAYMENT", label: "Online Payment Only", desc: "Customers pay by card/PayPal through the verified gateway at checkout." },
+    { id: "HYBRID", label: "Hybrid Checkout", desc: "Customers choose: pay online now, or submit an unpaid order request." },
+  ];
+
+  return (
+    <div className="border border-[var(--line)] bg-[var(--panel)] p-5 sm:p-7 rounded-2xl shadow-xs">
+      <div className="pb-4 mb-5 border-b border-[var(--line)]">
+        <h2 className="font-display text-base font-bold uppercase tracking-wider">Checkout Settings</h2>
+        <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+          Controls how customers complete checkout site-wide. Stored server-side; changes are audit-logged.
+        </p>
+        <p className="font-meta text-[10px] mt-2">
+          Currently active:{" "}
+          <strong className="dept-accent uppercase">{activeMode.replace(/_/g, " ")}</strong>
+          {activeMode !== cfg.mode && (
+            <span className="text-amber-600"> (configured {cfg.mode.replace(/_/g, " ")} safely degraded — gateway unverified)</span>
+          )}
+        </p>
+      </div>
+
+      {/* Mode picker */}
+      <div className="space-y-2.5" role="radiogroup" aria-label="Checkout mode">
+        {MODES.map((m) => {
+          const locked = m.id !== "ORDER_REQUEST" && !cfg.gateway.verified;
+          return (
+            <button
+              key={m.id}
+              role="radio"
+              aria-checked={cfg.mode === m.id}
+              disabled={busy || locked}
+              onClick={() => void setMode(m.id)}
+              className={`w-full text-left p-4 rounded-xl border transition-all ${
+                cfg.mode === m.id
+                  ? "border-[var(--dept)] bg-[var(--dept-soft)] ring-1 ring-[var(--dept)]"
+                  : locked
+                    ? "border-[var(--line)] opacity-50 cursor-not-allowed"
+                    : "border-[var(--line)] hover:border-[var(--line-strong)] bg-[var(--bg)]"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-display text-sm font-bold uppercase">{m.label}</span>
+                {cfg.mode === m.id && <span className="font-meta text-[9px] dept-accent font-bold">ACTIVE</span>}
+                {locked && <span className="font-meta text-[9px] text-[var(--muted)]">🔒 REQUIRES VERIFIED GATEWAY</span>}
+              </div>
+              <p className="text-xs text-[var(--muted)] mt-1">{m.desc}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Gateway readiness */}
+      <div className="mt-6 pt-5 border-t border-[var(--line)]">
+        <h3 className="font-display text-sm font-bold uppercase">Payment Gateway Readiness</h3>
+        <p className="font-meta text-[10px] text-[var(--muted)] mt-0.5">
+          Online payment stays disabled until every check passes. No card data ever touches this site — a real integration uses provider-hosted checkout.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <label className={labelCls}>PROVIDER
+            <select
+              className={`${inputCls} mt-1.5`}
+              value={cfg.gateway.providerId ?? ""}
+              onChange={(e) => setCfg({ ...cfg, gateway: { ...cfg.gateway, providerId: e.target.value || null, verified: false } })}
+            >
+              <option value="">— none —</option>
+              {PAYMENT_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className={labelCls}>ENVIRONMENT
+            <select
+              className={`${inputCls} mt-1.5`}
+              value={cfg.gateway.environment}
+              onChange={(e) => setCfg({ ...cfg, gateway: { ...cfg.gateway, environment: e.target.value as "live" | "sandbox", verified: false } })}
+            >
+              <option value="sandbox">Sandbox / testing</option>
+              <option value="live">Live / production</option>
+            </select>
+          </label>
+        </div>
+        {cfg.gateway.providerId && (
+          <p className="font-meta text-[9px] text-[var(--muted)] mt-2">{getProvider(cfg.gateway.providerId)?.note}</p>
+        )}
+
+        {cfg.gateway.checks && (
+          <ul className="mt-4 space-y-1.5">
+            {cfg.gateway.checks.map((c) => (
+              <li key={c.id} className="flex items-start gap-2 text-xs">
+                <span className={c.ok ? "text-emerald-600" : "text-red-500"}>{c.ok ? "✓" : "✗"}</span>
+                <span className="flex-1">
+                  {c.label}
+                  {c.detail && <span className="block font-meta text-[9px] text-[var(--muted)]">{c.detail}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3 mt-4">
+          <button
+            className="btn btn-dept !py-2 !px-4 rounded-xl font-meta text-[10px] uppercase font-bold"
+            disabled={verifying || !cfg.gateway.providerId}
+            onClick={() => void runGatewayVerification()}
+          >
+            {verifying ? "Verifying…" : cfg.gateway.verified ? "Re-run verification" : "Run verification checks"}
+          </button>
+          {cfg.gateway.verified && (
+            <span className="font-meta text-[9px] text-emerald-600">
+              ✓ Verified {cfg.gateway.verifiedAt ? new Date(cfg.gateway.verifiedAt).toLocaleDateString() : ""} by {cfg.gateway.verifiedBy}
+            </span>
+          )}
+        </div>
+        <p className="font-meta text-[8.5px] text-[var(--muted)] mt-3 leading-relaxed">
+          Switching modes never modifies existing orders, carts, prices, or payment states — each order stores the checkout method used when it was created.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SettingsManager() {
   const money = useMoney();
   const [s, setS] = useState<SiteSettings>({});
@@ -4485,6 +4888,9 @@ function SettingsManager() {
 
   return (
     <div className="max-w-3xl space-y-8">
+      <CheckoutSettingsPanel />
+      <WhatsAppTemplatesEditor />
+
       <div className="border border-[var(--line)] bg-[var(--panel)] p-5 sm:p-7 rounded-2xl shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-[var(--line)]">
           <div>
@@ -7906,6 +8312,16 @@ export default function Admin() {
   const { currency, setCurrency, fxLive } = useShop();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Orders");
   useSEO({ title: "Admin — Social Kon10 Marketing", description: "Studio admin dashboard." });
+
+  // Cross-panel tab handoff (e.g. Orders cockpit → Finance quote builder)
+  useEffect(() => {
+    const onTab = (e: Event) => {
+      const target = (e as CustomEvent<string>).detail;
+      if ((TABS as readonly string[]).includes(target)) setTab(target as (typeof TABS)[number]);
+    };
+    window.addEventListener("sk-admin-tab", onTab);
+    return () => window.removeEventListener("sk-admin-tab", onTab);
+  }, []);
 
   const allowed = firebaseReady ? isAdmin : true; // demo mode: open for preview
 

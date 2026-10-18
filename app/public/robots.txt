@@ -1,4 +1,12 @@
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /client
+Disallow: /checkout
+Disallow: /meet
+Disallow: /editor
+Disallow: /invoice
+Disallow: /quote
+Disallow: /pay
 
 Sitemap: https://socialkon10.com/sitemap.xml

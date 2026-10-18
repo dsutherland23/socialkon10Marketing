@@ -548,6 +548,11 @@ function resolveClientGeo(): { code: string; name: string; flag: string; city: s
  */
 async function enrichSessionWithIpGeo(): Promise<void> {
   if (typeof window === "undefined" || !_sessionData) return;
+  // Local development: third-party geo endpoints are blocked by CORS on
+  // localhost and would only spam the console — the TZ-guessed country is
+  // good enough there.
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return;
 
   /** Resolve country name + flag for any ISO-3166-1 alpha-2 code */
   function resolveCountryMeta(code: string): { name: string; flag: string } {
@@ -563,6 +568,7 @@ async function enrichSessionWithIpGeo(): Promise<void> {
     }
   }
 
+  let primaryResolved = false;
   try {
     // Primary: Free, zero-auth, high-availability IP country resolver
     const controller = new AbortController();
@@ -575,6 +581,7 @@ async function enrichSessionWithIpGeo(): Promise<void> {
       const data = await res.json();
       const countryCode = (data.country || "").toUpperCase();
       if (countryCode && countryCode.length === 2) {
+        primaryResolved = true;
         const meta = resolveCountryMeta(countryCode);
         // Update if the IP-resolved country differs from the TZ-guessed one
         if (_sessionData.country_code !== countryCode) {
@@ -589,7 +596,10 @@ async function enrichSessionWithIpGeo(): Promise<void> {
     }
   } catch { /* country.is timed out or errored — fall through to ipapi */ }
 
-  // Secondary pass: ipapi.co for city-level enrichment (always attempt, non-blocking)
+  // Secondary pass: ipapi.co for city-level enrichment — only when the
+  // primary resolver failed (avoids a redundant third-party call on every
+  // session and the console noise when that call is blocked).
+  if (primaryResolved) return;
   try {
     const res2 = await fetch("https://ipapi.co/json/");
     if (res2.ok) {

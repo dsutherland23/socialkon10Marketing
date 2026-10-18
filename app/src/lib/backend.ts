@@ -7,6 +7,14 @@ import { ref, uploadBytes, getDownloadURL, getBytes, deleteObject } from "fireba
 import type { User } from "firebase/auth";
 import { db, storage, firebaseReady } from "./firebase";
 import type { CartItem } from "./shop";
+import {
+  TERMINAL_STATUSES,
+  derivePaymentStatus,
+  paymentStatusAfterPayment,
+  type CheckoutMethod,
+  type PaymentStatus,
+  type PricingStatus,
+} from "./order-utils";
 
 /* ------------------------------------------------------------------
    BACKEND LAYER — Firestore + Storage
@@ -19,6 +27,30 @@ export const ORDER_STATUSES = [
   "REVISION", "FINAL APPROVAL", "DELIVERED", "COMPLETED",
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+/** Pipeline position for progress UI; pre-production statuses return -1 (rendered as step 1). */
+export const orderStatusIndex = (status: string): number => (ORDER_STATUSES as readonly string[]).indexOf(status);
+
+/** Full lifecycle: production pipeline + pre-production / terminal states (dual-mode checkout). */
+export const ORDER_STATUS_OPTIONS = [
+  "ORDER RECEIVED", "UNDER REVIEW", "AWAITING CUSTOMER", "QUOTE SENT", "AWAITING PAYMENT",
+  "DISCOVERY", "CONCEPT", "CLIENT REVIEW", "REVISION", "FINAL APPROVAL", "DELIVERED",
+  "COMPLETED", "CANCELLED",
+] as const;
+
+export interface PaymentRecordEntry {
+  amount: number;
+  method: string;          // e.g. "bank_transfer" | "cash" | "card_offline" | "online_gateway"
+  note?: string;
+  at: string;
+  by: string;              // admin email who recorded it
+}
+
+export interface StatusHistoryEntry {
+  status: string;
+  at: string;
+  by: string;
+}
 
 export interface OrderRecord {
   id: string;
@@ -36,8 +68,23 @@ export interface OrderRecord {
   promo: string | null;
   details: Record<string, string>;
   files: { name: string; size: number; path?: string }[];
-  status: OrderStatus;
+  status: OrderStatus | string;
   createdAt: string;
+  /* ---- dual-mode checkout fields (optional for backward compatibility) ---- */
+  /** public human-readable reference, e.g. SK10-260218-7K3PQ — never an access credential */
+  reference?: string;
+  /** how this order was placed; stored at creation time and never changed by mode switches */
+  checkoutMethod?: CheckoutMethod;
+  /** payment lifecycle — independent from production status */
+  paymentStatus?: PaymentStatus;
+  /** CONFIRMED fixed pricing vs QUOTE_REQUIRED estimate */
+  pricingStatus?: PricingStatus;
+  /** display currency chosen by the customer at submission (amounts remain USD) */
+  currency?: string;
+  /** verified payment events (offline or gateway), append-only */
+  paymentHistory?: PaymentRecordEntry[];
+  /** lifecycle audit trail, append-only */
+  statusHistory?: StatusHistoryEntry[];
   /** set automatically when status → COMPLETED (history archive); cleared if the order is reopened */
   completedAt?: string | null;
   /** chat read-tracking: set when the client posts; studioReadAt when the studio views the thread */
@@ -227,11 +274,20 @@ function normalizeOrder(id: string, data: Record<string, unknown>): OrderRecord 
   if (cr) rec.clientReadAt = cr; else delete rec.clientReadAt;
   const ca = tsToIso(data.completedAt);
   if (ca) rec.completedAt = ca; else delete rec.completedAt;
+  // Dual-mode checkout: derive a trustworthy payment status for legacy rows
+  // (written before the field existed) from their money fields.
+  rec.paymentStatus = derivePaymentStatus({
+    total: Number(rec.total) || 0,
+    amountPaid: Number(rec.amountPaid) || 0,
+    paymentStatus: rec.paymentStatus,
+  });
+  if (!Array.isArray(rec.paymentHistory)) rec.paymentHistory = [];
+  if (!Array.isArray(rec.statusHistory)) rec.statusHistory = [];
   return rec;
 }
 
-/** History membership: an order auto-archives the moment it's tagged COMPLETED. */
-export const isOrderHistory = (o: OrderRecord): boolean => o.status === "COMPLETED";
+/** History membership: COMPLETED orders and CANCELLED orders both archive. */
+export const isOrderHistory = (o: OrderRecord): boolean => TERMINAL_STATUSES.includes(o.status);
 
 /* ---------------- orders ---------------- */
 
@@ -239,9 +295,14 @@ export async function createOrder(
   data: Omit<OrderRecord, "id" | "status" | "createdAt" | "uid">,
   user: User | null
 ): Promise<string> {
-  const base = { ...data, uid: user?.uid ?? null, status: "ORDER RECEIVED" as OrderStatus };
+  const base = {
+    ...data,
+    uid: user?.uid ?? null,
+    status: "ORDER RECEIVED" as OrderStatus,
+    statusHistory: [{ status: "ORDER RECEIVED", at: new Date().toISOString(), by: "system:checkout" }],
+  };
   if (!firebaseReady || !db) {
-    const id = `SK-DEMO-${String(Date.now()).slice(-6)}`;
+    const id = data.reference ?? `SK-DEMO-${String(Date.now()).slice(-6)}`;
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     orders.unshift({ ...base, id, createdAt: new Date().toISOString() });
     await idbSet("sk-demo-orders", orders);
@@ -249,7 +310,7 @@ export async function createOrder(
     window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return id;
   }
-  const refDoc = await addDoc(collection(db, "orders"), { ...base, createdAt: serverTimestamp() });
+  const refDoc = await addDoc(collection(db, "orders"), cleanFirestoreData({ ...base, createdAt: serverTimestamp() }));
   window.dispatchEvent(new CustomEvent("sk-order-complete"));
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
   return refDoc.id;
@@ -537,36 +598,67 @@ export async function resetAccountingLedger(allOrderIds: string[] = []): Promise
   window.dispatchEvent(new CustomEvent("sk-content-changed"));
 }
 
-export async function setOrderStatus(id: string, status: OrderStatus): Promise<void> {
+export async function setOrderStatus(id: string, status: OrderStatus | string, actor = "admin"): Promise<void> {
   // Auto-archive: entering COMPLETED stamps the completion date (history record);
   // reopening (any other status) clears it so the order returns to active lists.
   const completedAt = status === "COMPLETED" ? new Date().toISOString() : null;
+  const historyEntry: StatusHistoryEntry = { status, at: new Date().toISOString(), by: actor };
   if (!firebaseReady || !db) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
-    await idbSet("sk-demo-orders", orders.map((o) => (o.id === id ? { ...o, status, completedAt: completedAt ?? undefined } : o)));
+    await idbSet("sk-demo-orders", orders.map((o) => (o.id === id ? {
+      ...o, status, completedAt: completedAt ?? undefined,
+      statusHistory: [...(o.statusHistory ?? []), historyEntry],
+    } : o)));
     window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
-  await updateDoc(doc(db, "orders", id), { status, completedAt });
+  const ref = doc(db, "orders", id);
+  const snap = await getDoc(ref);
+  const prevHistory = snap.exists() ? ((snap.data().statusHistory as StatusHistoryEntry[] | undefined) ?? []) : [];
+  await updateDoc(ref, { status, completedAt, statusHistory: [...prevHistory, historyEntry] });
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
 
+/** Admin-set payment lifecycle (UNPAID → PENDING → PAID …). Audited via statusHistory-style trail. */
+export async function setPaymentStatus(id: string, paymentStatus: PaymentStatus, actor = "admin"): Promise<void> {
+  if (!firebaseReady || !db) {
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet("sk-demo-orders", orders.map((o) => (o.id === id ? { ...o, paymentStatus } : o)));
+    window.dispatchEvent(new CustomEvent("sk-order-updated"));
+    return;
+  }
+  await updateDoc(doc(db, "orders", id), { paymentStatus });
+  window.dispatchEvent(new CustomEvent("sk-order-updated"));
+  try {
+    await logAudit({ user: actor, action: "payment_status_changed", entity: `order:${id}`, after: { paymentStatus } });
+  } catch { /* audit must not break the operation */ }
+}
+
 /** Batch update statuses for multiple orders. */
-export async function setOrdersStatus(ids: string[], status: OrderStatus): Promise<void> {
+export async function setOrdersStatus(ids: string[], status: OrderStatus | string, actor = "admin"): Promise<void> {
   if (!ids || ids.length === 0) return;
   const idSet = new Set(ids);
   const completedAt = status === "COMPLETED" ? new Date().toISOString() : null;
+  const historyEntry: StatusHistoryEntry = { status, at: new Date().toISOString(), by: actor };
   if (!firebaseReady || !db) {
     const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
     await idbSet(
       "sk-demo-orders",
-      orders.map((o) => (idSet.has(o.id) ? { ...o, status, completedAt: completedAt ?? undefined } : o))
+      orders.map((o) => (idSet.has(o.id) ? {
+        ...o, status, completedAt: completedAt ?? undefined,
+        statusHistory: [...(o.statusHistory ?? []), historyEntry],
+      } : o))
     );
     window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
   await Promise.allSettled(
-    ids.map((id) => updateDoc(doc(db!, "orders", id), { status, completedAt }))
+    ids.map(async (id) => {
+      const ref = doc(db!, "orders", id);
+      const snap = await getDoc(ref);
+      const prevHistory = snap.exists() ? ((snap.data().statusHistory as StatusHistoryEntry[] | undefined) ?? []) : [];
+      return updateDoc(ref, { status, completedAt, statusHistory: [...prevHistory, historyEntry] });
+    })
   );
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
 }
@@ -610,21 +702,30 @@ export async function deleteOrderFile(orderId: string, filePathOrName: string): 
 export async function attachFiles(
   orderId: string,
   files: File[],
-  onProgress?: (fileIndex: number, totalFiles: number, fileName: string) => void
-): Promise<{ name: string; size: number; path?: string }[]> {
+  onProgress?: (fileIndex: number, totalFiles: number, fileName: string) => void,
+  meta?: { uploadedBy?: string; kind?: string }
+): Promise<{ name: string; size: number; path?: string; uploadedBy?: string; uploadedAt?: string; kind?: string; scanStatus?: string }[]> {
   if (files.length === 0) return [];
-  const out: { name: string; size: number; path?: string }[] = [];
+  const out: { name: string; size: number; path?: string; uploadedBy?: string; uploadedAt?: string; kind?: string; scanStatus?: string }[] = [];
 
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     onProgress?.(i + 1, files.length, f.name);
     const path = `orders/${orderId}/${Date.now()}-${f.name.replace(/[^\w.-]/g, "_")}`;
+    // Phase 2 provenance metadata — scanStatus is honestly "not_scanned":
+    // no AV runs client-side, so nothing may ever claim "clean".
+    const stamp = {
+      uploadedBy: meta?.uploadedBy ?? "customer",
+      uploadedAt: new Date().toISOString(),
+      kind: meta?.kind ?? "customer_upload",
+      scanStatus: "not_scanned",
+    };
 
     let uploaded = false;
     if (firebaseReady && storage) {
       try {
         await uploadBytes(ref(storage, path), f);
-        out.push({ name: f.name, size: f.size, path });
+        out.push({ name: f.name, size: f.size, path, ...stamp });
         uploaded = true;
       } catch (err) {
         console.warn("Storage upload failed, falling back to local storage:", err);
@@ -636,9 +737,9 @@ export async function attachFiles(
         const buf = await f.arrayBuffer();
         const localKey = `local://${path}`;
         await storeLocalBinary(localKey, buf);
-        out.push({ name: f.name, size: f.size, path: localKey });
+        out.push({ name: f.name, size: f.size, path: localKey, ...stamp });
       } catch {
-        out.push({ name: f.name, size: f.size });
+        out.push({ name: f.name, size: f.size, ...stamp });
       }
     }
   }
@@ -1177,6 +1278,12 @@ export interface SiteSettings {
   location?: string;
   socials?: { id: string; label: string; href: string }[];
   catchDiscountPct?: number;   // "Catch me" easter egg — % off, 0/blank disables the egg
+  /** Dual-mode checkout configuration (Phase 4/9). Publicly readable so the
+      storefront can render the right checkout; writable by admins only. */
+  checkout?: unknown;
+  /** Admin-customized WhatsApp follow-up templates (Phase 2). Overrides merge
+      over the shipped defaults by template id. */
+  whatsappTemplates?: { id: string; label: string; body: string }[];
   /** Business details & banking info for invoices, quotes, receipts (Finance PRD) */
   financeSettings?: {
     businessName?: string;
@@ -1541,30 +1648,71 @@ export async function convertLeadToOrder(lead: LeadRecord, amountUsd: number, de
 }
 
 /**
- * Record a payment against an order (deposit, balance or proposal payment).
- * NOTE: Firestore rules intentionally deny client-side writes to payment
- * fields — in production this must be called from a verified payment
- * webhook / Cloud Function (see FIREBASE-SETUP.md §7). It succeeds in
- * demo mode (localStorage) and for admins; client calls in live mode are
- * caught by the caller and treated as "pending provider confirmation".
+ * Record a verified payment against an order (deposit, balance or proposal payment).
+ *
+ * Authorization: Firestore rules restrict payment-field writes to admins —
+ * a customer can never mark their own order paid. In production this is
+ * called either by an admin recording a verified offline payment (method,
+ * amount, timestamp and reference are all captured) or by a future payment
+ * webhook / Cloud Function running with admin privileges.
+ *
+ * Money moves through integer cents; the order's paymentStatus is derived
+ * from the post-payment amounts and every event is appended to the
+ * immutable paymentHistory trail + finance audit log.
  */
-export async function recordPayment(orderId: string, amountUsd: number): Promise<void> {
+export async function recordPayment(
+  orderId: string,
+  amountUsd: number,
+  meta: { method?: string; note?: string; by?: string } = {}
+): Promise<void> {
+  const amountCents = Math.round(amountUsd * 100);
+  if (amountCents <= 0) throw new Error("Payment amount must be greater than zero.");
+  const entry: PaymentRecordEntry = {
+    amount: amountCents / 100,
+    method: meta.method || "unspecified",
+    ...(meta.note ? { note: meta.note } : {}),
+    at: new Date().toISOString(),
+    by: meta.by || "admin",
+  };
+
+  const apply = (o: OrderRecord): OrderRecord => {
+    const paidCents = Math.round((o.amountPaid ?? 0) * 100) + amountCents;
+    const balCents = Math.max(0, Math.round((o.total ?? 0) * 100) - paidCents);
+    const amountPaid = paidCents / 100;
+    return {
+      ...o,
+      amountPaid,
+      balanceDue: balCents / 100,
+      paymentStatus: paymentStatusAfterPayment({ total: o.total ?? 0, amountPaid: o.amountPaid ?? 0 }, amountCents / 100),
+      paymentHistory: [...(o.paymentHistory ?? []), entry],
+    };
+  };
+
   if (!firebaseReady || !db) {
-    const orders = ls.read<OrderRecord>("sk-demo-orders").map((o) =>
-      o.id === orderId
-        ? { ...o, amountPaid: o.amountPaid + amountUsd, balanceDue: Math.max(0, o.balanceDue - amountUsd) }
-        : o
-    );
-    ls.write("sk-demo-orders", orders);
+    const orders = (await idbGet<OrderRecord[]>("sk-demo-orders")) || [];
+    await idbSet("sk-demo-orders", orders.map((o) => (o.id === orderId ? apply(o) : o)));
     window.dispatchEvent(new CustomEvent("sk-order-updated"));
     return;
   }
   const ref = doc(db, "orders", orderId);
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
-  const o = snap.data() as OrderRecord;
-  await updateDoc(ref, { amountPaid: (o.amountPaid ?? 0) + amountUsd, balanceDue: Math.max(0, (o.balanceDue ?? 0) - amountUsd) });
+  const updated = apply(normalizeOrder(snap.id, snap.data()));
+  await updateDoc(ref, cleanFirestoreData({
+    amountPaid: updated.amountPaid,
+    balanceDue: updated.balanceDue,
+    paymentStatus: updated.paymentStatus,
+    paymentHistory: updated.paymentHistory,
+  }));
   window.dispatchEvent(new CustomEvent("sk-order-updated"));
+  try {
+    await logAudit({
+      user: entry.by,
+      action: "payment_recorded",
+      entity: `order:${orderId}`,
+      after: entry,
+    });
+  } catch { /* audit must not break a recorded payment */ }
 }
 
 export function cartToOrderItems(items: CartItem[]) {

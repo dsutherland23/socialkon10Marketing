@@ -1,0 +1,972 @@
+# SOCIALKON10 MARKETING AGENCY
+## 2026 Master Website Audit, Dual-Mode Checkout & Production Readiness Prompt
+
+### ROLE AND OBJECTIVE
+
+Act as a senior engineering team consisting of:
+
+- Full-stack software architect
+- E-commerce systems architect
+- Cybersecurity engineer
+- Senior UX/UI designer
+- QA automation engineer
+- Database architect
+- Accessibility specialist
+- Performance and SEO engineer
+
+**PROJECT:** SocialKon10 Marketing Agency — a creative marketing, branding, graphic design, video production, printing, and digital services company with an online storefront and administrative dashboard.
+
+**MISSION:**
+
+Conduct a complete technical, visual, functional, security, performance, and user experience audit of the existing website against applicable 2026 web development standards.
+
+Additionally, design and implement a robust **Dual-Mode Checkout System** that allows customers to place orders without making an online payment, while preserving the ability to enable an integrated credit/debit card checkout later.
+
+**This is an implementation and verification task, not merely a recommendations report.**
+
+Inspect the real codebase, establish its architecture, identify problems, implement safe corrections, write tests, and verify critical workflows.
+
+Preserve the existing brand identity, approved design, current features, integrations, customer records, and business functionality.
+
+Do not unnecessarily rebuild the website.
+
+---
+
+# PHASE 1 — COMPLETE CODEBASE & ARCHITECTURE DISCOVERY
+
+Before making modifications:
+
+1. Identify the existing frontend framework, backend framework, database, hosting, authentication system, state management, and API infrastructure.
+2. Map every public route, customer account route, product/service route, shopping cart route, checkout page, and administrative page.
+3. Inventory all buttons, forms, menus, tabs, dialogs, dropdowns, toggles, links, API calls, and data operations.
+4. Identify all services and products currently offered.
+5. Inspect existing customer accounts, order records, product pricing, discounts, taxes, upload systems, and payment-related integrations.
+6. Identify the current cart storage and lifecycle.
+7. Find unfinished features, disconnected components, mocked data, dead buttons, empty event handlers, TODOs, deprecated code, and incomplete user journeys.
+8. Identify the existing security model and administrative permission boundaries.
+9. Run baseline build, lint, typecheck, and available automated tests.
+10. Document existing behavior before making changes.
+
+Do not assume the presence of features that have not been confirmed in the codebase.
+
+---
+
+# PHASE 2 — PROFESSIONAL VISUAL & RESPONSIVE AUDIT
+
+Inspect every page for:
+
+- Proper alignment and spacing
+- Consistent typography
+- Grid and layout consistency
+- Premium creative-agency presentation
+- Consistent buttons and visual components
+- Brand colors and identity
+- Header and navigation
+- Footer consistency
+- Product cards and pricing displays
+- Service information hierarchy
+- Portfolio presentation
+- Image scaling and cropping
+- Mobile-friendly interaction
+- Shopping cart usability
+- Checkout usability
+- Forms and validation states
+- Toasts, modals, alerts, and notifications
+- Loading, empty, success, and error states
+- Text contrast and accessibility
+- Unexpected layout shifts
+- Hidden or overlapping interface elements
+
+Test viewport widths of 320, 360, 375, 390, 414, 768, 1024, 1280, 1440, and 1920 pixels.
+
+Test actual browser compatibility with Chrome, Safari, Firefox, and Edge where supported.
+
+Correct layout inconsistencies without altering the approved visual direction.
+
+Aim for an attractive, modern, premium, professional marketing agency website rather than a generic template.
+
+---
+
+# PHASE 3 — FUNCTIONALITY & SILENT FAILURE AUDIT
+
+Test every existing interactive component.
+
+Verify that:
+
+1. Buttons execute their advertised actions.
+2. Forms validate and submit properly.
+3. Database operations complete and persist.
+4. All cart operations work.
+5. Product quantities and totals update correctly.
+6. Navigation and links work.
+7. File uploads are handled correctly.
+8. Customer accounts function when implemented.
+9. Admin operations function correctly.
+10. Success confirmations represent genuinely completed operations.
+
+Find and correct:
+
+- Empty catch blocks
+- Unhandled promise rejections
+- API errors ignored by the interface
+- Incomplete database writes
+- Duplicate submissions
+- Missing loading states
+- Forms resetting after failed requests
+- Broken notification delivery
+- Lost cart information
+- Authentication errors
+- Misleading success states
+- Frontend/backend data mismatches
+- Race conditions and failed retries
+
+Every critical operation must have a visible success state, failure state, structured server log, and appropriate recovery behavior.
+
+Never conceal failures.
+
+---
+
+# PHASE 4 — DUAL-MODE CHECKOUT ARCHITECTURE
+
+## PRIMARY REQUIREMENT
+
+Implement a configurable checkout architecture with three supported modes:
+
+**MODE A — ORDER REQUEST**
+
+Customers submit their shopping carts without paying online.
+
+**MODE B — ONLINE PAYMENT**
+
+Customers pay using a verified integrated payment gateway.
+
+**MODE C — HYBRID**
+
+Customers choose between immediate online payment and submitting an unpaid order request.
+
+### Initial configuration
+
+Set the website's active checkout mode to:
+
+`ORDER_REQUEST`
+
+The online payment mode must remain disabled until a supported payment gateway is configured, verified, tested, and explicitly enabled by an authorized administrator.
+
+Do not attempt to charge credit cards or collect card information while the gateway is disabled.
+
+### Architecture requirement
+
+Use one shared system for:
+
+- Product and service catalog
+- Shopping cart
+- Server-side pricing
+- Discounts
+- Taxes
+- Order creation
+- Customer information
+- Order line items
+- Administrative management
+- Order history
+- Notifications
+- Reporting
+
+Do not build separate disconnected order databases for each checkout method.
+
+Separate the concepts of:
+
+- Order status
+- Payment status
+- Fulfillment status
+- Checkout method
+
+The checkout mode must be configurable without code modifications or redeployment where the architecture supports runtime settings.
+
+Store checkout configuration securely on the server. Client-side settings must not be considered authoritative.
+
+Protect configuration changes with administrator permissions, validation, and audit logging.
+
+---
+
+# PHASE 5 — ORDER REQUEST CHECKOUT
+
+Create a professional checkout experience allowing customers to submit their carts without online payment.
+
+## Customer Journey
+
+1. Customer browses products and services.
+2. Customer adds items to the cart.
+3. Customer adjusts quantities and chooses available options.
+4. Customer opens checkout.
+5. Customer reviews the order summary.
+6. Customer enters contact and project information.
+7. Server validates current product details, availability, and prices.
+8. Customer submits the order request.
+9. Server saves the complete order transactionally.
+10. System generates and stores a unique order reference.
+11. Customer receives confirmation.
+12. Admin sees the order in the dashboard.
+
+### Checkout fields
+
+Collect relevant information:
+
+- Full name
+- Email address
+- Phone number
+- Company name (optional)
+- Selected products and services
+- Quantity
+- Selected options or variations
+- Project instructions
+- Desired completion date (optional)
+- Delivery or collection preference, if applicable
+- Delivery address, if applicable
+- Artwork or supporting files, if applicable
+- Additional comments
+- Agreement to applicable terms and privacy notice
+
+Minimize unnecessary fields and use appropriate validation.
+
+Do not require customers to create accounts unless there is a genuine business requirement.
+
+Support guest checkout.
+
+### Submit button
+
+When Order Request Mode is enabled, display:
+
+**Submit Order Request**
+
+Do not display "Pay Now" or falsely imply payment has been completed.
+
+### Confirmation
+
+After the server successfully commits the order, display:
+
+**Your Order Request Has Been Received!**
+
+Include:
+
+- Unique order reference
+- Summary of submitted items
+- Total or estimated total
+- Currency
+- Date submitted
+- Customer name
+- Order status
+- Clear next-step instructions
+- Confirmation that no payment has been collected
+- Option to copy the reference
+- Option to print or download the order summary
+
+Send a confirmation email if the email provider is configured.
+
+Email delivery failures must not silently invalidate successfully saved orders. Track notification delivery independently.
+
+### Reference number requirements
+
+Use a human-readable identifier, for example:
+
+`SK10-YYMMDD-RANDOM`
+
+The actual production format must:
+
+- Be generated on the server
+- Be collision-resistant
+- Have a database uniqueness constraint
+- Avoid predictable sequential public IDs
+- Never be treated as authorization
+- Be separate from the internal database primary key
+- Remain immutable
+
+A customer knowing an order reference must not automatically gain access to the customer's personal information.
+
+---
+
+# PHASE 6 — ORDER DATA INTEGRITY & PRICING
+
+Every order must store an immutable snapshot of the items submitted.
+
+Create or adapt an order architecture containing appropriate records for:
+
+### Orders
+
+- Internal order ID
+- Public order reference
+- Customer ID when authenticated
+- Guest customer information when applicable
+- Checkout method
+- Order status
+- Payment status
+- Fulfillment status
+- Currency
+- Subtotal
+- Discounts
+- Applicable tax
+- Delivery/shipping fees when applicable
+- Total
+- Pricing confirmation status
+- Customer instructions
+- Submission timestamp
+- Updated timestamp
+- Relevant administrative metadata
+
+### Order Items
+
+- Order ID
+- Original product/service ID
+- Product/service name snapshot
+- Description snapshot
+- Selected options
+- Quantity
+- Unit price
+- Discount amount
+- Tax amount
+- Line total
+- Customization metadata
+- File attachment references, if applicable
+
+Use appropriately precise money types, such as integer minor units or fixed-precision decimal values.
+
+Never use ordinary floating-point calculations as the authoritative method for financial totals.
+
+Always recalculate prices on the server using trusted catalog data.
+
+Never trust totals, discounts, taxes, or product prices submitted by the browser.
+
+### Pricing requirements
+
+Support two pricing classifications where relevant:
+
+**Fixed-price product/service**
+
+The customer sees a confirmed price based on current catalog configuration.
+
+**Quote-required product/service**
+
+The customer sees a clearly labeled estimate or "Quote Required" status until SocialKon10 confirms the final pricing.
+
+Avoid making customers believe that an estimate is a final guaranteed price.
+
+When a cart contains quote-required items, do not misrepresent the whole order as a confirmed total.
+
+If product prices change after order submission, preserve the original submitted price snapshot.
+
+Any revised amount must be recorded as an authorized order revision, not silently overwrite the original values.
+
+Support applicable currency and tax rules according to configured business settings. Do not invent tax rates.
+
+---
+
+# PHASE 7 — ADMINISTRATIVE ORDER MANAGEMENT
+
+Build or improve an **Order Management** section within the existing SocialKon10 admin dashboard.
+
+Administrators must be able to see incoming order requests, search them, review them, and manage their lifecycle.
+
+### Order List
+
+Display:
+
+- Order reference
+- Customer
+- Date submitted
+- Total/estimated value
+- Currency
+- Item count
+- Checkout method
+- Order status
+- Payment status
+- Assigned team member, if supported
+- Quick view action
+
+### Filtering
+
+Allow filtering by:
+
+- Status
+- Date range
+- Customer
+- Order reference
+- Payment state
+- Checkout method
+- Service or product category
+
+Include sorting and pagination.
+
+### Order Detail
+
+When an administrator opens an order, display the complete original cart.
+
+Show:
+
+- Each product/service
+- Quantity
+- Selected options
+- Unit prices
+- Line totals
+- Discounts
+- Taxes
+- Subtotal and overall total
+- Customer contact information
+- Project requirements
+- Uploaded documents
+- Delivery details
+- Current status
+- Order history
+- Staff notes
+- Customer-facing notes
+
+Do not merely show a reference number or unstructured JSON.
+
+### Order statuses
+
+Implement or map to clear business statuses:
+
+- New Request
+- Under Review
+- Awaiting Customer Response
+- Quote Sent
+- Awaiting Payment
+- Confirmed
+- In Progress
+- Ready for Delivery
+- Completed
+- Cancelled
+
+Support only valid transitions.
+
+### Payment statuses
+
+Keep separately:
+
+- Unpaid
+- Pending
+- Partially Paid, if supported
+- Paid
+- Refunded, if supported
+- Failed, if applicable
+
+An order being accepted or marked in progress must not automatically imply payment was received.
+
+### Admin Actions
+
+Authorized administrators should be able to:
+
+- Open an order
+- Update order status
+- Assign an order
+- Add internal notes
+- View attached files
+- Create or revise a quote
+- Record approved pricing adjustments
+- Record a verified offline payment where supported
+- Mark an order completed
+- Cancel an order
+- Export order details
+- Generate a printable order summary
+- Access an audit history
+
+Manual payment recording must require authorization, payment method, amount, timestamp, and transaction/reference details where appropriate.
+
+All critical modifications must be auditable.
+
+Do not allow order deletion or edits that erase financial history without appropriate retention and authorization controls.
+
+---
+
+# PHASE 8 — CUSTOMER COMMUNICATION & NOTIFICATIONS
+
+Implement a reliable notification workflow.
+
+### On successful order creation
+
+1. Save the order first.
+2. Queue or initiate the admin notification.
+3. Queue or initiate customer confirmation.
+4. Record notification delivery state.
+5. Retry transient delivery failures safely.
+
+### Administrator notification
+
+Include:
+
+- New order reference
+- Customer name
+- Number of items
+- Submitted total or estimate
+- Submission time
+- Secure link to the order in the admin dashboard
+
+Do not include unnecessary private customer details in external notification channels.
+
+### Customer notification
+
+Include:
+
+- Order reference
+- Clear list of submitted items
+- Total or estimated amount
+- Confirmation that payment has not been taken
+- What happens next
+- Contact or support instructions
+
+Never claim that an order is paid or confirmed until the relevant business conditions have actually been satisfied.
+
+---
+
+# PHASE 9 — ADMIN CHECKOUT CONFIGURATION
+
+Create a protected **Settings > Checkout** section.
+
+### Settings
+
+Checkout Mode:
+
+- Order Request Only
+- Online Payment Only
+- Hybrid Checkout
+
+Display the currently active mode.
+
+Allow authorized administrators to modify checkout settings.
+
+### Payment Gateway Readiness
+
+Before Online Payment can be activated, verify:
+
+- Payment provider configuration
+- Required credentials are present in secure server configuration
+- Environment matches live or sandbox intent
+- API connectivity is healthy
+- Approved currencies are supported
+- Checkout session creation works
+- Webhook authentication is correct
+- Webhook processing is idempotent
+- Payment success and failure flows are tested
+- Order/payment reconciliation works
+- Refund and cancellation workflows are supported where required
+
+A missing or unhealthy gateway must prevent activation of Online Payment Only.
+
+Do not expose private payment credentials in the admin frontend.
+
+### Safe Switching
+
+Switching checkout mode must:
+
+- Not modify old orders
+- Not lose customer carts
+- Not change historical prices
+- Not mark existing unpaid orders as paid
+- Not interrupt already-created payment sessions incorrectly
+- Not duplicate orders
+- Not change fulfillment status
+- Be reflected consistently throughout the website
+
+Store the checkout method used at the time each order was created.
+
+An administrator must be able to distinguish manually submitted orders from online-paid orders.
+
+### Hybrid Mode
+
+When enabled and verified, let customers choose:
+
+**Pay Online**
+
+or
+
+**Submit Order Request**
+
+Both paths must create compatible order records.
+
+---
+
+# PHASE 10 — FUTURE CREDIT/DEBIT CARD PAYMENT INTEGRATION
+
+Build the architecture to support a future payment provider through a modular integration layer.
+
+Do not hardcode the business logic directly to a specific payment processor.
+
+The integration design must support:
+
+- Hosted checkout sessions or secure provider-controlled payment components
+- Server-generated payment requests
+- Provider-side customer payment capture
+- Verified payment callbacks/webhooks
+- Independent transaction records
+- Idempotent payment event handling
+- Failed and cancelled payments
+- Pending payment states
+- Accurate order/payment reconciliation
+- Provider-specific configuration
+- Refunds, when supported
+
+The payment provider must support the business's jurisdiction and chosen settlement currencies.
+
+Do not assume that a particular provider is available until verified.
+
+**Never collect or store raw credit card numbers, CVV codes, or sensitive card authentication data in SocialKon10's own database.**
+
+Use a compliant, supported payment integration that minimizes PCI DSS exposure.
+
+Payment success must be confirmed through trusted server-side provider information, not merely by redirecting the browser to a success page.
+
+---
+
+# PHASE 11 — DIGITAL PRODUCTS & SERVICE FULFILLMENT
+
+Inspect the existing product catalog and determine which products are:
+
+- Digital downloads
+- Digital services
+- Customized creative services
+- Physical printed products
+- Quote-based services
+
+Ensure fulfillment rules match the product type.
+
+### Digital Downloads
+
+For paid digital templates or downloadable assets:
+
+- Preserve preview functionality.
+- Protect original downloadable files.
+- Verify download eligibility using server-side authorization.
+- Do not release paid content simply because an unpaid order request exists.
+- Support admin-authorized fulfillment after verified offline payment or explicit business approval.
+- Use appropriately expiring signed download URLs when supported.
+
+### Creative Services
+
+For graphic design, branding, social media management, video production, and similar services:
+
+- Preserve project descriptions and specifications.
+- Support optional briefs and attachments.
+- Allow administrative review.
+- Clearly distinguish an inquiry from an accepted project.
+- Keep scope, revisions, and agreed pricing traceable.
+
+### Physical Printing
+
+Where supported:
+
+- Preserve quantity and specifications.
+- Handle size, material, finishing, and variations.
+- Collect relevant delivery or collection information.
+- Clearly display production and delivery estimates when provided.
+- Allow appropriate manual quotation for customized work.
+
+Do not implement speculative services or product categories if they are not part of the existing catalog.
+
+---
+
+# PHASE 12 — SECURITY AUDIT
+
+Apply relevant OWASP Top 10:2025 and OWASP ASVS security practices.
+
+Audit:
+
+- Authentication
+- Role-based access control
+- Server-side authorization
+- Broken object access
+- Database permissions
+- API security
+- XSS prevention
+- Injection prevention
+- CSRF protection where applicable
+- Input validation
+- File upload security
+- Secure session management
+- Rate limiting
+- Bot/spam prevention
+- Security headers
+- HTTPS configuration
+- Secret management
+- Dependency vulnerabilities
+- Error logging
+- Third-party integrations
+
+Specifically confirm:
+
+1. Customers cannot view another customer's order.
+2. Public order references do not grant unauthorized access.
+3. Customers cannot change order prices.
+4. Customers cannot forge payment-success states.
+5. Non-admin users cannot change checkout configuration.
+6. Customers cannot upload dangerous files.
+7. Private project files are properly protected.
+8. Admin endpoints enforce authorization server-side.
+9. Order requests are rate-limited against abuse.
+10. Repeated submissions do not create unintended duplicate orders.
+
+Use only authorized, non-destructive security testing.
+
+---
+
+# PHASE 13 — PERFORMANCE, SEO & ACCESSIBILITY
+
+### Performance
+
+Measure representative pages, especially mobile.
+
+Use Core Web Vitals targets at the 75th percentile of real-user page loads:
+
+- LCP: 2.5 seconds or less
+- INP: 200 milliseconds or less
+- CLS: 0.1 or less
+
+Optimize:
+
+- Portfolio imagery
+- Service thumbnails
+- Product previews
+- JavaScript bundles
+- Fonts
+- Database queries
+- API requests
+- Image loading
+- Media compression
+- Caching
+- Unnecessary re-renders
+
+### SEO
+
+Verify:
+
+- Unique metadata
+- Correct headings
+- Canonical URLs
+- Structured data where applicable
+- XML sitemap
+- robots.txt
+- Product/service landing pages
+- Portfolio discoverability
+- Open Graph metadata
+- Proper image descriptions
+- Broken links
+- Indexing rules
+
+### Accessibility
+
+Target WCAG 2.2 AA.
+
+Check:
+
+- Keyboard navigation
+- Focus visibility
+- Touch targets
+- Screen-reader compatibility
+- Semantic HTML
+- Dialog accessibility
+- Form errors
+- Color contrast
+- Image alternatives
+- Responsive text
+- Reduced-motion behavior
+
+---
+
+# PHASE 14 — COMPLETE CUSTOMER EXPERIENCE AUDIT
+
+Evaluate the site from these perspectives:
+
+1. A customer looking for a logo.
+2. A company looking for branding.
+3. A customer ordering graphic design.
+4. A visitor ordering printed materials.
+5. A customer purchasing a digital template.
+6. A business seeking social media management.
+7. A returning customer reviewing an existing order.
+8. An administrator processing a new request.
+
+For each user journey, determine:
+
+- Can the customer find what they need?
+- Is the product/service clearly explained?
+- Is pricing understandable?
+- Are customization requirements collected?
+- Can an item be added to the cart?
+- Can quantities be modified?
+- Are totals accurate?
+- Can the request be submitted?
+- Does the order persist in the database?
+- Does the customer receive a valid reference?
+- Can the administrator find the exact order?
+- Are communication and fulfillment steps clear?
+
+Remove unnecessary friction.
+
+Avoid forced account creation, redundant form fields, confusing navigation, misleading CTAs, and unnecessary page reloads.
+
+---
+
+# PHASE 15 — AUTOMATED TESTING & EDGE CASES
+
+Create or update tests for:
+
+- Cart creation
+- Add/remove/update quantities
+- Pricing calculations
+- Fixed-price orders
+- Quote-required orders
+- Guest checkout
+- Authenticated checkout where supported
+- Order reference uniqueness
+- Database transaction rollback
+- Duplicate request prevention
+- Invalid product IDs
+- Deleted or unpublished products
+- Price changes during checkout
+- Failed order creation
+- Failed notification delivery
+- Order detail access control
+- Admin filtering
+- Order status transitions
+- Manual payment reconciliation
+- Checkout settings authorization
+- Gateway activation checks
+- Online payment failure
+- Verified payment success
+- Duplicate webhook processing
+- Mode switching
+- Existing unpaid order preservation
+- Digital download access restrictions
+- Mobile checkout compatibility
+
+Test edge cases such as:
+
+- Empty carts
+- Long product names
+- Large quantities
+- Multiple currencies
+- Expired sessions
+- Slow networks
+- Browser refresh during checkout
+- Multiple submissions
+- Two simultaneous checkout requests
+- Unsupported payment mode
+- Temporary database unavailability
+- Missing service prices
+- Invalid customizations
+
+Do not generate live payments or unwanted customer orders during automated testing.
+
+---
+
+# PHASE 16 — SAFE IMPLEMENTATION SEQUENCE
+
+Use this sequence:
+
+1. Inspect current project architecture.
+2. Establish tests and baseline behavior.
+3. Audit the existing website.
+4. Document the checkout-related database architecture.
+5. Design the unified order model.
+6. Add safe database migrations.
+7. Implement server-authoritative pricing.
+8. Implement secure order creation.
+9. Implement unique order references.
+10. Implement order request checkout.
+11. Implement customer confirmation.
+12. Implement administrative order management.
+13. Implement appropriate notifications.
+14. Implement protected checkout configuration.
+15. Add the future payment integration abstraction.
+16. Keep real online payments disabled until verified.
+17. Test complete customer and admin workflows.
+18. Correct visual and mobile issues.
+19. Address security, performance, SEO, and accessibility issues.
+20. Run all regression tests and production build.
+21. Produce the final audit report.
+
+Preserve existing functionality and database records.
+
+Use backward-compatible changes when possible.
+
+Do not modify live customer data, run destructive migrations, activate payment collection, or enable unverified external integrations without explicit authorization.
+
+---
+
+# PHASE 17 — FINAL QA & PRODUCTION REPORT
+
+Deliver a structured report with:
+
+### A. Website Audit Summary
+List major findings, root causes, and improvements.
+
+### B. Checkout Architecture
+Describe how all checkout modes work.
+
+### C. Order Request Verification
+Demonstrate that a customer can successfully submit a cart and that the admin can see the saved order.
+
+### D. Admin Dashboard Verification
+Demonstrate accurate line items, quantities, pricing, customer information, and status management.
+
+### E. Security Verification
+Summarize access-control, data-protection, and payment-safety results.
+
+### F. Mobile & Design Verification
+Provide viewport and browser test results.
+
+### G. Technical Changes
+List modified files, migrations, services, and important code changes.
+
+### H. Outstanding Issues
+Classify issues by Critical, High, Medium, or Low severity.
+
+For each issue, report:
+- Root cause
+- Affected feature
+- Fix status
+- Testing evidence
+- Any remaining limitations
+
+### I. Production Readiness
+Conclude with one of:
+
+- READY FOR PRODUCTION
+- READY WITH NON-BLOCKING ISSUES
+- NOT READY FOR PRODUCTION
+- INSUFFICIENT VERIFICATION
+
+Do not declare production readiness while critical security, broken ordering, financial integrity, or data protection issues remain.
+
+---
+
+# NON-NEGOTIABLE IMPLEMENTATION RULES
+
+- Do not rebuild the website unnecessarily.
+- Do not remove existing functionality.
+- Do not introduce fake or hardcoded production order data.
+- Do not trust client-side prices.
+- Do not mark unpaid orders as paid.
+- Do not use public order codes as access credentials.
+- Do not collect credit card details directly.
+- Do not enable payment gateways before verification.
+- Do not silently ignore failed API requests.
+- Do not claim untested features are working.
+- Do not destroy existing database records.
+- Do not expose customer information publicly.
+- Do not make unnecessary architectural changes.
+- Do not bypass permissions to simplify admin functionality.
+- Do not mark tasks complete without verification.
+
+## FINAL EXECUTION INSTRUCTION
+
+Transform the existing SocialKon10 Marketing Agency website into a polished, secure, fully responsive, accessible, maintainable, production-ready agency and e-commerce platform.
+
+The platform must support real customer purchasing intent even before online payment processing is available.
+
+Customers must be able to submit their complete shopping carts, receive valid order references, and have their orders accurately stored for administrative processing.
+
+The administrator must be able to view and manage the entire order without information loss.
+
+The system must be architected so secure online payment processing can be activated later through a protected configuration setting, without rebuilding the order database or checkout experience.
+
+**AUDIT → DIAGNOSE → FIX → TEST → VERIFY → REPORT.**
+
+Start with repository discovery and a baseline audit, then implement and verify the complete solution. Do not stop at a superficial analysis.

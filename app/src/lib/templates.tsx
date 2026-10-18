@@ -4,6 +4,7 @@ import {
   type OrderRecord,
 } from "./backend";
 import { firebaseReady } from "./firebase";
+import { derivePaymentStatus } from "./order-utils";
 import { track } from "./seo";
 import { safeStorage } from "./storage";
 
@@ -453,6 +454,17 @@ export interface Entitlement {
 export function entitlementsFromOrders(orders: OrderRecord[], bundles: TemplateBundle[] = []): Entitlement[] {
   const out: Entitlement[] = [];
   for (const o of orders) {
+    // Digital-goods gate (Dual-Mode Checkout §11): an order request alone never
+    // releases paid downloads. Entitlement requires a verified payment (or a
+    // legacy order that predates checkout methods and is fully paid).
+    // Admin-authorized fulfillment after offline payment = recording the
+    // payment, which flips the derived status to PAID.
+    const status = derivePaymentStatus({
+      total: Number(o.total) || 0,
+      amountPaid: Number(o.amountPaid) || 0,
+      paymentStatus: o.paymentStatus,
+    });
+    if (status !== "PAID") continue;
     for (const i of o.items) {
       if (!i.templateSlug) continue;
       // bundle purchase → entitlement for every template inside (§33/§54)

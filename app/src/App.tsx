@@ -79,6 +79,8 @@ const MeetingRoom = lazyWithRetry(() => import("./pages/MeetingRoom"));
 const Privacy = lazyWithRetry(() => import("./pages/Privacy"));
 const Terms = lazyWithRetry(() => import("./pages/Terms"));
 const InvoicePublicView = lazyWithRetry(() => import("./pages/InvoicePublicView"));
+const QuoteApproval = lazyWithRetry(() => import("./pages/QuoteApproval"));
+const PayLink = lazyWithRetry(() => import("./pages/PayLink"));
 import { IncomingCallModal } from "./components/IncomingCallModal";
 import { MeetingProximityAlert } from "./components/MeetingProximityAlert";
 
@@ -175,7 +177,8 @@ function Shell() {
               <Route path="/client" element={<ClientPortal />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/invoice/:id" element={<InvoicePublicView />} />
-              <Route path="/quote/:id" element={<InvoicePublicView />} />
+              <Route path="/quote/:id" element={<QuoteApproval />} />
+              <Route path="/pay/:id" element={<PayLink />} />
               <Route path="/meet/:roomId" element={<MeetingRoom />} />
               <Route path="/meet" element={<MeetingRoom />} />
               <Route path="/privacy" element={<Privacy />} />

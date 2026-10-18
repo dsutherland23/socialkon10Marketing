@@ -1,0 +1,840 @@
+# SOCIALKON10 MARKETING AGENCY
+## PHASE 2 — CUSTOMER COMMUNICATION, QUOTATIONS, ARTWORK MANAGEMENT & PAYMENT LINKS
+### 2026 Production-Grade Enhancement Master Prompt
+
+## YOUR ROLE
+
+Act as a senior full-stack software architect, UX/UI designer, e-commerce systems engineer, cybersecurity specialist, database engineer, and QA automation engineer.
+
+**PROJECT:** SocialKon10 Marketing Agency website.
+
+**PRIMARY OBJECTIVE:**
+
+Extend the existing SocialKon10 Order Request and Dual-Mode Checkout platform with four tightly integrated capabilities:
+
+1. WhatsApp Order Follow-Up
+2. Professional Quotation & Invoice Management
+3. Secure Customer Artwork & Project File Uploads
+4. Future-Ready Payment Links
+
+All four features must work together with the existing cart, product catalog, customer accounts, order management dashboard, order statuses, and payment configuration.
+
+**IMPORTANT PREREQUISITE:**
+
+This enhancement phase must begin only after the existing website audit, security fixes, order request checkout, and core administrative order management system are complete and verified.
+
+If those prerequisites are incomplete, document the blockers and resolve safe prerequisites before implementing dependent features.
+
+Do not duplicate existing functionality, introduce disconnected databases, or unnecessarily rebuild any part of the website.
+
+---
+
+# FEATURE 1 — WHATSAPP ORDER FOLLOW-UP SYSTEM
+
+## Objective
+
+Allow SocialKon10 administrators to communicate with customers about orders directly from the admin dashboard using WhatsApp.
+
+### 1.1 Admin interface
+
+Within each order detail page, add:
+
+**Contact Customer via WhatsApp**
+
+The action should open a prepared WhatsApp message containing relevant order information.
+
+Example message:
+
+"Hello [Customer Name], thank you for choosing SocialKon10 Marketing Agency!
+
+We're following up on your order request.
+
+Order Reference: [ORDER CODE]
+
+Order Summary:
+[ORDER ITEMS]
+
+Order Total / Estimate: [CURRENCY + AMOUNT]
+
+Current Status: [ORDER STATUS]
+
+Please let us know if you have any questions about your project.
+
+Thank you for choosing SocialKon10!"
+
+### 1.2 Message templates
+
+Create configurable templates for:
+
+- New order acknowledgment
+- Quotation ready
+- Awaiting customer approval
+- Payment instructions
+- Payment confirmation
+- Project started
+- Artwork received
+- Proof ready for review
+- Project completed
+- Order ready for collection/delivery
+- Customer follow-up
+
+Allow authorized administrators to edit templates in the dashboard.
+
+Support placeholders such as:
+
+`{customer_name}`
+
+`{order_reference}`
+
+`{order_items}`
+
+`{order_total}`
+
+`{currency}`
+
+`{order_status}`
+
+`{quote_reference}`
+
+`{payment_link}`
+
+Validate template placeholders before use.
+
+### 1.3 WhatsApp integration
+
+Initially implement WhatsApp Click-to-Chat using its supported URL mechanism.
+
+Requirements:
+
+- Validate and normalize international phone numbers.
+- Properly URL-encode messages.
+- Use the customer's verified or entered contact number as appropriate.
+- Do not disclose sensitive customer details unnecessarily.
+- Open WhatsApp with the prepared message.
+- Require the administrator to review and send the message.
+
+**Never claim a message was successfully sent simply because a WhatsApp link was opened.**
+
+Store a message preparation/open event separately from confirmed delivery.
+
+### 1.4 Future automation
+
+Design an optional adapter for an official WhatsApp Business Platform integration.
+
+Do not activate automatic WhatsApp messaging without appropriate credentials, customer consent, approved templates where required, and compliant messaging rules.
+
+### 1.5 Admin experience
+
+Provide:
+
+- WhatsApp contact action
+- Template selector
+- Message preview
+- Copy message option
+- Relevant customer phone information
+- Communication activity timeline
+- Error handling for missing or invalid phone numbers
+
+Preserve existing customer communication functionality.
+
+---
+
+# FEATURE 2 — PROFESSIONAL QUOTATION & INVOICE SYSTEM
+
+## Objective
+
+Allow an administrator to turn an existing customer order request into a professional quotation, obtain customer approval, generate an invoice, and manage payment status.
+
+## 2.1 Workflow
+
+Implement the following business process:
+
+Customer Submits Order Request
+
+↓
+
+Admin Reviews Order
+
+↓
+
+Admin Creates or Revises Quotation
+
+↓
+
+Quotation Sent to Customer
+
+↓
+
+Customer Accepts or Declines
+
+↓
+
+Admin Generates Invoice
+
+↓
+
+Customer Makes Payment Through a Supported Method
+
+↓
+
+Payment Is Verified and Recorded
+
+↓
+
+Project Moves Into Production
+
+### 2.2 Quotation builder
+
+Allow authorized administrators to generate a quotation from the customer's existing cart.
+
+Automatically populate:
+
+- Customer name
+- Company name
+- Contact details
+- Order reference
+- Original order items
+- Quantities
+- Prices
+- Currency
+- Discounts
+- Applicable taxes
+- Estimated delivery/completion date
+- Project notes
+
+Allow authorized editing of:
+
+- Unit prices
+- Quantities
+- Item descriptions
+- Additional services
+- Discounts
+- Terms and conditions
+- Quotation validity period
+- Project requirements
+- Delivery charges
+
+Recalculate totals server-side.
+
+Maintain a historical record of every issued quotation revision.
+
+### 2.3 Quotation statuses
+
+Support:
+
+- Draft
+- Sent
+- Viewed, if verifiably tracked
+- Accepted
+- Declined
+- Expired
+- Superseded
+
+Do not treat opening an email or WhatsApp link as proof of delivery or customer acceptance.
+
+### 2.4 Customer approval
+
+Implement a secure customer-facing quotation review experience.
+
+Customers should be able to:
+
+- Review quotation details
+- View pricing
+- Review terms
+- Accept or decline
+- Request clarification where supported
+
+Use authenticated access or secure, scoped, expiring tokens.
+
+An order reference alone must never authorize quotation access or approval.
+
+Record the approved quotation version, timestamp, and supporting acceptance evidence.
+
+### 2.5 Invoice generation
+
+Allow invoices to be generated from accepted quotations or other authorized order workflows.
+
+Invoices must include:
+
+- SocialKon10 business identity
+- Invoice number
+- Customer billing details
+- Invoice date
+- Due date
+- Itemized services/products
+- Quantities
+- Unit prices
+- Subtotal
+- Discounts
+- Applicable taxes
+- Amount due
+- Currency
+- Terms and payment instructions
+
+Support professionally formatted printable invoices and downloadable PDFs.
+
+Use the agency's existing branding.
+
+Ensure documents remain readable on mobile and suitable for standard printing.
+
+### 2.6 Financial integrity
+
+Store quotation and invoice amounts using fixed-precision financial calculations.
+
+Maintain separate:
+
+- Order status
+- Quotation status
+- Invoice status
+- Payment status
+
+Do not mark an invoice as paid merely because it was sent or viewed.
+
+Manual payments must be recorded by an authorized administrator with appropriate supporting details.
+
+Do not silently overwrite issued invoices or historical financial records.
+
+Where an invoice must be corrected, use an appropriate revision, void, credit note, or replacement workflow, consistent with applicable business rules.
+
+### 2.7 Invoice management dashboard
+
+Create an administrative interface supporting:
+
+- Search
+- Sorting
+- Status filters
+- Date filters
+- Invoice preview
+- PDF download
+- Customer communication
+- Payment records
+- Outstanding balances
+- Invoice history
+- Audit log
+
+Preserve a clear link among customer, order, quotation, invoice, and payment records.
+
+---
+
+# FEATURE 3 — SECURE CUSTOMER ARTWORK & PROJECT UPLOADS
+
+## Objective
+
+Allow customers to attach logos, artwork, documents, reference images, and project briefs to their orders.
+
+This is particularly important for graphic design, branding, printing, and video production services.
+
+## 3.1 Customer upload interface
+
+Add optional file upload capabilities to relevant product and service workflows.
+
+Examples:
+
+**Logo Design**
+
+- Brand reference images
+- Existing logo
+- Design brief
+
+**Printing Services**
+
+- Print-ready artwork
+- Logos
+- Reference designs
+
+**Video Production**
+
+- Script
+- Brand assets
+- Supporting media
+
+**Social Media Marketing**
+
+- Brand guidelines
+- Logos
+- Content assets
+
+Only show relevant upload fields where appropriate.
+
+### 3.2 Supported file formats
+
+Support a configurable allowlist appropriate to the business, potentially including:
+
+- JPG/JPEG
+- PNG
+- WebP
+- PDF
+- SVG
+- PSD
+- AI
+- EPS
+- TIFF
+- ZIP
+- MP4
+- MOV
+
+**Security requirement:** These formats are examples, not an unconditional allowlist. Evaluate risks for each format. Validate actual file type and content, not just the filename extension.
+
+Treat SVG, archives, design source files, and other complex formats as untrusted content.
+
+Do not render untrusted files directly in a privileged administrative page.
+
+Use safe preview transformations or download-only handling where necessary.
+
+### 3.3 Upload security
+
+Implement:
+
+- Private storage
+- Authentication/authorization checks
+- Scoped signed URLs
+- File size limits
+- Appropriate upload quotas
+- MIME and signature validation
+- Safe filenames
+- Malware scanning or quarantine where available
+- Archive validation
+- Abuse prevention
+- Upload status tracking
+- Failed upload recovery
+- Secure file deletion and retention handling
+
+Never make customer files publicly accessible by default.
+
+Do not trust browser-provided MIME types.
+
+### 3.4 Upload experience
+
+Provide:
+
+- Drag-and-drop support
+- File selection button
+- Upload progress
+- File size display
+- Format validation
+- Retry option
+- Remove/replace capability
+- Success confirmation
+- Clear error states
+
+For mobile users, support ordinary device file selection without requiring drag-and-drop.
+
+Ensure unfinished or failed uploads do not silently appear as successfully attached order files.
+
+### 3.5 Admin file management
+
+Inside order details, add a **Project Files** section.
+
+Display:
+
+- File name
+- Type
+- Size
+- Upload date
+- Associated order
+- Uploaded by
+- Security/scan status
+- Authorized preview or download
+- Version, when applicable
+
+Allow authorized administrators to upload additional project files, such as customer proofs and final deliverables.
+
+### 3.6 File versioning
+
+Where practical, support multiple revisions of project assets.
+
+Example:
+
+Logo Proof V1
+
+Logo Proof V2
+
+Approved Logo
+
+Final Logo Files
+
+Do not overwrite earlier versions when revision tracking is required.
+
+### 3.7 File access rules
+
+Customers must not access other customers' files.
+
+Only authorized staff may access private project materials.
+
+Final downloadable deliverables must only be released according to the configured approval, payment, and fulfillment rules.
+
+An unpaid order request must not automatically unlock paid downloadable products.
+
+---
+
+# FEATURE 4 — FUTURE-READY PAYMENT LINKS
+
+## Objective
+
+Prepare SocialKon10 to accept online payments for existing unpaid orders and invoices once a suitable payment gateway is available.
+
+The payment-link architecture must integrate with the existing Dual-Mode Checkout system.
+
+## 4.1 Current behavior
+
+Until a gateway is configured and explicitly activated:
+
+- Order Request Checkout remains available.
+- No real online payment processing occurs.
+- No card information is collected.
+- No fake functional payment links are shown to customers.
+- Administrators may record verified approved offline payments if that feature exists.
+
+## 4.2 Future payment workflow
+
+Customer Submits Order Request
+
+↓
+
+Admin Reviews and Confirms Pricing
+
+↓
+
+Admin Generates Invoice
+
+↓
+
+Admin Selects "Create Payment Link"
+
+↓
+
+System Creates Secure Payment Session
+
+↓
+
+Customer Receives Payment Link
+
+↓
+
+Customer Pays Using Provider-Hosted Checkout
+
+↓
+
+Provider Confirms Payment Through Verified Server-Side Event
+
+↓
+
+System Updates Payment Record and Invoice Balance
+
+↓
+
+Admin Dashboard Reflects Payment Status
+
+### 4.3 Payment link controls
+
+Payment-link creation must support:
+
+- Order reference
+- Invoice reference
+- Exact payable amount
+- Currency
+- Customer identifier
+- Expiration
+- Status
+- Provider transaction reference
+- Payment attempts
+- Payment success/failure records
+
+Allow payment links only for valid payable orders or invoices.
+
+Do not allow browser-side modification of payment amounts.
+
+### 4.4 Secure processing
+
+Implement:
+
+- Payment gateway adapter
+- Secure server-side session creation
+- Verified webhook handling
+- Idempotent processing
+- Duplicate-event protection
+- Expired-session handling
+- Cancelled payment handling
+- Payment reconciliation
+- Safe retry behavior
+- Appropriate audit trails
+
+Never mark an invoice as paid solely because a customer lands on a success page.
+
+Never collect or store raw card numbers or CVV details on SocialKon10 servers.
+
+Use a supported hosted payment solution that minimizes PCI DSS exposure.
+
+### 4.5 Payment provider configuration
+
+The admin dashboard should include gateway configuration and readiness checks.
+
+Do not assume any specific provider supports SocialKon10's jurisdiction, account type, or required currencies.
+
+A gateway may only be activated after provider eligibility, credentials, supported currencies, webhook security, and live-payment behavior have been verified.
+
+### 4.6 Payment link administration
+
+When activated, support:
+
+- Create payment link
+- View link status
+- Copy link
+- Share with customer
+- Expire/revoke link where supported
+- Track verified payment results
+- View payment attempts
+- Reconcile payments
+- Prevent duplicate collection
+
+Payment links must not expose unrelated customer information.
+
+---
+
+# PHASE 5 — UNIFIED ADMIN EXPERIENCE
+
+All four features must appear as a cohesive extension of the existing admin portal.
+
+Suggested navigation:
+
+**Orders**
+- All Orders
+- New Requests
+- Order Details
+- Project Files
+
+**Sales**
+- Quotations
+- Invoices
+- Payments
+
+**Communications**
+- WhatsApp Templates
+- Communication Activity
+
+**Settings**
+- Checkout Configuration
+- Payment Providers
+- Document Branding
+- File Upload Rules
+
+Follow the existing app's navigation and naming conventions rather than duplicating sections unnecessarily.
+
+Maintain consistent UI components, colors, typography, spacing, tables, modals, and status indicators.
+
+Avoid unnecessary page reloads.
+
+Every action must have understandable feedback.
+
+---
+
+# PHASE 6 — SHARED DATA ARCHITECTURE
+
+Extend the existing database safely.
+
+Design or adapt relationships between:
+
+- Customers
+- Orders
+- Order Items
+- Quotations
+- Quotation Versions
+- Invoices
+- Invoice Items
+- Payments
+- Payment Attempts
+- Payment Links
+- File Attachments
+- File Versions
+- Communication Events
+- Administrative Audit Events
+
+Use existing entities wherever possible.
+
+Do not create duplicate tables if suitable structures already exist.
+
+Apply:
+
+- Referential integrity
+- Database constraints
+- Secure authorization
+- Appropriate indexing
+- Server-side validation
+- Safe migrations
+- Transactional updates
+- Consistent timestamps
+- Currency-aware financial calculations
+
+Every critical business event should be traceable.
+
+---
+
+# PHASE 7 — AUTOMATED TESTING & SECURITY
+
+Create comprehensive tests covering all new features.
+
+### WhatsApp
+
+- Valid/invalid phone numbers
+- Proper message encoding
+- Missing customer phone number
+- Correct template variables
+- No false message-delivered claims
+
+### Quotations and invoices
+
+- Quotation creation
+- Price adjustments
+- Quote version history
+- Customer approval permissions
+- Invoice number uniqueness
+- Tax and discount calculations
+- PDF accuracy
+- Preventing unauthorized invoice modification
+- Correct payment status handling
+
+### Uploads
+
+- Valid files
+- Unsupported files
+- Oversized files
+- Malicious or unsafe content
+- Failed uploads
+- Duplicate uploads
+- Unauthorized file access
+- Private file URL expiration
+- File versioning
+- Mobile upload behavior
+
+### Payments
+
+- Gateway disabled behavior
+- Authorized activation
+- Exact amount verification
+- Expired links
+- Payment failures
+- Duplicate webhook events
+- Invalid webhook signatures
+- Order/invoice reconciliation
+- Payment cancellation
+- Concurrent payment attempts
+
+### Regression
+
+Verify existing:
+
+- Shopping cart
+- Order Request Checkout
+- Online Checkout configuration
+- Customer accounts
+- Order dashboard
+- Product catalog
+- Website navigation
+- Mobile layouts
+
+No enhancement should break already-working features.
+
+---
+
+# PHASE 8 — 2026 QUALITY REQUIREMENTS
+
+The entire implementation must follow applicable:
+
+- OWASP Top 10:2025 security guidance
+- OWASP ASVS security requirements
+- WCAG 2.2 AA accessibility standards
+- Secure coding principles
+- Privacy and data minimization practices
+- PCI DSS responsibilities for payment integrations
+- Server-side data validation
+- Responsive design practices
+- Strong error handling
+- Auditability and observability
+- Maintainable component architecture
+
+Avoid silent errors, placeholder functionality, insecure shortcuts, and unnecessary dependencies.
+
+---
+
+# PHASE 9 — IMPLEMENTATION ORDER
+
+Implement in this sequence:
+
+1. Inspect and verify the completed Phase 1 architecture.
+2. Review database and administrative permissions.
+3. Establish regression tests.
+4. Add WhatsApp follow-up functionality.
+5. Build quotation management.
+6. Build invoice management.
+7. Implement secure project uploads.
+8. Integrate uploads into order details.
+9. Build payment-link data structures and gateway abstraction.
+10. Keep actual payment creation disabled until a provider is verified.
+11. Integrate related status and communication workflows.
+12. Test customer-facing and administrative journeys.
+13. Test mobile responsiveness and accessibility.
+14. Execute security verification.
+15. Run production build and regression suite.
+16. Produce a final implementation report.
+
+Use feature flags where appropriate.
+
+Do not expose incomplete features to customers.
+
+Do not activate payment processing or send automated customer messages without required external configuration and authorization.
+
+---
+
+# PHASE 10 — FINAL VERIFICATION REPORT
+
+Provide:
+
+**1. Feature Completion**
+
+Explain which features were implemented and which remain blocked by third-party configuration.
+
+**2. Files Modified**
+
+List significant code and configuration changes.
+
+**3. Database Changes**
+
+Explain migrations and relationships.
+
+**4. Security**
+
+Confirm authorization, safe uploads, protected customer information, and payment integrity.
+
+**5. Functional Testing**
+
+Report exact tests performed and their results.
+
+**6. Mobile UX**
+
+Report tested layouts and remaining problems.
+
+**7. Outstanding Issues**
+
+Classify by severity and clearly identify blockers.
+
+**8. Operational Readiness**
+
+Distinguish features ready to use from those requiring payment provider credentials, messaging integration, or other configuration.
+
+---
+
+## FINAL INSTRUCTION
+
+Implement these four capabilities as a complete, interconnected business workflow for SocialKon10 Marketing Agency.
+
+The desired experience is:
+
+**Customer selects services → Submits order → Admin receives request → Admin contacts customer → Admin generates quotation → Customer approves → Admin issues invoice → Customer pays through an available supported method → Agency fulfills project → Customer receives deliverables.**
+
+Make the workflow intuitive, secure, transparent, and efficient.
+
+Preserve the existing website and completed audit improvements.
+
+Audit, implement, test, correct, retest, and report.
+
+Do not stop at code generation or visual completion. Verify that each supported workflow actually works.

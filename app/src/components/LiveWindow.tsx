@@ -24,7 +24,9 @@ export function LiveWindow({ url, title, onClose }: { url: string; title: string
   const [device, setDevice] = useState<Device>("desktop");
   const [loaded, setLoaded] = useState(false);
   const [slowHint, setSlowHint] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const loadStartRef = useRef<number>(performance.now());
 
   const host = useMemo(() => {
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
@@ -55,6 +57,18 @@ export function LiveWindow({ url, title, onClose }: { url: string; title: string
   }, [loaded]);
 
   const width = DEVICES.find((d) => d.id === device)!.width;
+
+  // X-Frame-Options / frame-ancestors blocks fire the iframe's load event
+  // anyway (the browser renders its own error page), so a plain onLoad
+  // cannot be trusted. Blocked loads complete almost instantly and the
+  // error document never contains subframes — combine both signals.
+  const handleFrameLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
+    setLoaded(true);
+    const elapsed = performance.now() - loadStartRef.current;
+    let noSubframes = true;
+    try { noSubframes = (e.currentTarget.contentWindow?.length ?? 0) === 0; } catch { /* cross-origin — expected for real content */ }
+    if (elapsed < 400 && noSubframes) setBlocked(true);
+  };
 
   // Portal to body: fixed positioning must not be trapped by transformed
   // ancestors (e.g. the page-enter route transition wrapper).
@@ -99,7 +113,7 @@ export function LiveWindow({ url, title, onClose }: { url: string; title: string
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden md:inline font-meta text-[10px] u-line shrink-0"
+            className="font-meta text-[10px] u-line shrink-0"
             onClick={() => track("live_preview_open_live", { title, host })}
           >
             Open live ↗
@@ -139,12 +153,33 @@ export function LiveWindow({ url, title, onClose }: { url: string; title: string
           <iframe
             src={url}
             title={`Live preview of ${title}`}
-            onLoad={() => setLoaded(true)}
+            onLoad={handleFrameLoad}
             sandbox="allow-scripts allow-same-origin allow-forms"
             referrerPolicy="strict-origin-when-cross-origin"
             className="absolute inset-0 w-full h-full border-0"
-            style={{ opacity: loaded ? 1 : 0, transition: "opacity 300ms var(--ease-out)", background: "#fff" }}
+            style={{ opacity: loaded && !blocked ? 1 : 0, transition: "opacity 300ms var(--ease-out)", background: "#fff" }}
           />
+          {blocked && (
+            <div className="absolute inset-0 grid place-items-center p-6 text-center" style={{ background: "var(--panel)" }}>
+              <div className="max-w-xs">
+                <p className="font-display text-lg font-bold">{host}</p>
+                <p className="mt-2 font-meta text-[10px] leading-relaxed text-[var(--muted)]">
+                  This site doesn't allow embedded previews — its security policy
+                  (X-Frame-Options) blocks framing. Nothing is broken; it just
+                  needs to be opened directly.
+                </p>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-dept mt-4 inline-flex justify-center"
+                  onClick={() => track("live_preview_open_live", { title, host, blocked: true })}
+                >
+                  Open live site <span className="btn-arrow" aria-hidden>→</span>
+                </a>
+              </div>
+            </div>
+          )}
           {slowHint && !loaded && (
             <div className="absolute inset-x-0 bottom-0 p-4 border-t border-[var(--line)] text-center" style={{ background: "var(--bg)" }}>
               <p className="font-meta text-[10px] text-[var(--muted)]">
