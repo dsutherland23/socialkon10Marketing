@@ -8,6 +8,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   setDoc,
   where,
   type Unsubscribe,
@@ -426,9 +427,13 @@ export async function updateMeeting(
   if (firebaseReady && db) {
     try {
       const normalized = normalizeRoomCode(id);
+      const alphaKey = getAlphanumericRoomKey(id);
       await setDoc(doc(db, "meetings", id), payload, { merge: true });
-      if (normalized && normalized !== id) {
-        await setDoc(doc(db, "meetings", normalized), payload, { merge: true }).catch(() => {});
+      // Mirror into every known alias key so fuzzy lookups never serve stale data
+      for (const alias of [normalized, alphaKey]) {
+        if (alias && alias !== id) {
+          await setDoc(doc(db, "meetings", alias), payload, { merge: true }).catch(() => {});
+        }
       }
       return;
     } catch (err) {
@@ -680,38 +685,38 @@ export function subscribeAllMeetings(onUpdate: (meetings: MeetingRecord[]) => vo
 
 /* ---------------- Participant Management & Moderation ---------------- */
 
-export async function updateParticipant(
-  meetingId: string,
+/** Pure participant-list merge: upsert by id / host-role / email / userId and
+ *  deduplicate (at most one host, unique session ids). Exported for tests and
+ *  used by both the transactional Firestore path and the offline IDB path. */
+export function mergeParticipantUpdate(
+  participants: MeetingParticipant[],
   participantId: string,
   updates: Partial<MeetingParticipant>
-): Promise<void> {
-  const meeting = await getMeetingById(meetingId);
-  if (!meeting) return;
-
+): MeetingParticipant[] {
   const pEmail = (updates.email || "").toLowerCase().trim();
   const pUserId = updates.userId || "";
   const isHostRole = updates.role === "host";
 
-  let existingIdx = meeting.participants.findIndex((p) => p.id === participantId);
+  let existingIdx = participants.findIndex((p) => p.id === participantId);
 
   // If ID didn't match, check if this is the host to prevent duplicate host entries
   if (existingIdx === -1 && isHostRole) {
-    existingIdx = meeting.participants.findIndex((p) => p.role === "host");
+    existingIdx = participants.findIndex((p) => p.role === "host");
   }
 
   // Check matching email
   if (existingIdx === -1 && pEmail && !pEmail.endsWith("@guest.local")) {
-    existingIdx = meeting.participants.findIndex((p) => p.email?.toLowerCase().trim() === pEmail);
+    existingIdx = participants.findIndex((p) => p.email?.toLowerCase().trim() === pEmail);
   }
 
   // Check matching userId
   if (existingIdx === -1 && pUserId) {
-    existingIdx = meeting.participants.findIndex((p) => p.userId === pUserId);
+    existingIdx = participants.findIndex((p) => p.userId === pUserId);
   }
 
   let updatedList: MeetingParticipant[];
   if (existingIdx >= 0) {
-    updatedList = [...meeting.participants];
+    updatedList = [...participants];
     updatedList[existingIdx] = {
       ...updatedList[existingIdx],
       ...updates,
@@ -719,12 +724,11 @@ export async function updateParticipant(
     };
   } else {
     const newP = { id: participantId, ...updates } as MeetingParticipant;
-    updatedList = [...meeting.participants, newP];
+    updatedList = [...participants, newP];
   }
 
   // Deduplicate: guarantee at most ONE host and unique participant sessions
-  const seenHost = false;
-  let hasHost = seenHost;
+  let hasHost = false;
   const seenIds = new Set<string>();
   const deduplicated: MeetingParticipant[] = [];
 
@@ -742,7 +746,50 @@ export async function updateParticipant(
     }
   }
 
-  await updateMeeting(meeting.id, { participants: deduplicated });
+  return deduplicated;
+}
+
+export async function updateParticipant(
+  meetingId: string,
+  participantId: string,
+  updates: Partial<MeetingParticipant>
+): Promise<void> {
+  // Live path: atomic read-modify-write inside a Firestore transaction so
+  // concurrent joins / admits / status flips can never overwrite each other.
+  if (firebaseReady && db) {
+    try {
+      // Resolve the real doc key (normalized roomId, alphanumeric alias, or raw)
+      const candidates = [normalizeRoomCode(meetingId), getAlphanumericRoomKey(meetingId), meetingId]
+        .filter((k, i, arr) => k && arr.indexOf(k) === i);
+      let ref: ReturnType<typeof doc> | null = null;
+      for (const key of candidates) {
+        const snap = await getDoc(doc(db, "meetings", key)).catch(() => null);
+        if (snap?.exists()) {
+          ref = snap.ref;
+          break;
+        }
+      }
+
+      if (ref) {
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref!);
+          if (!snap.exists()) return;
+          const current = snap.data() as MeetingRecord;
+          const merged = mergeParticipantUpdate(current.participants || [], participantId, updates);
+          tx.update(ref!, cleanFirestoreObject({ participants: merged, updatedAt: new Date().toISOString() }));
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn("Firestore updateParticipant notice, using fallback path:", err);
+    }
+  }
+
+  // Offline / demo path: single-writer localStorage merge
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return;
+  const merged = mergeParticipantUpdate(meeting.participants || [], participantId, updates);
+  await updateMeeting(meeting.id, { participants: merged });
 }
 
 export async function admitParticipant(meetingId: string, participantId: string): Promise<void> {

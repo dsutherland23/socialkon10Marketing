@@ -152,7 +152,7 @@ export default function MeetingRoom() {
   const [loadingMeeting, setLoadingMeeting] = useState(true);
   const [passcode, setPasscode] = useState("");
   const [displayName, setDisplayName] = useState(user?.displayName || user?.email?.split("@")[0] || "Guest Participant");
-  const [myParticipantId] = useState<string>(() => `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+  const [sessionId] = useState<string>(() => `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
 
   // Phase: "lobby" | "waiting_room" | "in_meeting" | "ended"
   const [phase, setPhase] = useState<"lobby" | "waiting_room" | "in_meeting" | "ended">("lobby");
@@ -307,7 +307,12 @@ export default function MeetingRoom() {
   );
 
   const hostParticipant = meeting?.participants.find((p) => p.role === "host");
-  const effectiveMyId = isHost && hostParticipant ? hostParticipant.id : myParticipantId;
+  // Single stable identity: the host reuses their Firestore participant record
+  // id, guests use their ephemeral session id. This guarantees signaling,
+  // remote streams, moderation updates and the people list all key off the
+  // SAME id — mismatched dual ids previously made the host invisible to guests.
+  const myParticipantId = isHost && hostParticipant ? hostParticipant.id : sessionId;
+  const effectiveMyId = myParticipantId;
 
   const activeParticipants = (meeting?.participants || [])
     .filter((p) => p.status === "joined" || p.status === "admitted")
@@ -498,9 +503,26 @@ export default function MeetingRoom() {
     };
   }, []);
 
+  // Mark "left" when the tab/window closes or navigates away — otherwise the
+  // participant record stays "joined" forever and haunts the people list.
+  useEffect(() => {
+    const onPageHide = () => {
+      if (meeting && (phase === "in_meeting" || phase === "waiting_room")) {
+        updateParticipant(meeting.id, myParticipantId, {
+          status: "left",
+          leftAt: new Date().toISOString(),
+        });
+      }
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [meeting, phase, myParticipantId]);
+
   // 4. Initialize WebRTC Multi-Peer Mesh during Meeting
+  const knownPeersRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!meeting || phase !== "in_meeting") return;
+    const knownPeers = knownPeersRef.current;
 
     const mesh = new WebRTCMeshSession({
       myParticipantId,
@@ -527,17 +549,16 @@ export default function MeetingRoom() {
     });
 
     meshRef.current = mesh;
+    knownPeers.clear();
 
-    // Connect to other active participants
-    const activeOthers = meeting.participants.filter(
-      (p) => p.id !== myParticipantId && (p.status === "joined" || p.status === "admitted")
-    );
-
-    activeOthers.forEach((p) => {
-      // Host or deterministic lexicographical tie-breaker initiates offer
-      const isInitiator = isHost || myParticipantId < p.id;
-      mesh.connectToPeer(p.id, isInitiator);
-    });
+    // Connect to other active participants (negotiation is glare-safe: both
+    // sides may offer and the polite/impolite rule resolves collisions)
+    meeting.participants
+      .filter((p) => p.id !== myParticipantId && (p.status === "joined" || p.status === "admitted"))
+      .forEach((p) => {
+        knownPeers.add(p.id);
+        mesh.connectToPeer(p.id);
+      });
 
     // Subscribe to incoming WebRTC signals
     const unsubSignals = subscribeToWebRTCSignals(meeting.id, myParticipantId, (sig) => {
@@ -548,8 +569,38 @@ export default function MeetingRoom() {
       unsubSignals();
       mesh.closeAll();
       meshRef.current = null;
+      knownPeers.clear();
     };
-  }, [meeting?.id, phase]);
+  }, [meeting?.id, phase, myParticipantId]);
+
+  // 4b. Keep peer connections in sync as participants join / are admitted /
+  // leave mid-meeting. Without this, anyone arriving after the mesh was built
+  // would never exchange audio/video with the people already inside.
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting" || !meshRef.current) return;
+    const mesh = meshRef.current;
+    const knownPeers = knownPeersRef.current;
+
+    const activeIds = new Set(
+      meeting.participants
+        .filter((p) => p.id !== myParticipantId && (p.status === "joined" || p.status === "admitted"))
+        .map((p) => p.id)
+    );
+
+    activeIds.forEach((id) => {
+      if (!knownPeers.has(id)) {
+        knownPeers.add(id);
+        mesh.connectToPeer(id);
+      }
+    });
+
+    knownPeers.forEach((id) => {
+      if (!activeIds.has(id)) {
+        knownPeers.delete(id);
+        mesh.closePeer(id);
+      }
+    });
+  }, [meeting, phase, myParticipantId]);
 
   // 5. Subscribe to In-Meeting Chat with Audio Chime & Haptics
   useEffect(() => {
@@ -798,6 +849,11 @@ export default function MeetingRoom() {
       return;
     }
 
+    // Voice-only sessions never request the camera
+    if (meeting.allowCamera === false) {
+      audioOnly = true;
+    }
+
     if (audioOnly && localStream) {
       localStream.getVideoTracks().forEach((t) => (t.enabled = false));
       setIsVideoOff(true);
@@ -898,16 +954,43 @@ export default function MeetingRoom() {
     toast.info(next ? "Camera Stopped" : "Camera Active");
   };
 
+  const screenAudioCtxRef = useRef<AudioContext | null>(null);
+
   const handleStartScreenShare = async (preferWindow: boolean = false) => {
     setShowScreenShareMenu(false);
-    if (isScreenSharing) {
+
+    const stopShare = () => {
       stopMediaStream(screenStream);
       setScreenStream(null);
       setIsScreenSharing(false);
       setIsStudioBroadcasting(false);
+      try {
+        screenAudioCtxRef.current?.close();
+      } catch {
+        // audio graph teardown is best-effort
+      }
+      screenAudioCtxRef.current = null;
       meshRef.current?.setLocalStream(localStream);
       if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: false });
+    };
+
+    if (isScreenSharing) {
+      stopShare();
       return;
+    }
+
+    // Enforce the meeting's screen-share policy (host_only / host_and_cohost / everyone / disabled)
+    if (meeting) {
+      const mode = meeting.screenShareMode;
+      const myRole: ParticipantRole = isHost ? "host" : isAdmin ? "cohost" : "participant";
+      const allowed =
+        mode === "everyone" ||
+        (mode === "host_and_cohost" && (myRole === "host" || myRole === "cohost")) ||
+        (mode === "host_only" && myRole === "host");
+      if (!allowed) {
+        toast.error("Screen sharing is not permitted for your role in this meeting.");
+        return;
+      }
     }
 
     try {
@@ -915,7 +998,27 @@ export default function MeetingRoom() {
       if (!stream) return;
       setScreenStream(stream);
       setIsScreenSharing(true);
-      meshRef.current?.setLocalStream(stream);
+
+      // Outbound = screen VIDEO + the microphone. Never let system audio
+      // replace the mic — when the shared tab/window has sound, MIX it with
+      // the mic so guests keep hearing the presenter speak (Zoom-style).
+      const micTracks = localStream?.getAudioTracks() ?? [];
+      const sysAudioTracks = stream.getAudioTracks();
+      let outboundAudioTracks = micTracks;
+      if (sysAudioTracks.length > 0 && micTracks.length > 0) {
+        try {
+          const ctx = new AudioContext();
+          const dest = ctx.createMediaStreamDestination();
+          ctx.createMediaStreamSource(new MediaStream([micTracks[0]])).connect(dest);
+          ctx.createMediaStreamSource(new MediaStream([sysAudioTracks[0]])).connect(dest);
+          outboundAudioTracks = dest.stream.getAudioTracks();
+          screenAudioCtxRef.current = ctx;
+        } catch {
+          outboundAudioTracks = micTracks;
+        }
+      }
+      const outbound = new MediaStream([...outboundAudioTracks, ...stream.getVideoTracks()]);
+      meshRef.current?.setLocalStream(outbound);
 
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
@@ -923,11 +1026,7 @@ export default function MeetingRoom() {
       }
 
       stream.getVideoTracks()[0].onended = () => {
-        setIsScreenSharing(false);
-        setIsStudioBroadcasting(false);
-        setScreenStream(null);
-        meshRef.current?.setLocalStream(localStream);
-        if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: false });
+        stopShare();
       };
 
       if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: true });
@@ -3167,7 +3266,7 @@ export default function MeetingRoom() {
                       : `🔴 Screen Presentation by ${activeScreenPresenter.displayName}`}
                   </span>
                   <span className="font-mono text-[8px] bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30">
-                    1080p 60fps
+                    LIVE
                   </span>
                 </div>
 

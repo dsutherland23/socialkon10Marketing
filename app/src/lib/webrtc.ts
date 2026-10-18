@@ -128,13 +128,39 @@ export async function getLocalUserMedia(options?: {
 
 /* ---------------- WebRTC Multi-Peer Mesh Session ---------------- */
 
-export const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
+/** STUN servers are free; TURN is required for restrictive/symmetric NATs
+ *  (corporate firewalls, some mobile carriers). Configure via env:
+ *  VITE_TURN_URLS (comma-separated), VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL. */
+export function getRtcConfig(): RTCConfiguration {
+  const iceServers: RTCIceServer[] = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-  ],
-};
+  ];
+  try {
+    const env = import.meta.env || {};
+    const turnUrls = String(env.VITE_TURN_URLS || "").split(",").map((u: string) => u.trim()).filter(Boolean);
+    if (turnUrls.length > 0) {
+      iceServers.push({
+        urls: turnUrls,
+        username: env.VITE_TURN_USERNAME || undefined,
+        credential: env.VITE_TURN_CREDENTIAL || undefined,
+      });
+    }
+  } catch {
+    // TURN is optional — STUN-only config still works for most networks
+  }
+  return { iceServers };
+}
+
+export const RTC_CONFIG: RTCConfiguration = getRtcConfig();
+
+/** Perfect-negotiation politeness rule (RFC 8860 style): the peer with the
+ *  lexicographically larger id is "polite" and rolls back on offer collision.
+ *  Pure & deterministic so both sides always agree without extra signaling. */
+export function isPolitePeer(myId: string, remoteId: string): boolean {
+  return myId > remoteId;
+}
 
 export class WebRTCMeshSession {
   private myParticipantId: string;
@@ -144,6 +170,9 @@ export class WebRTCMeshSession {
   private peers = new Map<string, RTCPeerConnection>();
   private remoteStreams = new Map<string, MediaStream>();
   private localStream: MediaStream | null = null;
+  private makingOffer = new Map<string, boolean>();
+  private ignoreOffer = new Map<string, boolean>();
+  private lastIceRestart = new Map<string, number>();
 
   constructor(opts: {
     myParticipantId: string;
@@ -167,13 +196,16 @@ export class WebRTCMeshSession {
     this.localStream = stream;
     if (!stream) return;
 
-    // Update tracks for existing peer connections
+    // Update tracks for existing peer connections. replaceTrack never needs
+    // renegotiation; a genuinely new track kind triggers onnegotiationneeded.
     this.peers.forEach((pc) => {
       const senders = pc.getSenders();
       stream.getTracks().forEach((track) => {
         const sender = senders.find((s) => s.track?.kind === track.kind);
         if (sender) {
-          sender.replaceTrack(track).catch(() => {});
+          if (sender.track?.id !== track.id) {
+            sender.replaceTrack(track).catch(() => {});
+          }
         } else {
           try {
             pc.addTrack(track, stream);
@@ -183,15 +215,17 @@ export class WebRTCMeshSession {
     });
   }
 
-  public async connectToPeer(remoteParticipantId: string, isInitiator: boolean): Promise<RTCPeerConnection> {
+  public async connectToPeer(remoteParticipantId: string): Promise<RTCPeerConnection> {
     if (this.peers.has(remoteParticipantId)) {
       return this.peers.get(remoteParticipantId)!;
     }
 
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(getRtcConfig());
     this.peers.set(remoteParticipantId, pc);
+    this.makingOffer.set(remoteParticipantId, false);
+    this.ignoreOffer.set(remoteParticipantId, false);
 
-    // 1. Add local tracks
+    // 1. Add local tracks — triggers onnegotiationneeded, which drives the offer
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         try {
@@ -224,49 +258,80 @@ export class WebRTCMeshSession {
       }
     };
 
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
-        this.closePeer(remoteParticipantId);
+    // 4. Perfect negotiation — both sides may offer; collisions resolve politely
+    pc.onnegotiationneeded = async () => {
+      try {
+        this.makingOffer.set(remoteParticipantId, true);
+        await pc.setLocalDescription();
+        if (pc.localDescription) {
+          this.onSignalOut(remoteParticipantId, "offer", JSON.stringify(pc.localDescription));
+        }
+      } catch (err) {
+        console.warn(`Negotiation failed for ${remoteParticipantId}:`, err);
+      } finally {
+        this.makingOffer.set(remoteParticipantId, false);
       }
     };
 
-    // 4. If initiator, create and send SDP offer
-    if (isInitiator) {
-      try {
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true,
-        });
-        await pc.setLocalDescription(offer);
-        this.onSignalOut(remoteParticipantId, "offer", JSON.stringify(offer));
-      } catch (err) {
-        console.warn(`Create offer failed for ${remoteParticipantId}:`, err);
+    // 5. Resilient connection state handling — "disconnected" is often a
+    // transient network blip, so we never tear down on it. Only true failure
+    // triggers an ICE restart (rate-limited); only "closed" disposes the peer.
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed") {
+        const now = Date.now();
+        const last = this.lastIceRestart.get(remoteParticipantId) || 0;
+        if (now - last > 8000) {
+          this.lastIceRestart.set(remoteParticipantId, now);
+          try {
+            pc.restartIce();
+          } catch {
+            // restart is best-effort; the next failure tick will retry
+          }
+        }
       }
-    }
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "closed") {
+        this.closePeer(remoteParticipantId);
+      }
+    };
 
     return pc;
   }
 
   public async handleIncomingSignal(fromParticipantId: string, type: "offer" | "answer" | "candidate", payload: string) {
-    let pc = this.peers.get(fromParticipantId);
-    if (!pc) {
-      pc = await this.connectToPeer(fromParticipantId, false);
-    }
+    const pc = await this.connectToPeer(fromParticipantId);
 
     try {
       const data = JSON.parse(payload);
 
       if (type === "offer") {
+        // Glare resolution: impolite peer ignores colliding offers entirely;
+        // polite peer rolls back its own in-flight offer and accepts theirs.
+        const offerCollision =
+          this.makingOffer.get(fromParticipantId) || pc.signalingState !== "stable";
+        const ignore = !isPolitePeer(this.myParticipantId, fromParticipantId) && offerCollision;
+        this.ignoreOffer.set(fromParticipantId, ignore);
+        if (ignore) return;
+        if (offerCollision) {
+          try {
+            await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
+          } catch {
+            // rollback unsupported in older browsers — the remote will re-offer
+          }
+        }
         await pc.setRemoteDescription(new RTCSessionDescription(data));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        this.onSignalOut(fromParticipantId, "answer", JSON.stringify(answer));
+        this.onSignalOut(fromParticipantId, "answer", JSON.stringify(pc.localDescription || answer));
       } else if (type === "answer") {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
       } else if (type === "candidate") {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(data));
-        } catch {}
+        } catch (err) {
+          if (!this.ignoreOffer.get(fromParticipantId)) throw err;
+        }
       }
     } catch (err) {
       console.warn(`Signal handling error (${type}) from ${fromParticipantId}:`, err);
@@ -281,6 +346,9 @@ export class WebRTCMeshSession {
       } catch {}
       this.peers.delete(remoteParticipantId);
     }
+    this.makingOffer.delete(remoteParticipantId);
+    this.ignoreOffer.delete(remoteParticipantId);
+    this.lastIceRestart.delete(remoteParticipantId);
     this.remoteStreams.delete(remoteParticipantId);
     this.onRemoteTrackRemoved(remoteParticipantId);
   }
@@ -293,6 +361,9 @@ export class WebRTCMeshSession {
     });
     this.peers.clear();
     this.remoteStreams.clear();
+    this.makingOffer.clear();
+    this.ignoreOffer.clear();
+    this.lastIceRestart.clear();
   }
 }
 
