@@ -54,7 +54,7 @@ The site already had a full finance engine (`financeDocuments`: quotes/invoices/
 | `financeDocuments` | GET public (ID = credential); **list admin-only** (was: public list); update admin **or** token-validated quote decision |
 | `settings/site.whatsappTemplates` | Template overrides |
 
-No destructive migrations; all new fields optional/backward-compatible. **Rules redeploy required:** `firebase deploy --only firestore:rules,storage`.
+No destructive migrations; all new fields optional/backward-compatible. **Rules deployed to production 2026-10-18** (`firebase deploy --only firestore:rules,storage` — compiled and released successfully).
 
 ## 4. Security
 
@@ -77,7 +77,7 @@ Quote approval and payment-status pages are responsive single-column layouts (mi
 
 ## 7. Outstanding issues
 
-- **High (operational):** deploy `firestore.rules` — until then, live projects run the previous ruleset (quote decisions/payment links/docAccess fall back to local demo storage client-side and won't persist remotely).
+- ~~High (operational): deploy `firestore.rules`~~ **Done 2026-10-18** — quote decisions, payment links, docAccess and hardened order-file access are now live.
 - **Medium:** WhatsApp Business Platform automation, real gateway session creation + webhook Cloud Function, and server-side AV scanning all require external credentials/infrastructure — architecture is ready, deliberately inactive.
 - **Low:** quote approval page could email the studio on decision (currently admin sees status change in Finance).
 
@@ -86,7 +86,7 @@ Quote approval and payment-status pages are responsive single-column layouts (mi
 | Ready now | Needs external config |
 |---|---|
 | WhatsApp follow-up (Click-to-Chat), templates editor, comm timeline | WhatsApp Business API automation |
-| Quote-from-order, revisions, secure customer approval | Rules deploy (above) |
+| Quote-from-order, revisions, secure customer approval | — (rules live) |
 | Invoice sharing (hardened), PDF, payments recording | — |
 | Validated uploads + provenance metadata | Server-side AV (optional) |
 | Payment-link records + admin + status page | Verified payment gateway + webhook Cloud Function |

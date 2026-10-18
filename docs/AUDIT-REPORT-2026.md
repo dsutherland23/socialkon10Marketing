@@ -158,7 +158,7 @@ Screenshot review of checkout at 390×844 and 1440×900 (`app/qa/checkout-mobile
 
 **Critical** — none open in code. One operational dependency:
 
-- ⚠️ **The updated `firestore.rules` and `storage.rules` must be deployed** (`firebase deploy --only firestore:rules,storage`). Until then the *old* rules protect the live project; the application code is written to remain safe under both (it never relies on being able to write forbidden fields), but findings #2 and #4 are only closed in production once deployed.
+- ✅ **The updated `firestore.rules` and `storage.rules` are deployed** (2026-10-18, `firebase deploy --only firestore:rules,storage` — both compiled and released). Findings #2 and #4 are closed in production.
 
 **High**
 
@@ -186,7 +186,7 @@ The site can ship in **ORDER_REQUEST mode today** — the default configuration 
 
 **Conditions (both operational, neither requires code):**
 
-1. Deploy the updated security rules: `cd app && firebase deploy --only firestore:rules,storage`
+1. ~~Deploy the updated security rules~~ **Done 2026-10-18.**
 2. Redeploy the site so the fixed `vercel.json` headers take effect.
 
 **Post-deploy 10-minute checklist:** sign into `/admin` → Settings → Checkout (confirm ORDER_REQUEST selected) → place one real order request from a phone → confirm it appears in Orders with an `SK10-` reference, UNPAID badge, and history entry → record a test payment → confirm the client portal reflects it.
