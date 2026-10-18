@@ -639,6 +639,45 @@ export function subscribeToMeeting(
 }
 
 
+/** Subscribe to the full meetings collection — powers admin lobby alerts. */
+export function subscribeAllMeetings(onUpdate: (meetings: MeetingRecord[]) => void): Unsubscribe {
+  if (firebaseReady && db) {
+    const unsub = onSnapshot(
+      collection(db, "meetings"),
+      (snap) => {
+        const map = new Map<string, MeetingRecord>();
+        snap.docs.forEach((d) => {
+          const data = d.data() as MeetingRecord;
+          const key = data.id || d.id;
+          if (!map.has(key)) map.set(key, data);
+        });
+        onUpdate(Array.from(map.values()));
+      },
+      (err) => {
+        console.warn("Meetings subscribe notice:", err);
+        listAllMeetings().then(onUpdate).catch(() => onUpdate([]));
+      }
+    );
+    return () => unsub();
+  }
+
+  // Fallback polling for offline/IDB mode
+  let active = true;
+  const poll = async () => {
+    if (!active) return;
+    const items = await getIdbData<MeetingRecord>(STORE_MEETINGS);
+    onUpdate(items);
+  };
+  poll();
+  const interval = setInterval(poll, 2000);
+
+  return () => {
+    active = false;
+    clearInterval(interval);
+  };
+}
+
+
 /* ---------------- Participant Management & Moderation ---------------- */
 
 export async function updateParticipant(

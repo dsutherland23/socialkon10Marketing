@@ -30,7 +30,7 @@ import { MessageThread } from "../components/messages";
 import {
   createMeeting, deleteMeeting, deleteMeetings, setMeetingsStatus, listAllMeetings,
   recordCallHistory, listCallHistory, deleteCallHistory, deleteCalls, downloadCalendarIcs,
-  generatePasscode, getMeetingShareDetails,
+  generatePasscode, getMeetingShareDetails, subscribeAllMeetings,
   type MeetingRecord, type CallHistoryRecord, type SessionType,
 } from "../lib/meetings";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
@@ -8239,10 +8239,19 @@ function AdminSignIn() {
    Live visual alerts for anything that needs the studio's attention:
    new orders, review/approval requests, signed briefs, fresh leads.
 ------------------------------------------------------------------- */
-interface AdminAlerts { newOrders: number; reviewReqs: number; newBriefs: number; newLeads: number; unreadMsgs: number }
+interface AdminAlerts {
+  newOrders: number; reviewReqs: number; newBriefs: number; newLeads: number; unreadMsgs: number;
+  lobbyWaiting: number; lobbyRoomId?: string; lobbyTitle?: string;
+}
 
 function AlertStrip({ data, onNavigate }: { data: AdminAlerts; onNavigate: (t: (typeof TABS)[number]) => void }) {
   const alerts = [
+    data.lobbyWaiting > 0 && {
+      key: "lobby", tone: "#22c55e",
+      label: `${data.lobbyWaiting} client${data.lobbyWaiting > 1 ? "s" : ""} waiting in the meeting lobby`,
+      sub: data.lobbyTitle ? `Knocking on "${data.lobbyTitle}" — let them in` : "Accept them into the live video chat",
+      href: data.lobbyRoomId ? `/meet/${data.lobbyRoomId}` : undefined,
+    },
     data.newOrders > 0 && {
       key: "orders", tone: "#ef4444",
       label: `${data.newOrders} new order${data.newOrders > 1 ? "s" : ""} received`,
@@ -8268,7 +8277,7 @@ function AlertStrip({ data, onNavigate }: { data: AdminAlerts; onNavigate: (t: (
       label: `${data.newLeads} new lead${data.newLeads > 1 ? "s" : ""}`,
       sub: "Respond while they're hot", tab: "Leads" as const,
     },
-  ].filter(Boolean) as { key: string; tone: string; label: string; sub: string; tab: (typeof TABS)[number] }[];
+  ].filter(Boolean) as { key: string; tone: string; label: string; sub: string; tab?: (typeof TABS)[number]; href?: string }[];
 
   if (alerts.length === 0) {
     return (
@@ -8290,7 +8299,7 @@ function AlertStrip({ data, onNavigate }: { data: AdminAlerts; onNavigate: (t: (
       </div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-2">
         {alerts.map((a) => (
-          <button key={a.key} onClick={() => onNavigate(a.tab)}
+          <button key={a.key} onClick={() => (a.href ? window.open(a.href, "_blank") : a.tab ? onNavigate(a.tab) : undefined)}
             className="border px-4 py-3 text-left transition-colors hover:border-[var(--dept)] group"
             style={{ borderColor: a.tone, background: "var(--panel)" }}>
             <span className="flex items-center gap-2">
@@ -8298,7 +8307,9 @@ function AlertStrip({ data, onNavigate }: { data: AdminAlerts; onNavigate: (t: (
               <span className="font-display text-[13px] font-bold uppercase leading-tight">{a.label}</span>
             </span>
             <span className="font-meta text-[9px] text-[var(--muted)] block mt-1">{a.sub}</span>
-            <span className="font-meta text-[9px] dept-accent mt-2 inline-block group-hover:underline">OPEN {a.tab.toUpperCase()} →</span>
+            <span className="font-meta text-[9px] dept-accent mt-2 inline-block group-hover:underline">
+              {a.href ? "JOIN MEETING →" : `OPEN ${(a.tab || "").toUpperCase()} →`}
+            </span>
           </button>
         ))}
       </div>
@@ -8333,15 +8344,32 @@ export default function Admin() {
     let currOrders: OrderRecord[] = [];
     let currIntakes: IntakeRecord[] = [];
     let currLeads: LeadRecord[] = [];
+    let currMeetings: MeetingRecord[] = [];
 
     const updateAlerts = () => {
       if (stop) return;
+      // Clients knocking in a meeting lobby — ignore finished/dead meetings so
+      // stale "waiting" ghosts from old sessions don't cry wolf.
+      const lobbyMeetings = currMeetings
+        .filter((m) => !["completed", "cancelled", "expired"].includes(m.status)
+          && (m.participants || []).some((p) => p.status === "waiting"))
+        .sort((a, b) => {
+          if (a.status === "live" && b.status !== "live") return -1;
+          if (b.status === "live" && a.status !== "live") return 1;
+          return new Date(b.updatedAt || b.scheduledStart).getTime() - new Date(a.updatedAt || a.scheduledStart).getTime();
+        });
+      const lobbyWaiting = lobbyMeetings.reduce(
+        (n, m) => n + (m.participants || []).filter((p) => p.status === "waiting").length, 0
+      );
       setAlerts({
         newOrders: currOrders.filter((o) => o.status === "ORDER RECEIVED").length,
         reviewReqs: currOrders.filter((o) => ["CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length,
         newBriefs: currIntakes.filter((i) => i.status === "submitted").length,
         newLeads: currLeads.filter((l) => l.status === "new").length,
         unreadMsgs: currOrders.filter(orderHasUnreadClientMessage).length,
+        lobbyWaiting,
+        lobbyRoomId: lobbyMeetings[0]?.roomId,
+        lobbyTitle: lobbyMeetings[0]?.title,
       });
     };
 
@@ -8357,12 +8385,17 @@ export default function Admin() {
       currLeads = leads;
       updateAlerts();
     });
+    const unsubMeetings = subscribeAllMeetings((meetings) => {
+      currMeetings = meetings;
+      updateAlerts();
+    });
 
     return () => {
       stop = true;
       unsubOrders();
       unsubIntakes();
       unsubLeads();
+      unsubMeetings();
     };
   }, [allowed]);
 
