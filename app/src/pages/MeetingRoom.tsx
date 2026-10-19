@@ -10,6 +10,7 @@ import {
   type ParticipantRole,
   type ParticipantStatus,
   subscribeToMeeting,
+  updateMeeting,
   updateParticipant,
   admitParticipant,
   admitAllParticipants,
@@ -484,9 +485,11 @@ export default function MeetingRoom() {
     }
   }, [selectedAudioInput, selectedVideoInput, phase]);
 
+  const micVolumeRef = useRef(0);
   useEffect(() => {
     if (!localStream) return;
     const cleanup = createAudioLevelMeter(localStream, (vol) => {
+      micVolumeRef.current = vol;
       setMicVolume(vol);
     });
     return () => {
@@ -658,6 +661,10 @@ export default function MeetingRoom() {
   }, [meeting?.participants, phase, myParticipantId]);
 
   // 8. Watch Participant Status changes (e.g. host admits or removes participant)
+  const localStreamRef = useRef<MediaStream | null>(null);
+  localStreamRef.current = localStream;
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  screenStreamRef.current = screenStream;
   useEffect(() => {
     if (!meeting) return;
     const me = meeting.participants.find((p) => p.id === myParticipantId);
@@ -667,10 +674,88 @@ export default function MeetingRoom() {
       setPhase("in_meeting");
       toast.success("You have been admitted to the meeting!");
     } else if (me.status === "removed") {
+      stopMediaStream(localStreamRef.current);
+      stopMediaStream(screenStreamRef.current);
+      meshRef.current?.closeAll();
       setPhase("ended");
       toast.error("You have been removed from the meeting by the host.");
     }
   }, [meeting, myParticipantId, phase]);
+
+  // 8b. Active-speaker detection (Zoom-style green ring). Remote streams get a
+  // lightweight VU meter each; the local mic reuses the existing micVolume ref.
+  const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set());
+  const speakerLevelsRef = useRef<Map<string, number>>(new Map());
+  const isMicMutedRef = useRef(isMicMuted);
+  isMicMutedRef.current = isMicMuted;
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    const levels = speakerLevelsRef.current;
+    const cleanups: (() => void)[] = [];
+    remoteStreams.forEach((stream, id) => {
+      if (stream.getAudioTracks().length === 0) return;
+      cleanups.push(createAudioLevelMeter(stream, (v) => levels.set(id, v)));
+    });
+    const interval = setInterval(() => {
+      setSpeakingIds((prev) => {
+        const next = new Set<string>();
+        levels.forEach((v, id) => {
+          if (v > 12) next.add(id);
+        });
+        if (!isMicMutedRef.current && micVolumeRef.current > 12) next.add(myParticipantId);
+        if (prev.size === next.size && [...prev].every((x) => next.has(x))) return prev;
+        return next;
+      });
+    }, 400);
+    return () => {
+      cleanups.forEach((c) => c());
+      clearInterval(interval);
+      levels.clear();
+    };
+  }, [remoteStreams, phase, myParticipantId]);
+
+  // 8c. Host moderation honored locally: a host flipping your isMuted flag
+  // force-mutes your microphone (and an unmute request pings you to speak).
+  const prevUnmuteReqRef = useRef<string>("");
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const me = meeting.participants.find((p) => p.id === myParticipantId);
+    if (!me) return;
+
+    if (me.isMuted && !isMicMuted) {
+      setIsMicMuted(true);
+      localStream?.getAudioTracks().forEach((t) => (t.enabled = false));
+      toast.info("🔇 The host muted your microphone.", { duration: 4500 });
+    }
+
+    if (me.unmuteRequestedAt && me.unmuteRequestedAt !== prevUnmuteReqRef.current) {
+      prevUnmuteReqRef.current = me.unmuteRequestedAt;
+      if (isMicMuted) {
+        playHandRaiseChime();
+        triggerHapticFeedback([120, 60, 120]);
+        toast.info("🎙️ The host is asking you to unmute — tap the mic button to speak.", { duration: 7000 });
+      }
+    }
+  }, [meeting, phase, myParticipantId, isMicMuted, localStream]);
+
+  // 8d. "Come watch live" invitation when someone starts presenting or opens
+  // Live Co-Design — everyone else gets a chime + toast + auto-focus banner.
+  const prevInviteAtRef = useRef<string>("");
+  useEffect(() => {
+    const inv = meeting?.liveInvite;
+    if (!meeting || phase !== "in_meeting" || !inv) return;
+    if (inv.senderId === myParticipantId) return; // the presenter already knows
+    if (inv.sentAt === prevInviteAtRef.current) return;
+    prevInviteAtRef.current = inv.sentAt;
+    if (Date.now() - new Date(inv.sentAt).getTime() > 120000) return;
+    playDoorbellChime();
+    triggerHapticFeedback([120, 60, 180]);
+    const what =
+      inv.type === "co_design" ? "launched Live Co-Design" :
+      inv.type === "proofing" ? "opened Live Proofing" :
+      "started presenting their screen";
+    toast.info(`🔴 ${inv.senderName} ${what} — watch the live stage above!`, { duration: 8000 });
+  }, [meeting, phase, myParticipantId]);
 
   // 9. Watch for incoming Waiting Room participants (Host Doorbell Notification)
   const prevWaitingCount = useRef(0);
@@ -956,7 +1041,7 @@ export default function MeetingRoom() {
 
   const screenAudioCtxRef = useRef<AudioContext | null>(null);
 
-  const handleStartScreenShare = async (preferWindow: boolean = false) => {
+  const handleStartScreenShare = async (preferWindow: boolean = false, inviteType: "screen_share" | "co_design" = "screen_share") => {
     setShowScreenShareMenu(false);
 
     const stopShare = () => {
@@ -1029,7 +1114,13 @@ export default function MeetingRoom() {
         stopShare();
       };
 
-      if (meeting) updateParticipant(meeting.id, myParticipantId, { isScreenSharing: true });
+      if (meeting) {
+        updateParticipant(meeting.id, myParticipantId, { isScreenSharing: true });
+        // Zoom-style "come watch" ping to everyone else in the room
+        updateMeeting(meeting.id, {
+          liveInvite: { type: inviteType, senderId: myParticipantId, senderName: displayName, sentAt: new Date().toISOString() },
+        });
+      }
       toast.success(preferWindow ? "Sharing Software / Studio Window" : "Broadcasting Screen Presentation");
     } catch (err) {
       console.warn("Screen share cancelled or failed:", err);
@@ -1044,7 +1135,7 @@ export default function MeetingRoom() {
 
     toast.info("Opening KON10 Studio... Select your browser tab/window to broadcast to client!", { duration: 6000 });
     setIsStudioBroadcasting(true);
-    await handleStartScreenShare(true);
+    await handleStartScreenShare(true, "co_design");
   };
 
   const handleSnapScreenToProof = async () => {
@@ -3380,8 +3471,12 @@ export default function MeetingRoom() {
                 const hasVideo = isLocal ? (!isVideoOff && localStream) : (rStream && rStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live"));
 
                 return (
-                  <div className={`relative w-full aspect-video max-h-[60vh] mx-auto bg-neutral-900 rounded-2xl overflow-hidden border-2 border-cyan-500 shadow-2xl flex items-center justify-center ${
-                    p?.isHandRaised ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] animate-pulse" : ""
+                  <div className={`relative w-full aspect-video max-h-[60vh] mx-auto bg-neutral-900 rounded-2xl overflow-hidden border-2 shadow-2xl flex items-center justify-center ${
+                    p?.isHandRaised
+                      ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] animate-pulse border-amber-400"
+                      : p && speakingIds.has(p.id)
+                      ? "ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)] border-emerald-400"
+                      : "border-cyan-500"
                   }`}>
                     {isLocal ? (
                       !isVideoOff && localStream ? (
@@ -3467,10 +3562,15 @@ export default function MeetingRoom() {
               "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 auto-rows-fr h-full w-full"
             }`}>
               {/* My Local Tile */}
-              <div className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center ${
+              <div
+                onClick={() => handleSpotlightParticipant(myParticipantId)}
+                title="Click to maximize your video"
+                className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center cursor-pointer ${
                 isHandRaised
                   ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] border-amber-400 animate-pulse"
-                  : "border-neutral-800 shadow-md"
+                  : speakingIds.has(myParticipantId)
+                  ? "ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)] border-emerald-400"
+                  : "border-neutral-800 shadow-md hover:border-cyan-500/60"
               }`}>
                 {!isVideoOff && localStream ? (
                   <VideoTile stream={localStream} muted={true} isMirrored={true} className="w-full h-full object-cover" />
@@ -3536,10 +3636,14 @@ export default function MeetingRoom() {
                 return (
                   <div
                     key={p.id}
-                    className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center ${
+                    onClick={() => handleSpotlightParticipant(p.id)}
+                    title={`Click to maximize ${p.displayName}`}
+                    className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center cursor-pointer ${
                       p.isHandRaised
                         ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] border-amber-400 animate-pulse"
-                        : "border-neutral-800 shadow-md"
+                        : speakingIds.has(p.id)
+                        ? "ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)] border-emerald-400"
+                        : "border-neutral-800 shadow-md hover:border-cyan-500/60"
                     }`}
                   >
                     {hasVideo && rStream ? (
@@ -4178,20 +4282,48 @@ export default function MeetingRoom() {
                   <span className="font-meta text-[9px] uppercase font-bold text-neutral-500 block">
                     In Meeting ({activeParticipants.length})
                   </span>
-                  {activeParticipants.map((p) => (
+                  {activeParticipants.map((p) => {
+                    const isMe = p.id === myParticipantId;
+                    const thumbStream = isMe ? localStream : remoteStreams.get(p.id) || null;
+                    const thumbHasVideo = isMe
+                      ? (!isVideoOff && localStream && localStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live"))
+                      : (thumbStream && thumbStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live") && !p.isVideoOff);
+                    return (
                     <div
                       key={p.id}
-                      className={`p-2.5 rounded-lg bg-neutral-800 border flex items-center justify-between gap-2 ${
-                        p.isHandRaised ? "border-amber-400 ring-1 ring-amber-400" : "border-neutral-700"
+                      className={`p-2.5 rounded-lg bg-neutral-800 border flex items-center justify-between gap-2 transition-all ${
+                        p.isHandRaised
+                          ? "border-amber-400 ring-1 ring-amber-400"
+                          : speakingIds.has(p.id)
+                          ? "border-emerald-400 ring-2 ring-emerald-400/70 shadow-[0_0_14px_rgba(52,211,153,0.45)]"
+                          : "border-neutral-700"
                       }`}
                     >
-                      <div className="truncate">
+                      {/* Live video preview thumbnail (Zoom-style) */}
+                      <button
+                        onClick={() => handleSpotlightParticipant(p.id)}
+                        title={`Maximize ${p.displayName}`}
+                        className="relative w-20 aspect-video shrink-0 rounded-md overflow-hidden bg-neutral-900 border border-neutral-700 hover:border-cyan-400 transition-colors"
+                      >
+                        {thumbHasVideo && thumbStream ? (
+                          <VideoTile stream={thumbStream} muted={true} isMirrored={isMe} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="flex items-center justify-center h-full text-[11px] font-bold text-neutral-400">
+                            {p.displayName.slice(0, 2).toUpperCase()}
+                          </span>
+                        )}
+                        {speakingIds.has(p.id) && (
+                          <span className="absolute bottom-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Speaking" />
+                        )}
+                      </button>
+
+                      <div className="truncate flex-1">
                         <p className="font-bold text-xs truncate flex items-center gap-1.5">
-                          <span>{p.displayName} {p.id === myParticipantId ? "(You)" : ""}</span>
+                          <span>{p.displayName} {isMe ? "(You)" : ""}</span>
                           {p.isHandRaised && <span className="text-amber-400">✋</span>}
                         </p>
                         <p className="font-meta text-[9px] text-neutral-400 capitalize">
-                          {p.role} · {p.isMuted ? "Muted" : "Active"}
+                          {p.role} · {p.isMuted ? "Muted" : speakingIds.has(p.id) ? "Speaking…" : "Active"}
                         </p>
                       </div>
 
@@ -4213,15 +4345,25 @@ export default function MeetingRoom() {
                             ✋
                           </button>
                         )}
-                        {isHost && p.id !== myParticipantId && (
+                        {isHost && !isMe && (
                           <>
-                            <button
-                              onClick={() => updateParticipant(meeting.id, p.id, { isMuted: !p.isMuted })}
-                              className="p-1 rounded bg-neutral-700 text-[10px] hover:bg-neutral-600"
-                              title={p.isMuted ? "Unmute" : "Mute"}
-                            >
-                              {p.isMuted ? "🎙️" : "🔇"}
-                            </button>
+                            {p.isMuted ? (
+                              <button
+                                onClick={() => updateParticipant(meeting.id, p.id, { unmuteRequestedAt: new Date().toISOString() })}
+                                className="p-1 rounded bg-neutral-700 text-[10px] hover:bg-emerald-600"
+                                title="Ask to unmute"
+                              >
+                                🎙️
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => updateParticipant(meeting.id, p.id, { isMuted: true })}
+                                className="p-1 rounded bg-neutral-700 text-[10px] hover:bg-neutral-600"
+                                title="Mute this participant"
+                              >
+                                🔇
+                              </button>
+                            )}
                             <button
                               onClick={() => removeParticipant(meeting.id, p.id)}
                               className="p-1 rounded bg-red-600/80 text-[10px] hover:bg-red-500"
@@ -4233,7 +4375,8 @@ export default function MeetingRoom() {
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* Host Meeting Lock Toggle */}

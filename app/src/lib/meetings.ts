@@ -67,6 +67,8 @@ export interface MeetingParticipant {
   screenShareAllowed?: boolean;
   chatAllowed?: boolean;
   connectionQuality?: "excellent" | "good" | "fair" | "poor";
+  /** Set by the host to politely ask this participant to unmute (Zoom-style) */
+  unmuteRequestedAt?: string;
 }
 
 export interface MeetingChatMessage {
@@ -235,6 +237,8 @@ export interface MeetingRecord {
   breakoutRooms?: MeetingBreakoutRoom[];
   intelligence?: MeetingIntelligence;
   liveProofing?: LiveProofingState;
+  /** "Come watch" ping broadcast when someone starts presenting (Zoom-style) */
+  liveInvite?: { type: "screen_share" | "co_design" | "proofing"; senderId: string; senderName: string; sentAt: string };
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
