@@ -804,9 +804,41 @@ export async function admitParticipant(meetingId: string, participantId: string)
 }
 
 export async function admitAllParticipants(meetingId: string): Promise<void> {
+  const now = new Date().toISOString();
+
+  // Live path: transactional so a guest joining at the same moment can't be
+  // overwritten by the admit-all write.
+  if (firebaseReady && db) {
+    try {
+      const candidates = [normalizeRoomCode(meetingId), getAlphanumericRoomKey(meetingId), meetingId]
+        .filter((k, i, arr) => k && arr.indexOf(k) === i);
+      let ref: ReturnType<typeof doc> | null = null;
+      for (const key of candidates) {
+        const snap = await getDoc(doc(db, "meetings", key)).catch(() => null);
+        if (snap?.exists()) {
+          ref = snap.ref;
+          break;
+        }
+      }
+      if (ref) {
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref!);
+          if (!snap.exists()) return;
+          const current = snap.data() as MeetingRecord;
+          const updated = (current.participants || []).map((p) =>
+            p.status === "waiting" ? { ...p, status: "admitted" as ParticipantStatus, joinedAt: now } : p
+          );
+          tx.update(ref!, { participants: updated, updatedAt: now });
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn("Firestore admitAllParticipants notice, using fallback path:", err);
+    }
+  }
+
   const meeting = await getMeetingById(meetingId);
   if (!meeting) return;
-  const now = new Date().toISOString();
   const updated = meeting.participants.map((p) =>
     p.status === "waiting" ? { ...p, status: "admitted" as ParticipantStatus, joinedAt: now } : p
   );

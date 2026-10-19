@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "../lib/auth";
 import { useSEO } from "../lib/seo";
+import { firebaseReady } from "../lib/firebase";
 import {
   type MeetingRecord,
   type MeetingParticipant,
@@ -297,9 +298,14 @@ export default function MeetingRoom() {
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
   const [newRoomName, setNewRoomName] = useState("");
 
+  // Lets the actual host claim host controls when they aren't auto-recognized:
+  // demo mode has no auth at all, and live-mode hosts may simply be signed out.
+  const [claimedHost, setClaimedHost] = useState(false);
+
   const isHost = Boolean(
     meeting && (
       isAdmin ||
+      claimedHost ||
       user?.email?.toLowerCase().trim() === "socialkon10@gmail.com" ||
       user?.email?.toLowerCase().trim() === "admin@socialkon10.pro" ||
       (user?.email && meeting.hostEmail && user.email.toLowerCase().trim() === meeting.hostEmail.toLowerCase().trim()) ||
@@ -758,13 +764,24 @@ export default function MeetingRoom() {
   }, [meeting, phase, myParticipantId]);
 
   // 9. Watch for incoming Waiting Room participants (Host Doorbell Notification)
+  // Chime + haptic + PERSISTENT actionable toast — an audible ping alone is
+  // too easy to miss while presenting.
   const prevWaitingCount = useRef(0);
   useEffect(() => {
     if (!meeting || !isHost || phase !== "in_meeting") return;
-    const count = meeting.participants.filter((p) => p.status === "waiting").length;
+    const knocking = meeting.participants.filter((p) => p.status === "waiting");
+    const count = knocking.length;
     if (count > prevWaitingCount.current && prevWaitingCount.current >= 0) {
       playDoorbellChime();
       triggerHapticFeedback([150, 80, 200]);
+      const names = knocking.map((p) => p.displayName).join(", ");
+      toast.warning(`🔔 ${names} ${count > 1 ? "are" : "is"} waiting in the lobby`, {
+        duration: 12000,
+        action: {
+          label: count > 1 ? "Admit All" : "Admit",
+          onClick: () => void admitAllParticipants(meeting.id),
+        },
+      });
     }
     prevWaitingCount.current = count;
   }, [meeting?.participants, isHost, phase]);
@@ -2480,6 +2497,30 @@ export default function MeetingRoom() {
                 ℹ️ Waiting room is enabled. You will enter the waiting lobby until admitted by the host.
               </p>
             )}
+
+            {/* Host claim — demo mode has no auth, live mode requires sign-in.
+                Without this, a host who isn't auto-recognized gets trapped with
+                no way to admit waiting guests. */}
+            {!isHost && !firebaseReady && (
+              <button
+                type="button"
+                onClick={() => {
+                  setClaimedHost(true);
+                  toast.success("Host controls enabled (demo mode).");
+                }}
+                className="w-full font-meta text-[10px] uppercase font-bold py-2 border border-amber-500/50 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
+              >
+                👑 I'm the host — enable host controls (demo)
+              </button>
+            )}
+            {!isHost && firebaseReady && !user && (
+              <p className="font-meta text-[9.5px] text-[var(--muted)] text-center">
+                👑 Hosting this meeting?{" "}
+                <button type="button" onClick={() => navigate("/auth")} className="underline dept-accent font-bold">
+                  Sign in for host controls
+                </button>
+              </p>
+            )}
           </div>
         </div>
 
@@ -2619,6 +2660,35 @@ export default function MeetingRoom() {
         >
           Cancel and return to lobby
         </button>
+
+        {/* Host claim — a host who isn't auto-recognized (demo mode, or signed
+            out in live mode) would otherwise be trapped here with no way in. */}
+        {!isHost && !firebaseReady && (
+          <button
+            type="button"
+            onClick={async () => {
+              setClaimedHost(true);
+              await updateParticipant(meeting.id, myParticipantId, {
+                role: "host",
+                status: "joined",
+                joinedAt: new Date().toISOString(),
+              });
+              setPhase("in_meeting");
+              toast.success("Host controls enabled (demo mode) — you are in the meeting.");
+            }}
+            className="mt-4 font-meta text-[10px] uppercase font-bold px-4 py-2 border border-amber-500/50 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
+          >
+            👑 I'm the host — let me in (demo)
+          </button>
+        )}
+        {!isHost && firebaseReady && !user && (
+          <p className="font-meta text-[9.5px] text-[var(--muted)] mt-4">
+            👑 Hosting this meeting?{" "}
+            <button type="button" onClick={() => navigate("/auth")} className="underline dept-accent font-bold">
+              Sign in to admit yourself &amp; guests
+            </button>
+          </p>
+        )}
       </div>
     );
   }
