@@ -400,7 +400,13 @@ export default function Checkout() {
     toast.success("Quote estimate downloaded");
   };
 
-  useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure and complete payment for your project or template.", path: "/checkout" });
+  useSEO({
+    title: "Checkout — Social Kon10 Marketing",
+    description: mode === "ORDER_REQUEST"
+      ? "Configure your project and submit an order request — no payment is taken online."
+      : "Configure and complete payment for your project or template.",
+    path: "/checkout",
+  });
 
   const set = (k: keyof Details) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setDetails((d) => ({ ...d, [k]: e.target.value }));

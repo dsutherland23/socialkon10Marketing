@@ -4,6 +4,8 @@ import { deptById, formatMoney } from "../lib/data";
 import { useContent, useServiceBySlug } from "../lib/content";
 import { useDepartment } from "../lib/dept";
 import { useShop } from "../lib/shop";
+import { useCheckoutSettings } from "../lib/checkout";
+import { orderCtaCopy } from "../lib/order-utils";
 import { useSEO, track, breadcrumbLd } from "../lib/seo";
 import { ClipLines, Reveal } from "../lib/motion";
 import { ArrowLink, FinalCta } from "../components/blocks";
@@ -23,6 +25,8 @@ export default function ServicePage() {
   const { projects } = useContent();
   const dept = service ? deptById(service.dept) : null;
   const { currency, add } = useShop();
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const cta = orderCtaCopy(checkoutSettings);
   const navigate = useNavigate();
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
   const [rush, setRush] = useState(false);
@@ -252,7 +256,7 @@ export default function ServicePage() {
                   <p className="font-display-wide text-3xl font-bold mt-4">{service.priceType === "quote" ? "Custom quote" : "Consultation first"}</p>
                   <p className="text-sm text-[var(--muted)] mt-3 leading-relaxed">
                     {service.priceType === "quote"
-                      ? "Scope this properly. Tell us the goal, the platforms and the budget range — we reply with a priced proposal you can accept and pay online."
+                      ? `Scope this properly. Tell us the goal, the platforms and the budget range — we reply with a priced proposal ${cta.proposalTail}`
                       : "Strategy work starts with a conversation. Book a consultation and we'll map positioning, audience and direction together."}
                   </p>
                   <div className="mt-8 flex flex-col gap-3">

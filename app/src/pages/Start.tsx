@@ -6,6 +6,8 @@ import { useSEO, track } from "../lib/seo";
 import { Reveal } from "../lib/motion";
 import { FinalCta } from "../components/blocks";
 import { createLead } from "../lib/backend";
+import { useCheckoutSettings } from "../lib/checkout";
+import { orderCtaCopy } from "../lib/order-utils";
 import { trackFormStart, trackFormSubmit, trackLeadSubmit, getSessionAttribution } from "../lib/analytics";
 
 /* ------------------------------------------------------------------
@@ -96,6 +98,8 @@ export default function Start() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sent, setSent] = useState(false);
   useDepartment(null);
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const cta = orderCtaCopy(checkoutSettings);
 
   useSEO({
     title: "Start a Project — Social Kon10 Marketing",
@@ -171,7 +175,7 @@ export default function Start() {
             <h2 className="display-section mt-4">{intent === "consultation" ? "Consultation requested." : "Message received."}</h2>
             <p className="mt-4 text-[var(--muted)] max-w-md mx-auto">
               We'll reply from {CONTACT.email} within one business day.
-              {intent === "quote" && " If the scope is clear, you'll get a priced proposal you can accept and pay online."}
+              {intent === "quote" && ` If the scope is clear, you'll get a priced proposal ${cta.proposalTail}`}
             </p>
             <Link to="/" className="btn btn-fill mt-8">Back home</Link>
           </div>

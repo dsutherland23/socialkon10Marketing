@@ -7,6 +7,8 @@ import { breadcrumbLd, track, useSEO } from "../lib/seo";
 import { Reveal } from "../lib/motion";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
+import { useCheckoutSettings } from "../lib/checkout";
+import { orderCtaCopy } from "../lib/order-utils";
 import { useAuth } from "../lib/auth";
 import { firebaseReady } from "../lib/firebase";
 import { addManaged, createLead, createOrder, listManaged, listMyOrders } from "../lib/backend";
@@ -225,6 +227,8 @@ export default function TemplateDetail() {
   const { add } = useShop();
   const { user } = useAuth();
   const money = useMoney();
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const cta = orderCtaCopy(checkoutSettings);
   const [license, setLicense] = useState<LicenseId>("personal");
   const [claiming, setClaiming] = useState(false);
   const [entitlement, setEntitlement] = useState<{ orderId: string; version: string } | null>(null);
@@ -416,12 +420,15 @@ export default function TemplateDetail() {
               ) : (
                 <>
                   <button className="btn btn-dept justify-center" onClick={() => buy(false)}>
-                    Buy Template — {money(price)} <span className="btn-arrow" aria-hidden>→</span>
+                    {cta.buyVerb} Template — {money(price)} <span className="btn-arrow" aria-hidden>→</span>
                   </button>
-                  {/* Enhancement 3: Buy Now skips directly to Payment */}
+                  {/* Instant checkout — step wording adapts to the checkout mode */}
                   <button className="btn btn-fill justify-center" onClick={buyNow}>
-                    ⚡ Buy Now — Skip to Payment
+                    {cta.buyNow}
                   </button>
+                  {cta.orderNowNote && (
+                    <p className="font-meta text-[9px] text-[var(--muted)] text-center leading-relaxed">{cta.orderNowNote}</p>
+                  )}
                 </>
               )}
               {tpl.customizeAvailable && !free && (

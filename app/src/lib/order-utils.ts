@@ -76,6 +76,45 @@ export function orderRequestEnabled(settings: CheckoutSettings): boolean {
   return m === "ORDER_REQUEST" || m === "HYBRID";
 }
 
+/* ---------------- mode-aware customer-facing copy ---------------- */
+
+/**
+ * Copy that must never promise online payment while the studio runs in
+ * ORDER_REQUEST mode. Every string here is the DEFAULT (payment-capable)
+ * wording unless the effective mode is ORDER_REQUEST — admins switching
+ * modes never need to edit page copy by hand.
+ */
+export function orderCtaCopy(settings: CheckoutSettings): {
+  /** Service page primary CTA, e.g. "Order now — pay online" */
+  orderNow: string;
+  /** Reassurance line under the CTA (empty when paying online) */
+  orderNowNote: string;
+  /** Template store instant-checkout CTA */
+  buyNow: string;
+  /** Template store standard CTA prefix ("Buy" vs "Order") */
+  buyVerb: string;
+  /** Tail for quote-proposal microcopy ("…you can accept and pay online.") */
+  proposalTail: string;
+} {
+  if (effectiveCheckoutMode(settings) === "ORDER_REQUEST") {
+    return {
+      orderNow: "Order now — no payment today",
+      orderNowNote:
+        "Nothing is charged online. The studio reviews your order, confirms scope & pricing, and emails payment instructions.",
+      buyNow: "⚡ Order Now — Skip to Review",
+      buyVerb: "Order",
+      proposalTail: "you can accept online — payment is arranged directly with the studio after approval.",
+    };
+  }
+  return {
+    orderNow: "Order now — pay online",
+    orderNowNote: "",
+    buyNow: "⚡ Buy Now — Skip to Payment",
+    buyVerb: "Buy",
+    proposalTail: "you can accept and pay online.",
+  };
+}
+
 /* ---------------- payment status ---------------- */
 
 export const PAYMENT_STATUSES = ["UNPAID", "PENDING", "PARTIALLY_PAID", "PAID", "REFUNDED", "FAILED"] as const;

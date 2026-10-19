@@ -14,6 +14,8 @@ import { FinalCta } from "../components/blocks";
 import { CustomProjectCta, TalkToUs } from "../components/TalkToUs";
 import { useMoney } from "../lib/money";
 import { useShop } from "../lib/shop";
+import { useCheckoutSettings } from "../lib/checkout";
+import { orderCtaCopy } from "../lib/order-utils";
 import { CartConflictModal } from "../components/CartConflictModal";
 import { detectPackageOverlap } from "../lib/orderConflict";
 import { SERVICES, resolveServiceSlug } from "../lib/data";
@@ -33,6 +35,8 @@ export function Configurator({ s, onAdd, onOrder }: {
 }) {
   const { sizes, options } = useDesignCatalog();
   const money = useMoney();
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const cta = orderCtaCopy(checkoutSettings);
   const tiers = s.tiers ?? [];
   const variationGroups = s.variations ?? [];
 
@@ -411,15 +415,18 @@ export function Configurator({ s, onAdd, onOrder }: {
               <TalkToUs serviceName={s.name} className="mt-4 justify-center" />
             </div>
           ) : (
-            /* Journey A — pay online */
+            /* Journey A — order online (payment wording adapts to checkout mode) */
             <>
               <button
                 className="btn btn-dept w-full justify-center mt-6 disabled:opacity-40"
                 disabled={blockAdd}
                 onClick={() => { (onOrder ?? onAdd)(sel); track("order_now_click", { service: s.slug, value: line.lineTotal, tier: line.tier?.id }); }}
               >
-                Order now — pay online <span className="btn-arrow" aria-hidden>→</span>
+                {cta.orderNow} <span className="btn-arrow" aria-hidden>→</span>
               </button>
+              {cta.orderNowNote && (
+                <p className="font-meta text-[9px] text-[var(--muted)] mt-2 text-center leading-relaxed">{cta.orderNowNote}</p>
+              )}
               <button
                 className="btn btn-ghost w-full justify-center mt-2 disabled:opacity-40"
                 disabled={blockAdd}

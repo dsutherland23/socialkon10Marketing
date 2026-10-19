@@ -18,6 +18,7 @@ import {
   isValidOrderReference,
   validateOrderRequest,
   TERMINAL_STATUSES,
+  orderCtaCopy,
   type CheckoutSettings,
 } from "../order-utils";
 import type { ServiceProduct } from "../data";
@@ -290,5 +291,48 @@ describe("terminal statuses", () => {
   it("archives completed and cancelled orders", () => {
     expect(TERMINAL_STATUSES).toContain("COMPLETED");
     expect(TERMINAL_STATUSES).toContain("CANCELLED");
+  });
+});
+
+/* ---------------- mode-aware customer copy ---------------- */
+
+const settingsFor = (mode: CheckoutSettings["mode"], verified = true): CheckoutSettings => ({
+  mode,
+  gateway: { providerId: "paypal", environment: "sandbox", verified },
+});
+
+describe("orderCtaCopy", () => {
+  it("promises online payment only when the mode truly supports it", () => {
+    const online = orderCtaCopy(settingsFor("ONLINE_PAYMENT"));
+    expect(online.orderNow).toBe("Order now — pay online");
+    expect(online.orderNowNote).toBe("");
+    expect(online.buyVerb).toBe("Buy");
+    expect(online.buyNow).toContain("Payment");
+    expect(online.proposalTail).toContain("pay online");
+  });
+
+  it("never mentions online payment in ORDER_REQUEST mode", () => {
+    const req = orderCtaCopy(settingsFor("ORDER_REQUEST"));
+    expect(req.orderNow).toBe("Order now — no payment today");
+    expect(req.orderNowNote).toBeTruthy();
+    expect(req.buyVerb).toBe("Order");
+    expect(req.buyNow).not.toContain("Payment");
+    expect(req.proposalTail).not.toContain("pay online");
+    // no string may promise an online charge
+    [req.orderNow, req.orderNowNote, req.buyNow, req.proposalTail].forEach((s) => {
+      expect(s.toLowerCase()).not.toMatch(/pay online|pay now/);
+    });
+  });
+
+  it("keeps payment wording in HYBRID (customer can genuinely pay online)", () => {
+    const hyb = orderCtaCopy(settingsFor("HYBRID"));
+    expect(hyb.orderNow).toBe("Order now — pay online");
+    expect(hyb.proposalTail).toContain("pay online");
+  });
+
+  it("degrades to request-mode wording when the gateway is unverified", () => {
+    const degraded = orderCtaCopy(settingsFor("ONLINE_PAYMENT", false));
+    expect(degraded.orderNow).toBe("Order now — no payment today");
+    expect(degraded.buyVerb).toBe("Order");
   });
 });
