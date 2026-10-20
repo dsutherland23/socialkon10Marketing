@@ -347,7 +347,7 @@ export function isMeetingJoinable(meeting: MeetingRecord): { canJoin: boolean; r
 
 /* ---------------- Tolerant Room Code Normalization ---------------- */
 
-/** Normalize room IDs replacing all unicode dashes (en-dash, em-dash, non-breaking), URL prefixes, and whitespace */
+/** Normalize room IDs replacing all unicode dashes (en-dash, em-dash, non-breaking), URL prefixes, query strings, and whitespace */
 export function normalizeRoomCode(input: string): string {
   if (!input) return "";
   return input
@@ -356,6 +356,8 @@ export function normalizeRoomCode(input: string): string {
     .replace(/^socialkon10\.pro\/meet\//i, "")
     .replace(/^www\.socialkon10\.pro\/meet\//i, "")
     .replace(/^\/meet\//i, "")
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "")
     .replace(/\s+/g, "")
     .trim()
     .toUpperCase();
@@ -378,14 +380,14 @@ export async function createMeeting(
   const id = roomId;
   const alphaKey = getAlphanumericRoomKey(roomId);
 
-  const meeting: MeetingRecord = {
+  const meeting: MeetingRecord = cleanFirestoreObject({
     ...data,
     id,
     roomId,
     createdAt: now,
     updatedAt: now,
     participants: data.participants || [],
-  };
+  });
 
   if (firebaseReady && db) {
     try {
@@ -405,19 +407,30 @@ export async function createMeeting(
   return meeting;
 }
 
-export function cleanFirestoreObject<T extends Record<string, any>>(obj: T): T {
-  if (!obj || typeof obj !== "object") return obj;
+function cleanFirestoreValue(val: any): any {
+  if (val === undefined) return undefined;
+  if (val === null || typeof val !== "object" || val instanceof Date) return val;
+  if (Array.isArray(val)) {
+    return val
+      .filter((item) => item !== undefined)
+      .map((item) => cleanFirestoreValue(item));
+  }
   const out: Record<string, any> = {};
-  for (const [k, v] of Object.entries(obj)) {
+  for (const [k, v] of Object.entries(val)) {
     if (v !== undefined) {
-      if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
-        out[k] = cleanFirestoreObject(v);
-      } else {
-        out[k] = v;
-      }
+      out[k] = cleanFirestoreValue(v);
     }
   }
-  return out as T;
+  return out;
+}
+
+/** Recursively strip `undefined` values from objects AND elements inside arrays.
+ *  Firestore rejects writes (`setDoc`, `updateDoc`, `tx.update`) if any nested
+ *  array element (e.g. `participants[i].joinedAt` or `participants[i].userId`
+ *  when a guest joins the waiting room) contains `undefined`. */
+export function cleanFirestoreObject<T extends Record<string, any>>(obj: T): T {
+  if (!obj || typeof obj !== "object") return obj;
+  return cleanFirestoreValue(obj) as T;
 }
 
 export async function updateMeeting(
@@ -491,13 +504,27 @@ export async function getMeetingById(idOrRoomId: string): Promise<MeetingRecord 
       // 1. Direct doc by normalized ID (e.g. SK-ZZM-NQSU-WUZ)
       if (normalized) {
         const snap1 = await getDoc(doc(db, "meetings", normalized));
-        if (snap1.exists()) return snap1.data() as MeetingRecord;
+        if (snap1.exists()) {
+          const data1 = snap1.data() as MeetingRecord;
+          if (data1.id && data1.id !== normalized) {
+            const canon = await getDoc(doc(db, "meetings", data1.id)).catch(() => null);
+            if (canon?.exists()) return canon.data() as MeetingRecord;
+          }
+          return data1;
+        }
       }
 
       // 2. Direct doc by alphanumeric key (e.g. SKZZMNQSUWUZ)
       if (alphaKey) {
         const snap2 = await getDoc(doc(db, "meetings", alphaKey));
-        if (snap2.exists()) return snap2.data() as MeetingRecord;
+        if (snap2.exists()) {
+          const data2 = snap2.data() as MeetingRecord;
+          if (data2.id && data2.id !== alphaKey) {
+            const canon = await getDoc(doc(db, "meetings", data2.id)).catch(() => null);
+            if (canon?.exists()) return canon.data() as MeetingRecord;
+          }
+          return data2;
+        }
       }
 
       // 3. Direct doc by raw ID
@@ -548,8 +575,11 @@ export async function listAllMeetings(): Promise<MeetingRecord[]> {
       const map = new Map<string, MeetingRecord>();
       snap.docs.forEach((d) => {
         const data = d.data() as MeetingRecord;
-        if (data.id && !map.has(data.id)) {
-          map.set(data.id, data);
+        const key = data.id || d.id;
+        if (!key) return;
+        const existing = map.get(key);
+        if (!existing || (data.updatedAt || "") > (existing.updatedAt || "") || d.id === data.id) {
+          map.set(key, data);
         }
       });
       const list = Array.from(map.values());
@@ -682,7 +712,11 @@ export function subscribeAllMeetings(onUpdate: (meetings: MeetingRecord[]) => vo
         snap.docs.forEach((d) => {
           const data = d.data() as MeetingRecord;
           const key = data.id || d.id;
-          if (!map.has(key)) map.set(key, data);
+          if (!key) return;
+          const existing = map.get(key);
+          if (!existing || (data.updatedAt || "") > (existing.updatedAt || "") || d.id === data.id) {
+            map.set(key, data);
+          }
         });
         onUpdate(Array.from(map.values()));
       },
@@ -721,9 +755,10 @@ export function mergeParticipantUpdate(
   participantId: string,
   updates: Partial<MeetingParticipant>
 ): MeetingParticipant[] {
-  const pEmail = (updates.email || "").toLowerCase().trim();
-  const pUserId = updates.userId || "";
-  const isHostRole = updates.role === "host";
+  const cleanUpdates = cleanFirestoreObject(updates as Record<string, any>) as Partial<MeetingParticipant>;
+  const pEmail = (cleanUpdates.email || "").toLowerCase().trim();
+  const pUserId = cleanUpdates.userId || "";
+  const isHostRole = cleanUpdates.role === "host";
 
   let existingIdx = participants.findIndex((p) => p.id === participantId);
 
@@ -732,26 +767,30 @@ export function mergeParticipantUpdate(
     existingIdx = participants.findIndex((p) => p.role === "host");
   }
 
-  // Check matching email
+  // Check matching email (never merge a non-host into the host's record)
   if (existingIdx === -1 && pEmail && !pEmail.endsWith("@guest.local")) {
-    existingIdx = participants.findIndex((p) => p.email?.toLowerCase().trim() === pEmail);
+    existingIdx = participants.findIndex(
+      (p) => p.email?.toLowerCase().trim() === pEmail && (isHostRole || p.role !== "host")
+    );
   }
 
-  // Check matching userId
+  // Check matching userId (never merge a non-host into the host's record)
   if (existingIdx === -1 && pUserId) {
-    existingIdx = participants.findIndex((p) => p.userId === pUserId);
+    existingIdx = participants.findIndex(
+      (p) => p.userId === pUserId && (isHostRole || p.role !== "host")
+    );
   }
 
   let updatedList: MeetingParticipant[];
   if (existingIdx >= 0) {
     updatedList = [...participants];
-    updatedList[existingIdx] = {
+    updatedList[existingIdx] = cleanFirestoreObject({
       ...updatedList[existingIdx],
-      ...updates,
+      ...cleanUpdates,
       id: participantId || updatedList[existingIdx].id,
-    };
+    });
   } else {
-    const newP = { id: participantId, ...updates } as MeetingParticipant;
+    const newP = cleanFirestoreObject({ id: participantId, ...cleanUpdates }) as MeetingParticipant;
     updatedList = [...participants, newP];
   }
 
@@ -761,15 +800,16 @@ export function mergeParticipantUpdate(
   const deduplicated: MeetingParticipant[] = [];
 
   for (const p of updatedList) {
-    if (p.role === "host") {
+    const cleanP = cleanFirestoreObject(p);
+    if (cleanP.role === "host") {
       if (!hasHost) {
         hasHost = true;
-        deduplicated.push(p);
+        deduplicated.push(cleanP);
       }
     } else {
-      if (!seenIds.has(p.id)) {
-        seenIds.add(p.id);
-        deduplicated.push(p);
+      if (!seenIds.has(cleanP.id)) {
+        seenIds.add(cleanP.id);
+        deduplicated.push(cleanP);
       }
     }
   }
@@ -786,26 +826,50 @@ export async function updateParticipant(
   // concurrent joins / admits / status flips can never overwrite each other.
   if (firebaseReady && db) {
     try {
+      const firestore = db;
       // Resolve the real doc key (normalized roomId, alphanumeric alias, or raw)
       const candidates = [normalizeRoomCode(meetingId), getAlphanumericRoomKey(meetingId), meetingId]
         .filter((k, i, arr) => k && arr.indexOf(k) === i);
       let ref: ReturnType<typeof doc> | null = null;
       for (const key of candidates) {
-        const snap = await getDoc(doc(db, "meetings", key)).catch(() => null);
+        const snap = await getDoc(doc(firestore, "meetings", key)).catch(() => null);
         if (snap?.exists()) {
-          ref = snap.ref;
+          const data = snap.data() as MeetingRecord;
+          if (data.id && data.id !== key) {
+            const canonSnap = await getDoc(doc(firestore, "meetings", data.id)).catch(() => null);
+            ref = canonSnap?.exists() ? canonSnap.ref : snap.ref;
+          } else {
+            ref = snap.ref;
+          }
           break;
         }
       }
 
       if (ref) {
-        await runTransaction(db, async (tx) => {
+        let syncedPayload: Record<string, any> | null = null;
+        let canonicalId = normalizeRoomCode(meetingId);
+        let alphaAlias = getAlphanumericRoomKey(meetingId);
+        await runTransaction(firestore, async (tx) => {
           const snap = await tx.get(ref!);
           if (!snap.exists()) return;
           const current = snap.data() as MeetingRecord;
+          canonicalId = current.id || canonicalId;
+          alphaAlias = getAlphanumericRoomKey(current.roomId || current.id || meetingId);
           const merged = mergeParticipantUpdate(current.participants || [], participantId, updates);
-          tx.update(ref!, cleanFirestoreObject({ participants: merged, updatedAt: new Date().toISOString() }));
+          syncedPayload = cleanFirestoreObject({
+            participants: merged,
+            updatedAt: new Date().toISOString(),
+          });
+          tx.update(ref!, syncedPayload);
         });
+        if (syncedPayload) {
+          const mirrorKeys = Array.from(new Set([canonicalId, alphaAlias, ...candidates].filter(Boolean)));
+          for (const alias of mirrorKeys) {
+            if (alias !== ref.id) {
+              await setDoc(doc(firestore, "meetings", alias), syncedPayload, { merge: true }).catch(() => {});
+            }
+          }
+        }
         return;
       }
     } catch (err) {
@@ -834,26 +898,47 @@ export async function admitAllParticipants(meetingId: string): Promise<void> {
   // overwritten by the admit-all write.
   if (firebaseReady && db) {
     try {
+      const firestore = db;
       const candidates = [normalizeRoomCode(meetingId), getAlphanumericRoomKey(meetingId), meetingId]
         .filter((k, i, arr) => k && arr.indexOf(k) === i);
       let ref: ReturnType<typeof doc> | null = null;
       for (const key of candidates) {
-        const snap = await getDoc(doc(db, "meetings", key)).catch(() => null);
+        const snap = await getDoc(doc(firestore, "meetings", key)).catch(() => null);
         if (snap?.exists()) {
-          ref = snap.ref;
+          const data = snap.data() as MeetingRecord;
+          if (data.id && data.id !== key) {
+            const canonSnap = await getDoc(doc(firestore, "meetings", data.id)).catch(() => null);
+            ref = canonSnap?.exists() ? canonSnap.ref : snap.ref;
+          } else {
+            ref = snap.ref;
+          }
           break;
         }
       }
       if (ref) {
-        await runTransaction(db, async (tx) => {
+        let syncedPayload: Record<string, any> | null = null;
+        let canonicalId = normalizeRoomCode(meetingId);
+        let alphaAlias = getAlphanumericRoomKey(meetingId);
+        await runTransaction(firestore, async (tx) => {
           const snap = await tx.get(ref!);
           if (!snap.exists()) return;
           const current = snap.data() as MeetingRecord;
+          canonicalId = current.id || canonicalId;
+          alphaAlias = getAlphanumericRoomKey(current.roomId || current.id || meetingId);
           const updated = (current.participants || []).map((p) =>
             p.status === "waiting" ? { ...p, status: "admitted" as ParticipantStatus, joinedAt: now } : p
           );
-          tx.update(ref!, { participants: updated, updatedAt: now });
+          syncedPayload = cleanFirestoreObject({ participants: updated, updatedAt: now });
+          tx.update(ref!, syncedPayload);
         });
+        if (syncedPayload) {
+          const mirrorKeys = Array.from(new Set([canonicalId, alphaAlias, ...candidates].filter(Boolean)));
+          for (const alias of mirrorKeys) {
+            if (alias !== ref.id) {
+              await setDoc(doc(firestore, "meetings", alias), syncedPayload, { merge: true }).catch(() => {});
+            }
+          }
+        }
         return;
       }
     } catch (err) {

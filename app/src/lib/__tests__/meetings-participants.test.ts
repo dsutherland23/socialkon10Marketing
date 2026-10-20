@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { mergeParticipantUpdate, type MeetingParticipant } from "../meetings";
+import {
+  cleanFirestoreObject,
+  mergeParticipantUpdate,
+  normalizeRoomCode,
+  type MeetingParticipant,
+} from "../meetings";
 import { isPolitePeer } from "../webrtc";
 
 const makeP = (over: Partial<MeetingParticipant>): MeetingParticipant => ({
@@ -83,6 +88,53 @@ describe("mergeParticipantUpdate", () => {
     // Simulate B's write landing on the already-updated list (transaction retry)
     const afterB = mergeParticipantUpdate(afterA, "p_b", { status: "joined", displayName: "B" });
     expect(afterB.map((p) => p.id)).toEqual(["host_1", "p_a", "p_b"]);
+  });
+
+  it("strips undefined fields (joinedAt, userId) when a guest joins the waiting room", () => {
+    const base = [makeP({ id: "host_1", role: "host", email: "admin@socialkon10.pro" })];
+    const merged = mergeParticipantUpdate(base, "p_guest_1", {
+      id: "p_guest_1",
+      meetingId: "SK-ABC-1234-XYZ",
+      userId: undefined,
+      email: "visitor@guest.local",
+      displayName: "Visitor",
+      role: "participant",
+      status: "waiting",
+      joinedAt: undefined,
+    });
+    const guest = merged.find((p) => p.id === "p_guest_1")!;
+    expect(guest).toBeDefined();
+    expect(guest.status).toBe("waiting");
+    expect("joinedAt" in guest).toBe(false);
+    expect("userId" in guest).toBe(false);
+
+    const payload = cleanFirestoreObject({ participants: merged, updatedAt: "2026-10-20T00:00:00Z" });
+    for (const p of payload.participants) {
+      for (const [, v] of Object.entries(p)) {
+        expect(v).not.toBeUndefined();
+      }
+    }
+  });
+
+  it("never overwrites the host record when a non-host participant shares email or userId", () => {
+    const base = [makeP({ id: "host_1", role: "host", email: "studio@acme.com", userId: "u_1" })];
+    const merged = mergeParticipantUpdate(base, "p_guest_2", {
+      role: "participant",
+      status: "waiting",
+      email: "studio@acme.com",
+      userId: "u_1",
+      displayName: "Second Device",
+    });
+    expect(merged).toHaveLength(2);
+    expect(merged.find((p) => p.role === "host")?.status).toBe("joined");
+    expect(merged.find((p) => p.id === "p_guest_2")?.status).toBe("waiting");
+  });
+});
+
+describe("normalizeRoomCode", () => {
+  it("normalizes pasted links with query strings and trailing slashes", () => {
+    expect(normalizeRoomCode("https://socialkon10.pro/meet/sk-abc-1234-xyz?pass=654321")).toBe("SK-ABC-1234-XYZ");
+    expect(normalizeRoomCode("https://www.socialkon10.pro/meet/sk-abc-1234-xyz/")).toBe("SK-ABC-1234-XYZ");
   });
 });
 

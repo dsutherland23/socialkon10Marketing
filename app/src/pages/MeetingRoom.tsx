@@ -182,7 +182,11 @@ export default function MeetingRoom() {
   // Meeting State
   const [meeting, setMeeting] = useState<MeetingRecord | null>(null);
   const [loadingMeeting, setLoadingMeeting] = useState(true);
-  const [passcode, setPasscode] = useState("");
+  const [passcode, setPasscode] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams(window.location.search);
+    return (params.get("pass") || params.get("passcode") || "").trim();
+  });
   const [displayName, setDisplayName] = useState(user?.displayName || user?.email?.split("@")[0] || "Guest Participant");
   const [sessionId] = useState<string>(() => `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
 
@@ -369,7 +373,7 @@ export default function MeetingRoom() {
     });
 
   const waitingParticipants = (meeting?.participants || [])
-    .filter((p) => p.status === "waiting")
+    .filter((p) => p.status === "waiting" && p.role !== "host")
     .filter((p, idx, arr) => arr.findIndex((x) => x.id === p.id) === idx);
 
   const otherConnectedParticipants = activeParticipants.filter((p) => {
@@ -902,9 +906,14 @@ export default function MeetingRoom() {
   // Works in both "lobby" (pre-join preview) and "in_meeting" phases so hosts
   // never miss a guest knocking.
   const prevWaitingIdsRef = useRef<Set<string>>(new Set());
+  const prevNotifiedPhaseRef = useRef<string>("");
   useEffect(() => {
     if (!meeting || !isHost || (phase !== "in_meeting" && phase !== "lobby")) return;
-    const knocking = (meeting.participants || []).filter((p) => p.status === "waiting");
+    if (prevNotifiedPhaseRef.current !== phase) {
+      prevNotifiedPhaseRef.current = phase;
+      prevWaitingIdsRef.current = new Set();
+    }
+    const knocking = (meeting.participants || []).filter((p) => p.status === "waiting" && p.role !== "host");
     const currentIds = new Set(knocking.map((p) => p.id));
     const newlyArrived = knocking.filter((p) => !prevWaitingIdsRef.current.has(p.id));
     prevWaitingIdsRef.current = currentIds;
@@ -948,7 +957,7 @@ export default function MeetingRoom() {
   // 9b. Flashing Tab Title & Periodic Gentle Reminder Chime while guests remain waiting
   useEffect(() => {
     if (!meeting || !isHost || (phase !== "in_meeting" && phase !== "lobby")) return;
-    const waiting = (meeting.participants || []).filter((p) => p.status === "waiting");
+    const waiting = (meeting.participants || []).filter((p) => p.status === "waiting" && p.role !== "host");
     if (waiting.length === 0) return;
 
     const baseTitle = `${meeting.title} — Social Kon10 Meet`;
@@ -973,15 +982,17 @@ export default function MeetingRoom() {
     };
   }, [meeting, isHost, phase]);
 
-  // 9c. Safety net: while the host sits in the lobby / room, reconcile with the
-  // server every few seconds. A dropped or mis-targeted realtime listener must
-  // never leave a guest knocking unseen.
+  // 9c. Safety net: reconcile with the server every 3s for both host (in lobby /
+  // room) and guests (in waiting_room). Also self-heals a guest's waiting entry
+  // if Firestore ever missed or dropped their initial knock.
   const meetingKeyRef = useRef<string>("");
   useEffect(() => {
     meetingKeyRef.current = meeting?.id || "";
   }, [meeting?.id]);
+  const waitingGuestInfoRef = useRef({ myParticipantId, displayName, userUid: user?.uid, userEmail: user?.email });
+  waitingGuestInfoRef.current = { myParticipantId, displayName, userUid: user?.uid, userEmail: user?.email };
   useEffect(() => {
-    if (!isHost || (phase !== "in_meeting" && phase !== "lobby")) return;
+    if (phase !== "in_meeting" && phase !== "lobby" && phase !== "waiting_room") return;
     let stopped = false;
     const tick = async () => {
       const key = meetingKeyRef.current;
@@ -992,14 +1003,37 @@ export default function MeetingRoom() {
         setMeeting((prev) => {
           if (!prev) return fresh;
           const sig = (m: MeetingRecord) =>
-            (m.participants || []).map((p) => `${p.id}:${p.status}`).sort().join("|");
+            (m.participants || []).map((p) => `${p.id}:${p.status}:${p.displayName}`).sort().join("|");
           return sig(prev) === sig(fresh) ? prev : fresh;
         });
+
+        // Self-healing knock: if a guest is sitting in the waiting room and their
+        // "waiting" record isn't on the server yet, push it immediately.
+        if (phase === "waiting_room" && !isHost) {
+          const info = waitingGuestInfoRef.current;
+          const meOnServer = (fresh.participants || []).find((p) => p.id === info.myParticipantId);
+          if (!meOnServer || (meOnServer.status !== "waiting" && meOnServer.status !== "admitted" && meOnServer.status !== "joined" && meOnServer.status !== "removed")) {
+            await updateParticipant(fresh.id, info.myParticipantId, {
+              id: info.myParticipantId,
+              meetingId: fresh.id,
+              userId: info.userUid,
+              email: info.userEmail || `${(info.displayName || "guest").toLowerCase().replace(/\s+/g, ".")}@guest.local`,
+              displayName: (info.displayName || "").trim() || "Participant",
+              role: "participant",
+              status: "waiting",
+              cameraAllowed: true,
+              microphoneAllowed: true,
+              screenShareAllowed: fresh.screenShareMode !== "disabled",
+              chatAllowed: fresh.chatEnabled,
+              connectionQuality: "excellent",
+            });
+          }
+        }
       } catch {
         // transient network error — try again next tick
       }
     };
-    const timer = window.setInterval(tick, 5000);
+    const timer = window.setInterval(tick, 3000);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -1166,7 +1200,7 @@ export default function MeetingRoom() {
     }
 
     // Check passcode if protected
-    if (meeting.passcode && meeting.passcode !== passcode && !isHost) {
+    if (meeting.passcode && meeting.passcode.trim() !== passcode.trim() && !isHost) {
       toast.error("Invalid meeting passcode.");
       return;
     }
