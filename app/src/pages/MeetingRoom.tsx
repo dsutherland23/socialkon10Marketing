@@ -1470,11 +1470,15 @@ export default function MeetingRoom() {
     };
   }, [canvasContextMenu]);
 
-  // 16. Agenda timer tick — drives countdown display from server deadlineAt
+  // 16. Agenda timer tick — drives countdown display from server deadlineAt.
+  // Only ticks while an agenda item is actually running; previously this
+  // re-rendered the whole meeting room every second even with no agenda.
+  const agendaTimerRunning = (meeting?.agendaItems ?? []).some((it) => it.status === "active");
   useEffect(() => {
+    if (!agendaTimerRunning) return;
     const id = setInterval(() => setAgendaTimerTick((t) => t + 1), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [agendaTimerRunning]);
 
   // 17. Speaker Queue — watch for invitation addressed to me
   useEffect(() => {
@@ -1496,11 +1500,29 @@ export default function MeetingRoom() {
     } else {
       setSpeakerQueueInvite(null);
     }
+    return () => {
+      if (speakerQueueInviteTimerRef.current) {
+        clearTimeout(speakerQueueInviteTimerRef.current);
+        speakerQueueInviteTimerRef.current = null;
+      }
+    };
   }, [meeting?.speakerQueue, myParticipantId, phase]);
 
-  // 18. Screen Share Annotation — subscribe when screen share is active
+  // 18. Screen Share Annotation — subscribe while ANY participant is sharing,
+  // not just the local presenter. Previously the condition was `isScreenSharing`
+  // only, so guests silently never received the presenter's strokes.
+  const anyScreenShareActive =
+    isScreenSharing ||
+    Boolean(
+      meeting?.participants?.some(
+        (p) =>
+          p.isScreenSharing &&
+          (p.status === "joined" || p.status === "admitted") &&
+          p.id !== myParticipantId
+      )
+    );
   useEffect(() => {
-    if (!meeting || !isScreenSharing) {
+    if (!meeting || !anyScreenShareActive) {
       setSsAnnotStrokes([]);
       return;
     }
@@ -1528,7 +1550,7 @@ export default function MeetingRoom() {
       () => setSsAnnotStrokes([])
     );
     return unsub;
-  }, [meeting?.id, isScreenSharing]);
+  }, [meeting?.id, anyScreenShareActive]);
 
   // Handlers
   const handleToggleFullscreen = () => {
@@ -2733,7 +2755,7 @@ export default function MeetingRoom() {
 
     if (overlay === "tiktok_reels_shorts") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-pink-500/50 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] border-2 border-pink-500/50 select-none">
           <div className="absolute top-0 inset-x-0 h-[14%] bg-pink-500/15 border-b border-pink-500/40 flex items-center justify-between px-3 text-pink-300 font-meta text-[8.5px]">
             <span className="font-bold">📱 TikTok / IG Reels Header Safe Zone</span>
             <span className="opacity-75">14% Clearance</span>
@@ -2752,7 +2774,7 @@ export default function MeetingRoom() {
 
     if (overlay === "ig_feed_grid") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 flex items-center justify-center select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] flex items-center justify-center select-none">
           <div className="relative w-full h-full border-2 border-amber-400/60">
             <div className="absolute top-0 inset-x-0 h-[10%] bg-black/40 border-b border-dashed border-amber-400/60 flex items-center justify-center font-meta text-[8px] text-amber-300 font-bold">
               ✂️ 1:1 Profile Grid Crop Margin (Top 10%)
@@ -2772,7 +2794,7 @@ export default function MeetingRoom() {
 
     if (overlay === "facebook_feed_ad") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-blue-500/50 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] border-2 border-blue-500/50 select-none">
           <div className="absolute top-0 inset-x-0 h-[10%] bg-blue-500/15 border-b border-blue-500/40 flex items-center justify-between px-3 text-blue-300 font-meta text-[8.5px]">
             <span className="font-bold">👥 Facebook Primary Text Safe Margin</span>
             <span className="opacity-75">10%</span>
@@ -2788,7 +2810,7 @@ export default function MeetingRoom() {
 
     if (overlay === "youtube_thumb") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-red-500/50 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] border-2 border-red-500/50 select-none">
           <div className="absolute bottom-2 right-2 w-[24%] h-[18%] bg-red-950/90 border-2 border-red-500 rounded-lg flex flex-col items-center justify-center text-red-200 font-meta text-[8px] font-bold shadow-lg">
             <span>⏱️ 04:12</span>
             <span className="text-[6.5px] uppercase">Duration Badge Safe Zone</span>
@@ -2802,7 +2824,7 @@ export default function MeetingRoom() {
 
     if (overlay === "linkedin_post") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 border-2 border-sky-500/50 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] border-2 border-sky-500/50 select-none">
           <div className="absolute inset-[6%] border border-dashed border-sky-400/60 flex items-center justify-center">
             <span className="bg-black/80 px-2 py-0.5 rounded text-[8px] font-meta text-sky-300 font-bold border border-sky-500/40">
               💼 LinkedIn Post &amp; Carousel Core Safe Area
@@ -2814,7 +2836,7 @@ export default function MeetingRoom() {
 
     if (overlay === "print_bleed") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 border-4 border-red-500 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] border-4 border-red-500 select-none">
           <div className="absolute inset-0 border-2 border-red-500/80 flex items-start justify-start p-1 text-[7px] text-red-400 font-mono font-bold">
             🔴 0.125" BLEED LINE
           </div>
@@ -2832,7 +2854,7 @@ export default function MeetingRoom() {
 
     if (overlay === "thirds") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 grid grid-cols-3 grid-rows-3 border border-yellow-400/40 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] grid grid-cols-3 grid-rows-3 border border-yellow-400/40 select-none">
           <div className="border-r border-b border-yellow-400/30 relative"><div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 shadow-sm" /></div>
           <div className="border-r border-b border-yellow-400/30 relative"><div className="absolute -bottom-1 -right-1 w-2 h-2 rounded-full bg-yellow-400 shadow-sm" /></div>
           <div className="border-b border-yellow-400/30" />
@@ -2848,7 +2870,7 @@ export default function MeetingRoom() {
 
     if (overlay === "golden_ratio") {
       return (
-        <div className="absolute inset-0 pointer-events-none z-15 border border-amber-400/40 select-none">
+        <div className="absolute inset-0 pointer-events-none z-[15] border border-amber-400/40 select-none">
           <div className="absolute left-1/2 top-0 bottom-0 w-px bg-amber-400/40 -translate-x-1/2" />
           <div className="absolute top-1/2 left-0 right-0 h-px bg-amber-400/40 -translate-y-1/2" />
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-amber-400 flex items-center justify-center font-meta text-[6px] text-amber-300 font-bold">
@@ -5551,14 +5573,16 @@ export default function MeetingRoom() {
                               brushSize: ssAnnotTool === "highlight" ? 12 : 3,
                               tool: ssAnnotTool,
                               vanishAt: isLaser ? Date.now() + 3000 : undefined,
-                            }).catch(() => {});
+                            }).catch((err) => {
+                              console.warn("[annotations] stroke failed to reach the meeting:", err);
+                            });
                             ssAnnotPoints.current = [];
                           }}
                         />
                       )}
                       {/* Remote annotation strokes drawn on a separate read-only canvas */}
                       {ssAnnotStrokes.length > 0 && (
-                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-9" style={{ overflow: "visible" }}>
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-[9]" style={{ overflow: "visible" }}>
                           {ssAnnotStrokes.map((stroke) => {
                             if (stroke.points.length < 2) return null;
                             const d = stroke.points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x * 100}% ${p.y * 100}%`).join(" ");
@@ -7437,7 +7461,7 @@ export default function MeetingRoom() {
                   >
                     {/* Live Concept Approval Banner */}
                     {meeting?.liveProofing?.approvedDeliverables?.some((a) => a.mockupId === activeMockup.id && a.approved) && (
-                      <div className="absolute top-2 inset-x-2 z-25 bg-emerald-950/90 border border-emerald-500/60 rounded-xl px-2.5 py-1 flex items-center justify-between text-emerald-200 font-meta text-[8.5px] shadow-lg backdrop-blur-xs">
+                      <div className="absolute top-2 inset-x-2 z-[25] bg-emerald-950/90 border border-emerald-500/60 rounded-xl px-2.5 py-1 flex items-center justify-between text-emerald-200 font-meta text-[8.5px] shadow-lg backdrop-blur-sm">
                         <span className="font-bold flex items-center gap-1">
                           <span>✓</span> Concept Approved by {meeting.liveProofing.approvedDeliverables.find((a) => a.mockupId === activeMockup.id)?.approvedBy}
                         </span>
@@ -7748,7 +7772,16 @@ export default function MeetingRoom() {
                               </button>
                             )}
                             <button
-                              onClick={() => removeParticipant(meeting.id, p.id)}
+                              onClick={async () => {
+                                // Destructive moderation action — confirm, then report outcome.
+                                if (!window.confirm(`Remove ${p.displayName} from the meeting?`)) return;
+                                try {
+                                  await removeParticipant(meeting.id, p.id);
+                                  toast.info(`${p.displayName} was removed from the meeting.`);
+                                } catch {
+                                  toast.error("Could not remove participant — please try again.");
+                                }
+                              }}
                               className="p-1 rounded bg-red-600/80 text-[10px] hover:bg-red-500"
                               title="Remove from meeting"
                             >
@@ -9151,8 +9184,11 @@ export default function MeetingRoom() {
           </div>
         </div>
 
-        {/* Center: Unified h-12 Dock (People, Chat, Share, Co-Design, Reactions, Hand, More) */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Center: Unified h-12 Dock (People, Chat, Share, Co-Design, Reactions, Hand, More)
+            Scrolls horizontally instead of overflowing on narrow windows; the
+            PRD module buttons (Breakouts/Queue/Agenda/Actions) collapse into
+            the More menu below xl — same as Zoom's responsive toolbar. */}
+        <div className="flex items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {/* People / Participants */}
           <button
             type="button"
@@ -9256,11 +9292,11 @@ export default function MeetingRoom() {
             </span>
           </button>
 
-          {/* Dedicated Breakout Rooms Button */}
+          {/* Dedicated Breakout Rooms Button (collapses into More below xl) */}
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "breakouts" ? "none" : "breakouts")}
-            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[74px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+            className={`relative hidden xl:flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[74px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
               activeDrawer === "breakouts"
                 ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
                 : myActiveBreakoutRoom
@@ -9285,11 +9321,11 @@ export default function MeetingRoom() {
             </span>
           </button>
 
-          {/* PRD Module 1 — Speaker Queue Button */}
+          {/* PRD Module 1 — Speaker Queue Button (collapses into More below xl) */}
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "queue" ? "none" : "queue")}
-            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+            className={`relative hidden xl:flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
               activeDrawer === "queue"
                 ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
                 : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
@@ -9306,11 +9342,11 @@ export default function MeetingRoom() {
             <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Queue</span>
           </button>
 
-          {/* PRD Module 2 — Agenda & Timer Button */}
+          {/* PRD Module 2 — Agenda & Timer Button (collapses into More below xl) */}
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "agenda" ? "none" : "agenda")}
-            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+            className={`relative hidden xl:flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
               activeDrawer === "agenda"
                 ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
                 : (meeting?.agendaItems ?? []).some((it) => it.status === "active")
@@ -9324,11 +9360,11 @@ export default function MeetingRoom() {
             <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Agenda</span>
           </button>
 
-          {/* PRD Module 4 — Action Board Button */}
+          {/* PRD Module 4 — Action Board Button (collapses into More below xl) */}
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "actions" ? "none" : "actions")}
-            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+            className={`relative hidden xl:flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
               activeDrawer === "actions"
                 ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
                 : (meeting?.liveActionItems ?? []).some((a) => a.approvalStatus === "suggested" && isHost)
@@ -10203,7 +10239,7 @@ export default function MeetingRoom() {
 
       {/* Drop Pin Revision Comment Modal */}
       {pendingPinCoord && (
-        <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
+        <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100">
           <div className="w-full max-w-sm bg-neutral-900 border border-neutral-700 p-5 rounded-2xl shadow-2xl text-white space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -10260,7 +10296,7 @@ export default function MeetingRoom() {
 
       {/* View / Manage Pin Detail Dialog */}
       {selectedPinDetail && (
-        <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
+        <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100">
           <div className="w-full max-w-sm bg-neutral-900 border border-neutral-700 p-5 rounded-2xl shadow-2xl text-white space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -10322,7 +10358,7 @@ export default function MeetingRoom() {
 
       {/* Clear Canvas Confirmation Modal (Protects Pins vs Drawings) */}
       {showClearConfirmModal && (
-        <div className="fixed inset-0 z-[160] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100 select-none">
+        <div className="fixed inset-0 z-[160] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100 select-none">
           <div className="w-full max-w-sm bg-neutral-900 border border-neutral-700 p-5 rounded-2xl shadow-2xl text-white space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
