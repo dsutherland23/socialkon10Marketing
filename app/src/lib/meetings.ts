@@ -10,7 +10,9 @@ import {
   query,
   runTransaction,
   setDoc,
+  updateDoc,
   where,
+  writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
 import { db, firebaseReady } from "./firebase";
@@ -302,6 +304,112 @@ export interface CoDesignSessionState {
   updatedBy: string;
 }
 
+// ─── PRD Module 1: Speaker Queue ─────────────────────────────────────────────
+export type SpeakerQueueStatus = "waiting" | "invited" | "speaking" | "completed" | "withdrawn" | "skipped";
+
+export interface SpeakerQueueEntry {
+  id: string;
+  meetingId: string;
+  participantId: string;
+  displayName: string;
+  raisedAt: string; // ISO 8601 server-assigned timestamp
+  serverSequence: number; // monotonic per-meeting counter for FIFO tie-break
+  status: SpeakerQueueStatus;
+  invitedAt?: string;
+  expiresAt?: string;
+  completedAt?: string;
+  revision: number;
+}
+
+export interface SpeakerQueueSettings {
+  enabled: boolean;
+  inviteTimeoutSeconds: number; // default 30
+  showPositions: boolean;
+  hostReorderAllowed: boolean;
+}
+
+// ─── PRD Module 2: Meeting Focus Timer / Agenda ───────────────────────────────
+export type AgendaItemStatus = "pending" | "active" | "paused" | "completed" | "skipped";
+
+export interface AgendaItem {
+  id: string;
+  meetingId: string;
+  title: string;
+  description?: string;
+  position: number;
+  plannedDurationSeconds: number;
+  status: AgendaItemStatus;
+  startedAt?: string;
+  deadlineAt?: string; // ISO 8601 — client computes countdown as deadlineAt - now
+  pausedRemainingSeconds?: number;
+  revision: number;
+}
+
+export interface TimeRequest {
+  id: string;
+  agendaItemId: string;
+  participantId: string;
+  displayName: string;
+  requestedSeconds: number;
+  status: "pending" | "approved" | "denied";
+  createdAt: string;
+}
+
+// ─── PRD Module 4: Live Action Board ─────────────────────────────────────────
+export type ActionItemStatus = "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+export type ActionItemApproval = "suggested" | "awaiting_confirmation" | "approved" | "rejected";
+
+export interface LiveActionItem {
+  id: string;
+  meetingId: string;
+  title: string;
+  description?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  dueAt?: string;
+  status: ActionItemStatus;
+  approvalStatus: ActionItemApproval;
+  proposedBy: string;
+  proposedByName: string;
+  approvedBy?: string;
+  sourceType: "manual" | "ai_suggestion";
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+}
+
+// ─── PRD Module 5: Presentation Annotation Tools ─────────────────────────────
+export interface ScreenShareAnnotationStroke {
+  id: string;
+  meetingId: string;
+  participantId: string;
+  displayName: string;
+  color: string;
+  points: Array<{ x: number; y: number }>; // normalized 0-1 relative to video container
+  brushSize: number;
+  tool: "pen" | "highlight" | "laser" | "arrow";
+  vanishAt?: number; // epoch ms; omit for persistent
+  createdAt: number;
+}
+
+export interface ScreenShareAnnotationPin {
+  id: string;
+  meetingId: string;
+  participantId: string;
+  displayName: string;
+  color: string;
+  x: number; // normalized 0-1
+  y: number; // normalized 0-1
+  label?: string;
+  createdAt: number;
+}
+
+export interface ScreenShareAnnotationSettings {
+  enabled: boolean;
+  allowParticipantAnnotations: boolean; // host controls who can annotate
+  laserPointerActive: boolean;
+}
+
 export interface MeetingRecord {
   id: string;
   title: string;
@@ -345,6 +453,17 @@ export interface MeetingRecord {
   coDesignSession?: CoDesignSessionState;
   /** "Come watch" ping broadcast when someone starts presenting (Zoom-style) */
   liveInvite?: { type: "screen_share" | "co_design" | "proofing"; senderId: string; senderName: string; sentAt: string };
+  // PRD Module 1: Speaker Queue
+  speakerQueue?: SpeakerQueueEntry[];
+  speakerQueueSettings?: SpeakerQueueSettings;
+  speakerQueueSequenceCounter?: number;
+  // PRD Module 2: Agenda / Focus Timer
+  agendaItems?: AgendaItem[];
+  timeRequests?: TimeRequest[];
+  // PRD Module 4: Live Action Board
+  liveActionItems?: LiveActionItem[];
+  // PRD Module 5: Screen Share Annotation Settings
+  screenShareAnnotationSettings?: ScreenShareAnnotationSettings;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -2998,3 +3117,646 @@ export function subscribeToCoDesignCursors(
     unsubFirestore();
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRD MODULE 1 — SPEAKER QUEUE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const FEATURE_SPEAKER_QUEUE = true;
+
+/** Raise hand and enter the speaker queue (FIFO, server-sequenced). */
+export async function queueRaise(
+  meetingId: string,
+  participantId: string,
+  displayName: string
+): Promise<void> {
+  if (!FEATURE_SPEAKER_QUEUE) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Meeting not found");
+    const meeting = snap.data() as MeetingRecord;
+
+    // Check for existing active entry
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    const existing = queue.find(
+      (e) => e.participantId === participantId && (e.status === "waiting" || e.status === "invited" || e.status === "speaking")
+    );
+    if (existing) return; // Already in queue
+
+    const counter = (meeting.speakerQueueSequenceCounter ?? 0) + 1;
+    const newEntry: SpeakerQueueEntry = {
+      id: `sq_${Date.now()}_${participantId.slice(-6)}`,
+      meetingId: normId,
+      participantId,
+      displayName,
+      raisedAt: new Date().toISOString(),
+      serverSequence: counter,
+      status: "waiting",
+      revision: 1,
+    };
+
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: [...queue, newEntry],
+      speakerQueueSequenceCounter: counter,
+      participants: (meeting.participants ?? []).map((p) =>
+        p.id === participantId ? { ...p, isHandRaised: true } : p
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Withdraw from the speaker queue (participant lowers hand). */
+export async function queueWithdraw(meetingId: string, participantId: string): Promise<void> {
+  if (!FEATURE_SPEAKER_QUEUE) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    const updated = queue.map((e) =>
+      e.participantId === participantId && (e.status === "waiting" || e.status === "invited")
+        ? { ...e, status: "withdrawn" as SpeakerQueueStatus, completedAt: new Date().toISOString(), revision: e.revision + 1 }
+        : e
+    );
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: updated,
+      participants: (meeting.participants ?? []).map((p) =>
+        p.id === participantId ? { ...p, isHandRaised: false } : p
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Host invites the next speaker (atomic — prevents double-invite). */
+export async function queueInviteNext(
+  meetingId: string,
+  _hostId: string
+): Promise<SpeakerQueueEntry | null> {
+  if (!FEATURE_SPEAKER_QUEUE) return null;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  let invited: SpeakerQueueEntry | null = null;
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Meeting not found");
+    const meeting = snap.data() as MeetingRecord;
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    const settings = meeting.speakerQueueSettings ?? { inviteTimeoutSeconds: 30, enabled: true, showPositions: true, hostReorderAllowed: false };
+
+    // Check nobody is currently invited or speaking
+    const alreadyActive = queue.some((e) => e.status === "invited" || e.status === "speaking");
+    if (alreadyActive) return;
+
+    // Find first waiting entry (FIFO by serverSequence)
+    const waiting = queue
+      .filter((e) => e.status === "waiting")
+      .sort((a, b) => a.serverSequence - b.serverSequence);
+    if (waiting.length === 0) return;
+
+    const next = waiting[0];
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + settings.inviteTimeoutSeconds * 1000).toISOString();
+
+    const updatedEntry: SpeakerQueueEntry = {
+      ...next,
+      status: "invited",
+      invitedAt: now.toISOString(),
+      expiresAt,
+      revision: next.revision + 1,
+    };
+
+    invited = updatedEntry;
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: queue.map((e) => (e.id === next.id ? updatedEntry : e)),
+      updatedAt: now.toISOString(),
+    }));
+  });
+
+  return invited;
+}
+
+/** Participant accepts the speaking invitation. */
+export async function queueAccept(meetingId: string, participantId: string): Promise<void> {
+  if (!FEATURE_SPEAKER_QUEUE) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    const entry = queue.find((e) => e.participantId === participantId && e.status === "invited");
+    if (!entry) return;
+    // Check not expired
+    if (entry.expiresAt && new Date() > new Date(entry.expiresAt)) return;
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: queue.map((e) =>
+        e.id === entry.id ? { ...e, status: "speaking" as SpeakerQueueStatus, revision: e.revision + 1 } : e
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Participant declines the speaking invitation. */
+export async function queueDecline(meetingId: string, participantId: string): Promise<void> {
+  if (!FEATURE_SPEAKER_QUEUE) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: queue.map((e) =>
+        e.participantId === participantId && e.status === "invited"
+          ? { ...e, status: "withdrawn" as SpeakerQueueStatus, completedAt: new Date().toISOString(), revision: e.revision + 1 }
+          : e
+      ),
+      participants: (meeting.participants ?? []).map((p) =>
+        p.id === participantId ? { ...p, isHandRaised: false } : p
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Finish the current speaker's turn. */
+export async function queueFinish(meetingId: string, participantId: string): Promise<void> {
+  if (!FEATURE_SPEAKER_QUEUE) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: queue.map((e) =>
+        e.participantId === participantId && e.status === "speaking"
+          ? { ...e, status: "completed" as SpeakerQueueStatus, completedAt: new Date().toISOString(), revision: e.revision + 1 }
+          : e
+      ),
+      participants: (meeting.participants ?? []).map((p) =>
+        p.id === participantId ? { ...p, isHandRaised: false } : p
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Host skips an entry in the queue. */
+export async function queueSkip(meetingId: string, entryId: string): Promise<void> {
+  if (!FEATURE_SPEAKER_QUEUE) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const queue: SpeakerQueueEntry[] = meeting.speakerQueue ?? [];
+    const entry = queue.find((e) => e.id === entryId);
+    if (!entry) return;
+    tx.update(ref, cleanFirestoreObject({
+      speakerQueue: queue.map((e) =>
+        e.id === entryId
+          ? { ...e, status: "skipped" as SpeakerQueueStatus, completedAt: new Date().toISOString(), revision: e.revision + 1 }
+          : e
+      ),
+      participants: (meeting.participants ?? []).map((p) =>
+        p.id === entry.participantId ? { ...p, isHandRaised: false } : p
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Update speaker queue settings (host only). */
+export async function updateSpeakerQueueSettings(
+  meetingId: string,
+  settings: Partial<SpeakerQueueSettings>
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) return;
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const current = (snap.data() as MeetingRecord).speakerQueueSettings ?? {
+    enabled: true, inviteTimeoutSeconds: 30, showPositions: true, hostReorderAllowed: false
+  };
+  await updateDoc(ref, cleanFirestoreObject({
+    speakerQueueSettings: { ...current, ...settings },
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRD MODULE 2 — MEETING FOCUS TIMER / AGENDA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const FEATURE_FOCUS_TIMER = true;
+
+/** Add an agenda item (host only). */
+export async function addAgendaItem(
+  meetingId: string,
+  item: Pick<AgendaItem, "title" | "description" | "plannedDurationSeconds">
+): Promise<AgendaItem> {
+  if (!FEATURE_FOCUS_TIMER) throw new Error("Feature disabled");
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  let created!: AgendaItem;
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Meeting not found");
+    const meeting = snap.data() as MeetingRecord;
+    const items: AgendaItem[] = meeting.agendaItems ?? [];
+    const newItem: AgendaItem = {
+      id: `ag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      meetingId: normId,
+      title: item.title,
+      description: item.description,
+      position: items.length,
+      plannedDurationSeconds: item.plannedDurationSeconds,
+      status: "pending",
+      revision: 1,
+    };
+    created = newItem;
+    tx.update(ref, cleanFirestoreObject({ agendaItems: [...items, newItem], updatedAt: new Date().toISOString() }));
+  });
+  return created;
+}
+
+/** Start an agenda item timer (host only). Sets deadlineAt on server. */
+export async function startAgendaItem(meetingId: string, itemId: string): Promise<void> {
+  if (!FEATURE_FOCUS_TIMER) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const items: AgendaItem[] = meeting.agendaItems ?? [];
+    const now = new Date();
+    tx.update(ref, cleanFirestoreObject({
+      agendaItems: items.map((it) => {
+        if (it.id === itemId) {
+          const deadlineAt = new Date(now.getTime() + it.plannedDurationSeconds * 1000).toISOString();
+          return { ...it, status: "active" as AgendaItemStatus, startedAt: now.toISOString(), deadlineAt, revision: it.revision + 1 };
+        }
+        // Pause any other active item
+        if (it.status === "active") {
+          const remaining = it.deadlineAt
+            ? Math.max(0, Math.floor((new Date(it.deadlineAt).getTime() - now.getTime()) / 1000))
+            : 0;
+          return { ...it, status: "paused" as AgendaItemStatus, pausedRemainingSeconds: remaining, revision: it.revision + 1 };
+        }
+        return it;
+      }),
+      updatedAt: now.toISOString(),
+    }));
+  });
+}
+
+/** Pause the current active agenda item. */
+export async function pauseAgendaItem(meetingId: string, itemId: string): Promise<void> {
+  if (!FEATURE_FOCUS_TIMER) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const now = new Date();
+    tx.update(ref, cleanFirestoreObject({
+      agendaItems: (meeting.agendaItems ?? []).map((it) => {
+        if (it.id === itemId && it.status === "active") {
+          const remaining = it.deadlineAt
+            ? Math.max(0, Math.floor((new Date(it.deadlineAt).getTime() - now.getTime()) / 1000))
+            : 0;
+          return { ...it, status: "paused" as AgendaItemStatus, pausedRemainingSeconds: remaining, revision: it.revision + 1 };
+        }
+        return it;
+      }),
+      updatedAt: now.toISOString(),
+    }));
+  });
+}
+
+/** Resume a paused agenda item. */
+export async function resumeAgendaItem(meetingId: string, itemId: string): Promise<void> {
+  if (!FEATURE_FOCUS_TIMER) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    const now = new Date();
+    tx.update(ref, cleanFirestoreObject({
+      agendaItems: (meeting.agendaItems ?? []).map((it) => {
+        if (it.id === itemId && it.status === "paused") {
+          const remaining = it.pausedRemainingSeconds ?? it.plannedDurationSeconds;
+          const deadlineAt = new Date(now.getTime() + remaining * 1000).toISOString();
+          return { ...it, status: "active" as AgendaItemStatus, deadlineAt, pausedRemainingSeconds: undefined, revision: it.revision + 1 };
+        }
+        return it;
+      }),
+      updatedAt: now.toISOString(),
+    }));
+  });
+}
+
+/** Complete an agenda item. */
+export async function completeAgendaItem(meetingId: string, itemId: string): Promise<void> {
+  if (!FEATURE_FOCUS_TIMER) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const meeting = snap.data() as MeetingRecord;
+  await updateDoc(ref, cleanFirestoreObject({
+    agendaItems: (meeting.agendaItems ?? []).map((it) =>
+      it.id === itemId ? { ...it, status: "completed" as AgendaItemStatus, revision: it.revision + 1 } : it
+    ),
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+/** Extend the current active item's timer by seconds. */
+export async function extendAgendaItemTimer(meetingId: string, itemId: string, extraSeconds: number): Promise<void> {
+  if (!FEATURE_FOCUS_TIMER) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const meeting = snap.data() as MeetingRecord;
+    tx.update(ref, cleanFirestoreObject({
+      agendaItems: (meeting.agendaItems ?? []).map((it) => {
+        if (it.id === itemId && it.status === "active" && it.deadlineAt) {
+          const newDeadline = new Date(new Date(it.deadlineAt).getTime() + extraSeconds * 1000).toISOString();
+          return { ...it, deadlineAt: newDeadline, plannedDurationSeconds: it.plannedDurationSeconds + extraSeconds, revision: it.revision + 1 };
+        }
+        return it;
+      }),
+      updatedAt: new Date().toISOString(),
+    }));
+  });
+}
+
+/** Delete an agenda item. */
+export async function deleteAgendaItem(meetingId: string, itemId: string): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) return;
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const meeting = snap.data() as MeetingRecord;
+  await updateDoc(ref, cleanFirestoreObject({
+    agendaItems: (meeting.agendaItems ?? []).filter((it) => it.id !== itemId),
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRD MODULE 4 — LIVE ACTION BOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const FEATURE_LIVE_ACTION_BOARD = true;
+
+/** Propose a new action item. */
+export async function proposeActionItem(
+  meetingId: string,
+  item: Pick<LiveActionItem, "title" | "description" | "assigneeId" | "assigneeName" | "dueAt" | "proposedBy" | "proposedByName">
+): Promise<LiveActionItem> {
+  if (!FEATURE_LIVE_ACTION_BOARD) throw new Error("Feature disabled");
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+
+  let created!: LiveActionItem;
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db!, "meetings", normId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Meeting not found");
+    const meeting = snap.data() as MeetingRecord;
+    const now = new Date().toISOString();
+    const newItem: LiveActionItem = {
+      id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      meetingId: normId,
+      title: item.title,
+      description: item.description,
+      assigneeId: item.assigneeId,
+      assigneeName: item.assigneeName,
+      dueAt: item.dueAt,
+      status: "todo",
+      approvalStatus: "suggested",
+      proposedBy: item.proposedBy,
+      proposedByName: item.proposedByName,
+      sourceType: "manual",
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+    };
+    created = newItem;
+    tx.update(ref, cleanFirestoreObject({
+      liveActionItems: [...(meeting.liveActionItems ?? []), newItem],
+      updatedAt: now,
+    }));
+  });
+  return created;
+}
+
+/** Approve or reject an action item (host/co-host). */
+export async function setActionItemApproval(
+  meetingId: string,
+  itemId: string,
+  approval: ActionItemApproval,
+  approvedBy?: string
+): Promise<void> {
+  if (!FEATURE_LIVE_ACTION_BOARD) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const meeting = snap.data() as MeetingRecord;
+  const now = new Date().toISOString();
+  await updateDoc(ref, cleanFirestoreObject({
+    liveActionItems: (meeting.liveActionItems ?? []).map((it) =>
+      it.id === itemId
+        ? { ...it, approvalStatus: approval, approvedBy, updatedAt: now, revision: it.revision + 1 }
+        : it
+    ),
+    updatedAt: now,
+  }));
+}
+
+/** Update action item status. */
+export async function updateActionItemStatus(
+  meetingId: string,
+  itemId: string,
+  status: ActionItemStatus
+): Promise<void> {
+  if (!FEATURE_LIVE_ACTION_BOARD) return;
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) throw new Error("Firebase not available");
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const meeting = snap.data() as MeetingRecord;
+  const now = new Date().toISOString();
+  await updateDoc(ref, cleanFirestoreObject({
+    liveActionItems: (meeting.liveActionItems ?? []).map((it) =>
+      it.id === itemId ? { ...it, status, updatedAt: now, revision: it.revision + 1 } : it
+    ),
+    updatedAt: now,
+  }));
+}
+
+/** Delete an action item. */
+export async function deleteActionItem(meetingId: string, itemId: string): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) return;
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const meeting = snap.data() as MeetingRecord;
+  await updateDoc(ref, cleanFirestoreObject({
+    liveActionItems: (meeting.liveActionItems ?? []).filter((it) => it.id !== itemId),
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRD MODULE 5 — SCREEN SHARE ANNOTATION (real-time strokes via Firestore subcollection)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const FEATURE_SCREEN_SHARE_ANNOTATIONS = true;
+
+/** Send a screen share annotation stroke. */
+export async function sendScreenShareStroke(
+  meetingId: string,
+  stroke: Omit<ScreenShareAnnotationStroke, "id" | "meetingId" | "createdAt">
+): Promise<void> {
+  if (!FEATURE_SCREEN_SHARE_ANNOTATIONS || !firebaseReady || !db) return;
+  const normId = normalizeRoomCode(meetingId);
+  const id = `ss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const colRef = collection(db, "meetings", normId, "screenshare_annotations");
+  await setDoc(doc(colRef, id), cleanFirestoreObject({
+    ...stroke,
+    id,
+    meetingId: normId,
+    createdAt: Date.now(),
+  }));
+  // Auto-delete vanishing strokes after TTL
+  if (stroke.vanishAt) {
+    const ttl = stroke.vanishAt - Date.now();
+    if (ttl > 0) {
+      setTimeout(async () => {
+        try { await deleteDoc(doc(colRef, id)); } catch {}
+      }, ttl + 500);
+    }
+  }
+}
+
+/** Subscribe to screen share annotation strokes. */
+export function subscribeToScreenShareAnnotations(
+  meetingId: string,
+  onStroke: (stroke: ScreenShareAnnotationStroke) => void,
+  onClear?: () => void
+): Unsubscribe {
+  if (!FEATURE_SCREEN_SHARE_ANNOTATIONS) return () => {};
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) return () => {};
+
+  let bc: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_ssannot_${normId}`);
+      bc.onmessage = (e) => {
+        if (e.data?.type === "stroke") onStroke(e.data.stroke);
+        if (e.data?.type === "clear") onClear?.();
+      };
+    }
+  } catch {}
+
+  const colRef = collection(db, "meetings", normId, "screenshare_annotations");
+  const unsub = onSnapshot(colRef, (snap) => {
+    snap.docChanges().forEach((change) => {
+      if (change.type === "added" || change.type === "modified") {
+        const stroke = change.doc.data() as ScreenShareAnnotationStroke;
+        if (stroke.vanishAt && Date.now() > stroke.vanishAt) return;
+        onStroke(stroke);
+      }
+    });
+  });
+
+  return () => {
+    if (bc) bc.close();
+    unsub();
+  };
+}
+
+/** Clear all screen share annotations for a meeting. */
+export async function clearScreenShareAnnotations(meetingId: string): Promise<void> {
+  if (!FEATURE_SCREEN_SHARE_ANNOTATIONS || !firebaseReady || !db) return;
+  const normId = normalizeRoomCode(meetingId);
+  const colRef = collection(db, "meetings", normId, "screenshare_annotations");
+  const snap = await getDocs(colRef);
+  const batch = writeBatch(db);
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
+/** Update screen share annotation settings. */
+export async function updateScreenShareAnnotationSettings(
+  meetingId: string,
+  settings: Partial<ScreenShareAnnotationSettings>
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  if (!firebaseReady || !db) return;
+  const ref = doc(db, "meetings", normId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const current = (snap.data() as MeetingRecord).screenShareAnnotationSettings ?? {
+    enabled: true, allowParticipantAnnotations: false, laserPointerActive: false,
+  };
+  await updateDoc(ref, cleanFirestoreObject({
+    screenShareAnnotationSettings: { ...current, ...settings },
+    updatedAt: new Date().toISOString(),
+  }));
+}
+

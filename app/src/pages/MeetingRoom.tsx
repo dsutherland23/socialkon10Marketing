@@ -39,6 +39,10 @@ import {
   type MeetingBreakoutRoom,
   type ParticipantRole,
   type ParticipantStatus,
+  type SpeakerQueueEntry,
+  type AgendaItem,
+  type ActionItemStatus,
+  type ScreenShareAnnotationStroke,
   subscribeToMeeting,
   getMeetingById,
   updateMeeting,
@@ -99,6 +103,28 @@ import {
   restoreCoDesignVersionSnapshot,
   updateCoDesignCursor,
   subscribeToCoDesignCursors,
+  // PRD modules
+  queueRaise,
+  queueWithdraw,
+  queueInviteNext,
+  queueAccept,
+  queueDecline,
+  queueFinish,
+  queueSkip,
+  addAgendaItem,
+  startAgendaItem,
+  pauseAgendaItem,
+  resumeAgendaItem,
+  completeAgendaItem,
+  extendAgendaItemTimer,
+  deleteAgendaItem,
+  proposeActionItem,
+  setActionItemApproval,
+  updateActionItemStatus,
+  deleteActionItem,
+  sendScreenShareStroke,
+  subscribeToScreenShareAnnotations,
+  clearScreenShareAnnotations,
 } from "../lib/meetings";
 import {
   getMediaDevices,
@@ -251,7 +277,7 @@ export default function MeetingRoom() {
   const screenVideoRef = useRef<HTMLVideoElement>(null);
 
   // In-Meeting Drawers & Controls
-  const [activeDrawer, setActiveDrawer] = useState<"none" | "chat" | "participants" | "intelligence" | "breakouts" | "proofing">("none");
+  const [activeDrawer, setActiveDrawer] = useState<"none" | "chat" | "participants" | "intelligence" | "breakouts" | "proofing" | "queue" | "agenda" | "actions">("none");
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const prevChatCount = useRef(0);
@@ -261,6 +287,30 @@ export default function MeetingRoom() {
   const [floatingReactions, setFloatingReactions] = useState<{ id: string; emoji: string; x: number; senderName?: string }[]>([]);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+
+  // PRD Module 1 — Speaker Queue
+  const [speakerQueueInvite, setSpeakerQueueInvite] = useState<SpeakerQueueEntry | null>(null);
+  const speakerQueueInviteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // PRD Module 2 — Agenda / Focus Timer
+  const [agendaTimerTick, setAgendaTimerTick] = useState(0); // tick every second
+  const [newAgendaTitle, setNewAgendaTitle] = useState("");
+  const [newAgendaDuration, setNewAgendaDuration] = useState(5); // minutes
+  const [agendaFormOpen, setAgendaFormOpen] = useState(false);
+
+  // PRD Module 4 — Live Action Board
+  const [newActionTitle, setNewActionTitle] = useState("");
+  const [newActionAssignee, setNewActionAssignee] = useState("");
+  const [actionFormOpen, setActionFormOpen] = useState(false);
+
+  // PRD Module 5 — Screen Share Annotation overlay
+  const [ssAnnotEnabled, setSsAnnotEnabled] = useState(false);
+  const [ssAnnotTool, setSsAnnotTool] = useState<"pen" | "highlight" | "laser" | "arrow">("pen");
+  const [ssAnnotColor, setSsAnnotColor] = useState("#ef4444");
+  const [ssAnnotStrokes, setSsAnnotStrokes] = useState<ScreenShareAnnotationStroke[]>([]);
+  const ssAnnotCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ssAnnotDrawing = useRef(false);
+  const ssAnnotPoints = useRef<{ x: number; y: number }[]>([]);
 
   // Spotlight & Fullscreen & Presentation Modes
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
@@ -1419,6 +1469,66 @@ export default function MeetingRoom() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [canvasContextMenu]);
+
+  // 16. Agenda timer tick — drives countdown display from server deadlineAt
+  useEffect(() => {
+    const id = setInterval(() => setAgendaTimerTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // 17. Speaker Queue — watch for invitation addressed to me
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const myInvite = (meeting.speakerQueue ?? []).find(
+      (e) => e.participantId === myParticipantId && e.status === "invited"
+    );
+    if (myInvite) {
+      setSpeakerQueueInvite(myInvite);
+      playHandRaiseChime();
+      // Auto-expire banner at expiresAt
+      if (myInvite.expiresAt) {
+        const ttl = new Date(myInvite.expiresAt).getTime() - Date.now();
+        if (speakerQueueInviteTimerRef.current) clearTimeout(speakerQueueInviteTimerRef.current);
+        speakerQueueInviteTimerRef.current = setTimeout(() => {
+          setSpeakerQueueInvite(null);
+        }, Math.max(ttl, 0));
+      }
+    } else {
+      setSpeakerQueueInvite(null);
+    }
+  }, [meeting?.speakerQueue, myParticipantId, phase]);
+
+  // 18. Screen Share Annotation — subscribe when screen share is active
+  useEffect(() => {
+    if (!meeting || !isScreenSharing) {
+      setSsAnnotStrokes([]);
+      return;
+    }
+    const unsub = subscribeToScreenShareAnnotations(
+      meeting.id,
+      (stroke) => {
+        setSsAnnotStrokes((prev) => {
+          const idx = prev.findIndex((s) => s.id === stroke.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = stroke;
+            return next;
+          }
+          return [...prev, stroke];
+        });
+        if (stroke.vanishAt) {
+          const ttl = stroke.vanishAt - Date.now();
+          if (ttl > 0) {
+            setTimeout(() => {
+              setSsAnnotStrokes((prev) => prev.filter((s) => s.id !== stroke.id));
+            }, ttl);
+          }
+        }
+      },
+      () => setSsAnnotStrokes([])
+    );
+    return unsub;
+  }, [meeting?.id, isScreenSharing]);
 
   // Handlers
   const handleToggleFullscreen = () => {
@@ -3120,9 +3230,147 @@ export default function MeetingRoom() {
       triggerHapticFeedback([180, 80, 180]);
     }
     if (meeting) {
-      updateParticipant(meeting.id, myParticipantId, { isHandRaised: next });
+      if (next) {
+        queueRaise(meeting.id, myParticipantId, displayName).catch(() => {
+          // fallback to simple boolean if queue fails
+          updateParticipant(meeting.id, myParticipantId, { isHandRaised: true });
+        });
+      } else {
+        queueWithdraw(meeting.id, myParticipantId).catch(() => {
+          updateParticipant(meeting.id, myParticipantId, { isHandRaised: false });
+        });
+      }
     }
     toast.info(next ? "Hand raised ✋" : "Hand lowered");
+  };
+
+  const handleHostInviteNextSpeaker = async () => {
+    if (!meeting || !isHost) return;
+    try {
+      const invited = await queueInviteNext(meeting.id, myParticipantId);
+      if (!invited) {
+        toast.info("No one waiting in the queue.");
+      } else {
+        toast.success(`Invited ${invited.displayName} to speak.`);
+      }
+    } catch (e) {
+      toast.error("Failed to invite next speaker.");
+    }
+  };
+
+  const handleAcceptSpeakerInvite = async () => {
+    if (!meeting) return;
+    try {
+      await queueAccept(meeting.id, myParticipantId);
+      setSpeakerQueueInvite(null);
+      toast.success("You're now speaking! 🎤");
+    } catch { toast.error("Could not accept — invite may have expired."); }
+  };
+
+  const handleDeclineSpeakerInvite = async () => {
+    if (!meeting) return;
+    try {
+      await queueDecline(meeting.id, myParticipantId);
+      setSpeakerQueueInvite(null);
+      setIsHandRaised(false);
+    } catch { toast.error("Could not decline."); }
+  };
+
+  const handleFinishSpeaking = async () => {
+    if (!meeting) return;
+    await queueFinish(meeting.id, myParticipantId);
+    setIsHandRaised(false);
+    toast.info("Turn complete.");
+  };
+
+  const handleSkipQueueEntry = async (entryId: string) => {
+    if (!meeting || !isHost) return;
+    await queueSkip(meeting.id, entryId);
+  };
+
+  // Agenda handlers
+  const handleAddAgendaItem = async () => {
+    if (!meeting || !newAgendaTitle.trim()) return;
+    try {
+      await addAgendaItem(meeting.id, {
+        title: newAgendaTitle.trim(),
+        plannedDurationSeconds: newAgendaDuration * 60,
+      });
+      setNewAgendaTitle("");
+      setNewAgendaDuration(5);
+      setAgendaFormOpen(false);
+      toast.success("Agenda item added.");
+    } catch { toast.error("Failed to add agenda item."); }
+  };
+
+  const handleStartAgendaItem = async (itemId: string) => {
+    if (!meeting || !isHost) return;
+    await startAgendaItem(meeting.id, itemId);
+    toast.info("Timer started.");
+  };
+
+  const handlePauseAgendaItem = async (itemId: string) => {
+    if (!meeting || !isHost) return;
+    await pauseAgendaItem(meeting.id, itemId);
+  };
+
+  const handleResumeAgendaItem = async (itemId: string) => {
+    if (!meeting || !isHost) return;
+    await resumeAgendaItem(meeting.id, itemId);
+  };
+
+  const handleCompleteAgendaItem = async (itemId: string) => {
+    if (!meeting || !isHost) return;
+    await completeAgendaItem(meeting.id, itemId);
+  };
+
+  const handleExtendAgendaTimer = async (itemId: string, secs: number) => {
+    if (!meeting || !isHost) return;
+    await extendAgendaItemTimer(meeting.id, itemId, secs);
+    toast.success(`+${secs / 60} min added.`);
+  };
+
+  const handleDeleteAgendaItem = async (itemId: string) => {
+    if (!meeting || !isHost) return;
+    await deleteAgendaItem(meeting.id, itemId);
+  };
+
+  // Action board handlers
+  const handleProposeAction = async () => {
+    if (!meeting || !newActionTitle.trim()) return;
+    try {
+      await proposeActionItem(meeting.id, {
+        title: newActionTitle.trim(),
+        proposedBy: myParticipantId,
+        proposedByName: displayName,
+        assigneeName: newActionAssignee.trim() || undefined,
+      });
+      setNewActionTitle("");
+      setNewActionAssignee("");
+      setActionFormOpen(false);
+      toast.success("Action item proposed.");
+    } catch { toast.error("Failed to propose action item."); }
+  };
+
+  const handleApproveAction = async (itemId: string) => {
+    if (!meeting) return;
+    await setActionItemApproval(meeting.id, itemId, "approved", displayName);
+    toast.success("Action approved ✓");
+  };
+
+  const handleRejectAction = async (itemId: string) => {
+    if (!meeting) return;
+    await setActionItemApproval(meeting.id, itemId, "rejected", displayName);
+  };
+
+  const handleUpdateActionStatus = async (itemId: string, status: ActionItemStatus) => {
+    if (!meeting) return;
+    await updateActionItemStatus(meeting.id, itemId, status);
+  };
+
+  const handleDeleteAction = async (itemId: string) => {
+    if (!meeting || !isHost) return;
+    await deleteActionItem(meeting.id, itemId);
   };
 
   const handleLowerParticipantHand = (participantId: string) => {
@@ -3894,6 +4142,53 @@ export default function MeetingRoom() {
             </div>
           </div>
         )}
+
+        {/* PRD Module 1 — Speaker Queue: Invitation banner for invited participant */}
+        {speakerQueueInvite && (
+          <div className="pointer-events-auto w-full max-w-md bg-neutral-900/98 border-2 border-emerald-400/60 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-top-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center shrink-0 text-lg animate-bounce">
+                🎤
+              </div>
+              <div className="min-w-0">
+                <p className="font-display text-xs font-bold text-emerald-300 uppercase">You're invited to speak!</p>
+                <p className="font-meta text-[9px] text-neutral-400">The host has invited you to take the floor.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button type="button" onClick={handleAcceptSpeakerInvite}
+                className="h-8 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-meta text-[9px] font-bold rounded-xl transition-colors">
+                Accept
+              </button>
+              <button type="button" onClick={handleDeclineSpeakerInvite}
+                className="h-8 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] font-bold rounded-xl transition-colors">
+                Decline
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PRD Module 2 — Agenda active item mini chip */}
+        {(() => {
+          const activeItem = (meeting?.agendaItems ?? []).find((it) => it.status === "active");
+          if (!activeItem || activeDrawer === "agenda") return null;
+          const remaining = activeItem.deadlineAt
+            ? Math.max(0, Math.floor((new Date(activeItem.deadlineAt).getTime() - Date.now()) / 1000))
+            : 0;
+          const isOver = !!(activeItem.deadlineAt && Date.now() > new Date(activeItem.deadlineAt).getTime());
+          const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+          void agendaTimerTick;
+          return (
+            <button type="button" onClick={() => setActiveDrawer("agenda")}
+              className={`pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors ${
+                isOver ? "bg-red-950/80 border-red-500/50 text-red-300 animate-pulse" : "bg-emerald-950/80 border-emerald-500/40 text-emerald-300"
+              }`}>
+              <span>⏱</span>
+              <span className="font-display text-[10px] truncate max-w-[120px]">{activeItem.title}</span>
+              <span className="font-meta tabular-nums text-[10px]">{isOver ? "+" : ""}{fmt(remaining)}</span>
+            </button>
+          );
+        })()}
 
         {/* Floating Attention Alert for Raised Hands */}
         {activeParticipants.some((p) => p.isHandRaised) && (
@@ -5208,6 +5503,102 @@ export default function MeetingRoom() {
                       {screenStageZoom > 1 && (
                         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/75 border border-amber-400/40 text-amber-300 font-meta text-[9px] font-bold pointer-events-none shadow-md whitespace-nowrap">
                           🔍 {screenStageZoom}x Zoom · Drag to pan · Double-tap to reset
+                        </div>
+                      )}
+
+                      {/* PRD Module 5 — Screen Share Annotation Overlay */}
+                      {ssAnnotEnabled && (
+                        <canvas
+                          ref={ssAnnotCanvasRef}
+                          className="absolute inset-0 w-full h-full pointer-events-auto z-10"
+                          style={{ cursor: ssAnnotTool === "laser" ? "crosshair" : "crosshair", touchAction: "none" }}
+                          onPointerDown={(e) => {
+                            if (!ssAnnotCanvasRef.current) return;
+                            const rect = ssAnnotCanvasRef.current.getBoundingClientRect();
+                            ssAnnotDrawing.current = true;
+                            ssAnnotPoints.current = [{ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height }];
+                          }}
+                          onPointerMove={(e) => {
+                            if (!ssAnnotDrawing.current || !ssAnnotCanvasRef.current) return;
+                            const rect = ssAnnotCanvasRef.current.getBoundingClientRect();
+                            ssAnnotPoints.current.push({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height });
+                            // Draw locally in real-time
+                            const ctx = ssAnnotCanvasRef.current.getContext("2d");
+                            if (!ctx) return;
+                            const pts = ssAnnotPoints.current;
+                            if (pts.length < 2) return;
+                            const last = pts[pts.length - 2];
+                            const curr = pts[pts.length - 1];
+                            ctx.beginPath();
+                            ctx.strokeStyle = ssAnnotColor;
+                            ctx.lineWidth = ssAnnotTool === "highlight" ? 12 : 3;
+                            ctx.globalAlpha = ssAnnotTool === "highlight" ? 0.35 : 1;
+                            ctx.lineCap = "round";
+                            ctx.moveTo(last.x * ssAnnotCanvasRef.current.width, last.y * ssAnnotCanvasRef.current.height);
+                            ctx.lineTo(curr.x * ssAnnotCanvasRef.current.width, curr.y * ssAnnotCanvasRef.current.height);
+                            ctx.stroke();
+                            ctx.globalAlpha = 1;
+                          }}
+                          onPointerUp={() => {
+                            ssAnnotDrawing.current = false;
+                            if (!meeting || ssAnnotPoints.current.length < 2) { ssAnnotPoints.current = []; return; }
+                            const isLaser = ssAnnotTool === "laser";
+                            sendScreenShareStroke(meeting.id, {
+                              participantId: myParticipantId,
+                              displayName,
+                              color: ssAnnotColor,
+                              points: [...ssAnnotPoints.current],
+                              brushSize: ssAnnotTool === "highlight" ? 12 : 3,
+                              tool: ssAnnotTool,
+                              vanishAt: isLaser ? Date.now() + 3000 : undefined,
+                            }).catch(() => {});
+                            ssAnnotPoints.current = [];
+                          }}
+                        />
+                      )}
+                      {/* Remote annotation strokes drawn on a separate read-only canvas */}
+                      {ssAnnotStrokes.length > 0 && (
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-9" style={{ overflow: "visible" }}>
+                          {ssAnnotStrokes.map((stroke) => {
+                            if (stroke.points.length < 2) return null;
+                            const d = stroke.points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x * 100}% ${p.y * 100}%`).join(" ");
+                            return (
+                              <path key={stroke.id} d={d} stroke={stroke.color}
+                                strokeWidth={stroke.brushSize} fill="none" strokeLinecap="round" strokeLinejoin="round"
+                                strokeOpacity={stroke.tool === "highlight" ? 0.4 : 1} />
+                            );
+                          })}
+                        </svg>
+                      )}
+                      {/* Annotation toolbar — floats at bottom of screen share stage */}
+                      {(isScreenSharing || meeting?.screenShareAnnotationSettings?.allowParticipantAnnotations) && (
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-black/80 backdrop-blur-sm rounded-2xl border border-neutral-700/60 shadow-xl">
+                          <button type="button" onClick={() => setSsAnnotEnabled((v) => !v)}
+                            className={`h-7 px-3 rounded-xl font-meta text-[9px] font-bold transition-colors ${ssAnnotEnabled ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"}`}
+                            title="Toggle annotation mode">
+                            {ssAnnotEnabled ? "✏️ On" : "✏️ Annotate"}
+                          </button>
+                          {ssAnnotEnabled && (
+                            <>
+                              {(["pen", "highlight", "laser", "arrow"] as const).map((tool) => (
+                                <button key={tool} type="button" onClick={() => setSsAnnotTool(tool)}
+                                  className={`h-7 px-2 rounded-lg font-meta text-[9px] font-bold capitalize transition-colors ${ssAnnotTool === tool ? "bg-white/20 text-white" : "text-neutral-400 hover:text-white hover:bg-white/10"}`}>
+                                  {tool === "pen" ? "✏️" : tool === "highlight" ? "🟡" : tool === "laser" ? "🔴" : "↗"}
+                                </button>
+                              ))}
+                              {["#ef4444", "#22d3ee", "#a3e635", "#f59e0b", "#ffffff"].map((c) => (
+                                <button key={c} type="button" onClick={() => setSsAnnotColor(c)}
+                                  className={`h-5 w-5 rounded-full border-2 transition-transform ${ssAnnotColor === c ? "scale-125 border-white" : "border-transparent scale-100"}`}
+                                  style={{ background: c }} />
+                              ))}
+                              {isHost && (
+                                <button type="button" onClick={() => { if (meeting) clearScreenShareAnnotations(meeting.id); setSsAnnotStrokes([]); }}
+                                  className="h-7 px-2 rounded-lg font-meta text-[9px] text-neutral-400 hover:text-red-400 hover:bg-red-950/30 transition-colors">
+                                  Clear
+                                </button>
+                              )}
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -6671,6 +7062,9 @@ export default function MeetingRoom() {
                   {activeDrawer === "proofing" && "🎨 Deliverables Proofing"}
                   {activeDrawer === "intelligence" && "✨ AI Intelligence"}
                   {activeDrawer === "breakouts" && "🔀 Breakout Rooms"}
+                  {activeDrawer === "queue" && "✋ Speaker Queue"}
+                  {activeDrawer === "agenda" && "⏱ Agenda & Timer"}
+                  {activeDrawer === "actions" && "✅ Action Board"}
                 </h3>
               </div>
               <button
@@ -8225,6 +8619,316 @@ export default function MeetingRoom() {
                 )}
               </div>
             )}
+
+            {/* DRAWER: SPEAKER QUEUE */}
+            {activeDrawer === "queue" && (() => {
+              const queue = (meeting?.speakerQueue ?? []).filter((e) => e.status === "waiting" || e.status === "invited" || e.status === "speaking");
+              const mySpeakingEntry = (meeting?.speakerQueue ?? []).find((e) => e.participantId === myParticipantId && e.status === "speaking");
+              return (
+                <div className="flex-1 flex flex-col overflow-hidden bg-neutral-950 md:bg-neutral-900/50">
+                  {/* Host control bar */}
+                  {isHost && (
+                    <div className="px-3 py-2 border-b border-neutral-800 flex items-center justify-between gap-2 shrink-0">
+                      <span className="font-meta text-[9px] text-neutral-400 uppercase font-bold">{queue.length} in queue</span>
+                      <button
+                        type="button"
+                        onClick={handleHostInviteNextSpeaker}
+                        disabled={queue.filter((e) => e.status === "waiting").length === 0}
+                        className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-meta text-[9px] font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1"
+                      >
+                        <span>🎤</span> Invite Next
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {queue.length === 0 && (
+                      <div className="text-center py-10 text-neutral-500">
+                        <p className="text-2xl mb-2">✋</p>
+                        <p className="font-meta text-xs">No one in the queue yet.</p>
+                        {!isHost && <p className="font-meta text-[10px] text-neutral-600 mt-1">Raise your hand to join.</p>}
+                      </div>
+                    )}
+                    {queue.map((entry, idx) => (
+                      <div key={entry.id} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-xs ${
+                        entry.status === "speaking" ? "bg-emerald-950/40 border-emerald-500/40" :
+                        entry.status === "invited" ? "bg-amber-950/40 border-amber-400/40 animate-pulse" :
+                        "bg-neutral-900 border-neutral-800"
+                      }`}>
+                        <span className="font-meta text-[10px] text-neutral-500 w-5 text-center shrink-0">#{idx + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-display text-xs font-bold text-white truncate">{entry.displayName}{entry.participantId === myParticipantId ? " (You)" : ""}</p>
+                          <p className="font-meta text-[9px] text-neutral-500 capitalize">{entry.status === "speaking" ? "🎤 Speaking" : entry.status === "invited" ? "⏳ Invited…" : "Waiting"}</p>
+                        </div>
+                        {isHost && entry.status === "waiting" && (
+                          <button type="button" onClick={() => handleSkipQueueEntry(entry.id)}
+                            className="h-6 px-2 text-[9px] font-bold font-meta text-neutral-400 hover:text-red-400 rounded-lg hover:bg-red-950/30 transition-colors" title="Skip">
+                            Skip
+                          </button>
+                        )}
+                        {entry.participantId === myParticipantId && entry.status === "speaking" && (
+                          <button type="button" onClick={handleFinishSpeaking}
+                            className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-bold font-meta rounded-lg transition-colors">
+                            Done ✓
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {/* My speaking entry done? Show finish button prominently */}
+                    {mySpeakingEntry && (
+                      <div className="p-3 rounded-xl bg-emerald-900/30 border border-emerald-500/40 text-center">
+                        <p className="font-meta text-[10px] text-emerald-300 font-bold mb-2">You have the floor 🎤</p>
+                        <button type="button" onClick={handleFinishSpeaking}
+                          className="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-meta text-[10px] font-bold rounded-xl transition-colors">
+                          Finish Speaking
+                        </button>
+                      </div>
+                    )}
+                    {/* Completed/skipped history */}
+                    {(meeting?.speakerQueue ?? []).filter((e) => e.status === "completed" || e.status === "skipped" || e.status === "withdrawn").slice(-5).reverse().map((entry) => (
+                      <div key={entry.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-neutral-600 text-xs opacity-60">
+                        <span className="text-[9px]">{entry.status === "completed" ? "✓" : entry.status === "skipped" ? "⤵" : "↓"}</span>
+                        <span className="font-meta text-[9px] truncate">{entry.displayName}</span>
+                        <span className="font-meta text-[9px] capitalize ml-auto">{entry.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* DRAWER: AGENDA & FOCUS TIMER */}
+            {activeDrawer === "agenda" && (() => {
+              const items = meeting?.agendaItems ?? [];
+              const activeItem = items.find((it) => it.status === "active");
+              const formatSecs = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+              const getRemaining = (it: AgendaItem) => {
+                if (it.status === "active" && it.deadlineAt) {
+                  return Math.max(0, Math.floor((new Date(it.deadlineAt).getTime() - Date.now()) / 1000));
+                }
+                if (it.status === "paused") return it.pausedRemainingSeconds ?? it.plannedDurationSeconds;
+                return it.plannedDurationSeconds;
+              };
+              const isOverTime = (it: AgendaItem) => it.status === "active" && it.deadlineAt && Date.now() > new Date(it.deadlineAt).getTime();
+              // agendaTimerTick drives re-render
+              void agendaTimerTick;
+              return (
+                <div className="flex-1 flex flex-col overflow-hidden bg-neutral-950 md:bg-neutral-900/50">
+                  {/* Active timer banner */}
+                  {activeItem && (
+                    <div className={`px-3 py-2.5 border-b shrink-0 flex items-center gap-2 ${isOverTime(activeItem) ? "bg-red-950/40 border-red-500/30" : "bg-emerald-950/30 border-emerald-500/30"}`}>
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-base ${isOverTime(activeItem) ? "bg-red-500/20 text-red-300 animate-pulse" : "bg-emerald-500/20 text-emerald-300"}`}>⏱</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-display text-[10px] font-bold text-white truncate">{activeItem.title}</p>
+                        <p className={`font-meta text-[11px] font-extrabold tabular-nums ${isOverTime(activeItem) ? "text-red-400" : "text-emerald-400"}`}>
+                          {isOverTime(activeItem) ? "+" : ""}{formatSecs(getRemaining(activeItem))} {isOverTime(activeItem) ? "over" : "left"}
+                        </p>
+                      </div>
+                      {isHost && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button type="button" onClick={() => handlePauseAgendaItem(activeItem.id)}
+                            className="h-6 px-2 bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 font-meta text-[9px] rounded-lg" title="Pause">⏸</button>
+                          <button type="button" onClick={() => handleExtendAgendaTimer(activeItem.id, 300)}
+                            className="h-6 px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] rounded-lg" title="+5 min">+5m</button>
+                          <button type="button" onClick={() => handleCompleteAgendaItem(activeItem.id)}
+                            className="h-6 px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] rounded-lg">✓ Done</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {items.length === 0 && !agendaFormOpen && (
+                      <div className="text-center py-8 text-neutral-500">
+                        <p className="text-2xl mb-2">📋</p>
+                        <p className="font-meta text-xs">No agenda items yet.</p>
+                        {isHost && <p className="font-meta text-[10px] text-neutral-600 mt-1">Add items to track time per topic.</p>}
+                      </div>
+                    )}
+                    {items.map((it) => {
+                      const rem = getRemaining(it);
+                      const over = isOverTime(it);
+                      return (
+                        <div key={it.id} className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-xs ${
+                          it.status === "completed" ? "bg-neutral-900/40 border-neutral-800 opacity-60" :
+                          it.status === "active" ? over ? "bg-red-950/30 border-red-500/30" : "bg-emerald-950/30 border-emerald-500/30" :
+                          it.status === "paused" ? "bg-amber-950/20 border-amber-500/20" :
+                          "bg-neutral-900 border-neutral-800"
+                        }`}>
+                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center text-[9px] shrink-0 mt-0.5 ${
+                            it.status === "completed" ? "bg-emerald-600/30 border-emerald-500/40 text-emerald-400" :
+                            it.status === "active" ? "bg-emerald-500/30 border-emerald-400 text-emerald-300 animate-pulse" :
+                            it.status === "paused" ? "bg-amber-500/20 border-amber-400/40 text-amber-300" :
+                            "bg-neutral-800 border-neutral-700 text-neutral-500"
+                          }`}>
+                            {it.status === "completed" ? "✓" : it.status === "active" ? "▶" : it.status === "paused" ? "⏸" : "○"}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-display text-xs font-bold text-white truncate">{it.title}</p>
+                            <p className={`font-meta text-[9px] tabular-nums ${over ? "text-red-400 font-extrabold" : "text-neutral-500"}`}>
+                              {it.status === "pending" ? `${it.plannedDurationSeconds / 60}m planned` :
+                               it.status === "completed" ? "Completed" :
+                               `${formatSecs(rem)} ${it.status === "paused" ? "paused" : it.status === "active" ? (over ? "over!" : "left") : ""}`}
+                            </p>
+                          </div>
+                          {isHost && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {it.status === "pending" && (
+                                <button type="button" onClick={() => handleStartAgendaItem(it.id)}
+                                  className="h-6 px-2 bg-emerald-600/30 hover:bg-emerald-600/60 text-emerald-300 font-meta text-[9px] rounded-lg">▶</button>
+                              )}
+                              {it.status === "paused" && (
+                                <button type="button" onClick={() => handleResumeAgendaItem(it.id)}
+                                  className="h-6 px-2 bg-emerald-600/30 hover:bg-emerald-600/60 text-emerald-300 font-meta text-[9px] rounded-lg">▶</button>
+                              )}
+                              {it.status !== "completed" && (
+                                <button type="button" onClick={() => handleDeleteAgendaItem(it.id)}
+                                  className="h-6 w-6 text-neutral-600 hover:text-red-400 font-meta text-[10px] rounded-lg hover:bg-red-950/30 flex items-center justify-center" title="Delete">×</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {/* Add agenda item form */}
+                    {isHost && (
+                      agendaFormOpen ? (
+                        <div className="p-3 rounded-xl border border-neutral-700 bg-neutral-900 space-y-2">
+                          <input
+                            type="text" value={newAgendaTitle} onChange={(e) => setNewAgendaTitle(e.target.value)}
+                            placeholder="Topic title…" maxLength={80}
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-500 outline-none focus:border-[var(--dept)]"
+                          />
+                          <div className="flex items-center gap-2">
+                            <label className="font-meta text-[9px] text-neutral-400 shrink-0">Duration:</label>
+                            <input
+                              type="number" min={1} max={120} value={newAgendaDuration} onChange={(e) => setNewAgendaDuration(Number(e.target.value))}
+                              className="w-16 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-white outline-none focus:border-[var(--dept)]"
+                            />
+                            <span className="font-meta text-[9px] text-neutral-400">min</span>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button type="button" onClick={handleAddAgendaItem}
+                              disabled={!newAgendaTitle.trim()}
+                              className="flex-1 h-7 bg-[var(--dept)] hover:opacity-90 disabled:opacity-40 text-black font-meta text-[9px] font-bold rounded-lg">
+                              Add Item
+                            </button>
+                            <button type="button" onClick={() => setAgendaFormOpen(false)}
+                              className="h-7 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] rounded-lg">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => setAgendaFormOpen(true)}
+                          className="w-full h-8 border border-dashed border-neutral-700 hover:border-[var(--dept)] rounded-xl text-neutral-500 hover:text-[var(--dept)] font-meta text-[9px] transition-colors">
+                          + Add Agenda Item
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* DRAWER: LIVE ACTION BOARD */}
+            {activeDrawer === "actions" && (() => {
+              const actions = meeting?.liveActionItems ?? [];
+              const statusColors: Record<string, string> = {
+                todo: "bg-neutral-800 text-neutral-300",
+                in_progress: "bg-blue-900/40 text-blue-300 border-blue-500/30",
+                blocked: "bg-red-900/40 text-red-300 border-red-500/30",
+                done: "bg-emerald-900/40 text-emerald-300 border-emerald-500/30",
+                cancelled: "bg-neutral-900/40 text-neutral-500",
+              };
+              const approvalBadge: Record<string, { color: string; label: string }> = {
+                suggested: { color: "bg-amber-500/20 text-amber-300 border-amber-500/30", label: "Proposed" },
+                awaiting_confirmation: { color: "bg-sky-500/20 text-sky-300 border-sky-500/30", label: "Pending" },
+                approved: { color: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", label: "✓ Approved" },
+                rejected: { color: "bg-red-500/20 text-red-400 border-red-500/30", label: "Rejected" },
+              };
+              return (
+                <div className="flex-1 flex flex-col overflow-hidden bg-neutral-950 md:bg-neutral-900/50">
+                  <div className="px-3 py-2 border-b border-neutral-800 flex items-center justify-between shrink-0">
+                    <span className="font-meta text-[9px] text-neutral-400 uppercase font-bold">{actions.filter((a) => a.approvalStatus === "approved").length}/{actions.length} approved</span>
+                    <button type="button" onClick={() => setActionFormOpen((v) => !v)}
+                      className="h-7 px-3 bg-[var(--dept)] hover:opacity-90 text-black font-meta text-[9px] font-bold rounded-lg">
+                      + Add Action
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {/* Propose form */}
+                    {actionFormOpen && (
+                      <div className="p-3 rounded-xl border border-neutral-700 bg-neutral-900 space-y-2">
+                        <input type="text" value={newActionTitle} onChange={(e) => setNewActionTitle(e.target.value)}
+                          placeholder="Action item…" maxLength={120}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-500 outline-none focus:border-[var(--dept)]"
+                        />
+                        <input type="text" value={newActionAssignee} onChange={(e) => setNewActionAssignee(e.target.value)}
+                          placeholder="Assign to (optional)…" maxLength={60}
+                          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-500 outline-none focus:border-[var(--dept)]"
+                        />
+                        <div className="flex gap-1.5">
+                          <button type="button" onClick={handleProposeAction} disabled={!newActionTitle.trim()}
+                            className="flex-1 h-7 bg-[var(--dept)] hover:opacity-90 disabled:opacity-40 text-black font-meta text-[9px] font-bold rounded-lg">
+                            Propose
+                          </button>
+                          <button type="button" onClick={() => setActionFormOpen(false)}
+                            className="h-7 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] rounded-lg">Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                    {actions.length === 0 && !actionFormOpen && (
+                      <div className="text-center py-8 text-neutral-500">
+                        <p className="text-2xl mb-2">✅</p>
+                        <p className="font-meta text-xs">No action items yet.</p>
+                        <p className="font-meta text-[10px] text-neutral-600 mt-1">Propose tasks to track meeting outcomes.</p>
+                      </div>
+                    )}
+                    {actions.map((item) => (
+                      <div key={item.id} className={`p-3 rounded-xl border text-xs space-y-2 ${statusColors[item.status] || "bg-neutral-900 border-neutral-800"}`}>
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-display text-xs font-bold text-white">{item.title}</p>
+                            {item.assigneeName && <p className="font-meta text-[9px] text-neutral-400">→ {item.assigneeName}</p>}
+                            <p className="font-meta text-[9px] text-neutral-500">by {item.proposedByName}</p>
+                          </div>
+                          <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-bold border font-meta shrink-0 ${approvalBadge[item.approvalStatus]?.color}`}>
+                            {approvalBadge[item.approvalStatus]?.label}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* Status changer */}
+                          {item.approvalStatus === "approved" && (
+                            <select
+                              value={item.status}
+                              onChange={(e) => handleUpdateActionStatus(item.id, e.target.value as ActionItemStatus)}
+                              className="h-6 px-1 bg-neutral-800 border border-neutral-700 rounded-lg text-[9px] text-neutral-200 font-meta"
+                            >
+                              <option value="todo">To Do</option>
+                              <option value="in_progress">In Progress</option>
+                              <option value="blocked">Blocked</option>
+                              <option value="done">Done</option>
+                            </select>
+                          )}
+                          {/* Host approve/reject */}
+                          {isHost && item.approvalStatus === "suggested" && (
+                            <>
+                              <button type="button" onClick={() => handleApproveAction(item.id)}
+                                className="h-6 px-2 bg-emerald-600/30 hover:bg-emerald-600/60 text-emerald-300 font-meta text-[9px] rounded-lg">✓ Approve</button>
+                              <button type="button" onClick={() => handleRejectAction(item.id)}
+                                className="h-6 px-2 bg-red-900/30 hover:bg-red-900/60 text-red-400 font-meta text-[9px] rounded-lg">✗ Reject</button>
+                            </>
+                          )}
+                          {isHost && (
+                            <button type="button" onClick={() => handleDeleteAction(item.id)}
+                              className="h-6 px-2 text-neutral-600 hover:text-red-400 hover:bg-red-950/30 font-meta text-[9px] rounded-lg ml-auto">Delete</button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -8581,6 +9285,68 @@ export default function MeetingRoom() {
             </span>
           </button>
 
+          {/* PRD Module 1 — Speaker Queue Button */}
+          <button
+            type="button"
+            onClick={() => setActiveDrawer(activeDrawer === "queue" ? "none" : "queue")}
+            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              activeDrawer === "queue"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
+            }`}
+            title="Speaker Queue"
+            aria-label="Speaker Queue"
+          >
+            {(meeting?.speakerQueue ?? []).filter((e) => e.status === "waiting").length > 0 && activeDrawer !== "queue" && (
+              <span className="absolute -top-1.5 -right-1.5 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center shadow-md">
+                {(meeting?.speakerQueue ?? []).filter((e) => e.status === "waiting").length}
+              </span>
+            )}
+            <span className="text-sm leading-none">✋</span>
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Queue</span>
+          </button>
+
+          {/* PRD Module 2 — Agenda & Timer Button */}
+          <button
+            type="button"
+            onClick={() => setActiveDrawer(activeDrawer === "agenda" ? "none" : "agenda")}
+            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              activeDrawer === "agenda"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+                : (meeting?.agendaItems ?? []).some((it) => it.status === "active")
+                ? "bg-emerald-950/40 text-emerald-300 border-emerald-500/40 animate-pulse"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
+            }`}
+            title="Agenda & Focus Timer"
+            aria-label="Agenda and Focus Timer"
+          >
+            <span className="text-sm leading-none">⏱</span>
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Agenda</span>
+          </button>
+
+          {/* PRD Module 4 — Action Board Button */}
+          <button
+            type="button"
+            onClick={() => setActiveDrawer(activeDrawer === "actions" ? "none" : "actions")}
+            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[62px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              activeDrawer === "actions"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+                : (meeting?.liveActionItems ?? []).some((a) => a.approvalStatus === "suggested" && isHost)
+                ? "bg-amber-950/40 text-amber-300 border-amber-500/40"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
+            }`}
+            title="Live Action Board"
+            aria-label="Live Action Board"
+          >
+            {(meeting?.liveActionItems ?? []).filter((a) => a.approvalStatus === "suggested").length > 0 && isHost && activeDrawer !== "actions" && (
+              <span className="absolute -top-1.5 -right-1.5 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center shadow-md">
+                {(meeting?.liveActionItems ?? []).filter((a) => a.approvalStatus === "suggested").length}
+              </span>
+            )}
+            <span className="text-sm leading-none">✅</span>
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Actions</span>
+          </button>
+
           {/* Reaction Triggers — matched h-12 container */}
           <div
             className="hidden lg:flex items-center gap-0.5 h-12 px-2 bg-neutral-900/90 rounded-xl border border-neutral-800 shadow-sm"
@@ -8665,6 +9431,33 @@ export default function MeetingRoom() {
                   >
                     <GitBranch className="w-4 h-4 text-purple-400 shrink-0" strokeWidth={2} />
                     <span>Breakout Rooms</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setActiveDrawer("queue"); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+                  >
+                    <Hand className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={2} />
+                    <span>Speaker Queue</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setActiveDrawer("agenda"); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+                  >
+                    <span className="w-4 h-4 flex items-center justify-center text-emerald-400 shrink-0">&#9201;</span>
+                    <span>Agenda &amp; Focus Timer</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setActiveDrawer("actions"); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+                  >
+                    <span className="w-4 h-4 flex items-center justify-center text-sky-400 shrink-0">&#9989;</span>
+                    <span>Live Action Board</span>
                   </button>
                   <button
                     type="button"
@@ -10043,6 +10836,45 @@ export default function MeetingRoom() {
                 <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">
                   {myActiveBreakoutRoom ? myActiveBreakoutRoom.name : "Breakouts"}
                 </span>
+              </button>
+
+              {/* PRD: Speaker Queue */}
+              <button
+                type="button"
+                onClick={() => { setActiveDrawer("queue"); setShowMobileActionsSheet(false); }}
+                className="relative p-3 rounded-2xl border border-amber-500/30 bg-amber-950/20 hover:bg-amber-900/30 text-amber-300 flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                {(meeting?.speakerQueue ?? []).filter((e) => e.status === "waiting").length > 0 && (
+                  <span className="absolute top-1.5 right-1.5 bg-amber-400 text-black text-[8px] font-extrabold px-1.5 rounded-full">
+                    {(meeting?.speakerQueue ?? []).filter((e) => e.status === "waiting").length}
+                  </span>
+                )}
+                <Hand className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Queue</span>
+              </button>
+
+              {/* PRD: Agenda & Timer */}
+              <button
+                type="button"
+                onClick={() => { setActiveDrawer("agenda"); setShowMobileActionsSheet(false); }}
+                className={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1.5 text-center transition-all ${
+                  (meeting?.agendaItems ?? []).some((it) => it.status === "active")
+                    ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-300 animate-pulse"
+                    : "border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white"
+                }`}
+              >
+                <span className="text-lg leading-none">⏱</span>
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Agenda</span>
+              </button>
+
+              {/* PRD: Action Board */}
+              <button
+                type="button"
+                onClick={() => { setActiveDrawer("actions"); setShowMobileActionsSheet(false); }}
+                className="p-3 rounded-2xl border border-sky-500/30 bg-sky-950/20 hover:bg-sky-900/30 text-sky-300 flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+              >
+                <span className="text-lg leading-none">✅</span>
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Actions</span>
               </button>
 
               {/* Share / Invite Link */}

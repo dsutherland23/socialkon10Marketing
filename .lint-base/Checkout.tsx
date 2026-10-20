@@ -1,0 +1,1566 @@
+import { useRef, useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import { Trash2, Copy, Bookmark, Download, ChevronDown, ChevronUp, Printer, Check } from "lucide-react";
+import { CONTACT, formatMoney, serviceBySlug } from "../lib/data";
+import { useDepartment } from "../lib/dept";
+import { useShop } from "../lib/shop";
+import { useDesignPackage } from "../lib/design-shop";
+import { activeProviders } from "../lib/payments";
+import { useSEO, track } from "../lib/seo";
+import { trackCheckoutStart, trackCheckoutComplete, getSessionAttribution } from "../lib/analytics";
+import { Reveal } from "../lib/motion";
+import { useAuth } from "../lib/auth";
+import { attachFiles, cartToOrderItems, claimOrders, createOrder } from "../lib/backend";
+import { auth as fbAuth, firebaseReady } from "../lib/firebase";
+import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
+import { IntakeWizard, type IntakeOrderContext } from "../components/IntakeWizard";
+import { getProfile, saveProfile, isIntakePackage, intakePackageFor, type IntakePackage, type ClientProfile } from "../lib/intake";
+import { useContent } from "../lib/content";
+import { sendEmail, orderConfirmationEmail, orderRequestConfirmationEmail, adminNewOrderEmail } from "../lib/email";
+import { validateUploadFile } from "../lib/uploads";
+import { DeliverablesPopover } from "../components/DeliverablesPopover";
+import { DuplicateOrderModal } from "../components/DuplicateOrderModal";
+import { useCheckoutSettings, reserveOrderReference } from "../lib/checkout";
+import {
+  effectiveCheckoutMode, orderRequestEnabled, cartPricingStatus, repriceCartLines,
+  toCents, fromCents, type PricingStatus,
+} from "../lib/order-utils";
+import {
+  auditCartOverlaps, computeOrderFingerprint, checkRecentDuplicateOrder,
+  recordCompletedOrder, acquirePaymentLock, releasePaymentLock, type RecentOrderRecord,
+} from "../lib/orderConflict";
+
+/* ------------------------------------------------------------------
+   CHECKOUT (PRD §29–31 + Dual-Mode Checkout, 2026)
+   PROJECT → DETAILS → FILES → REVIEW/PAYMENT → DONE
+
+   Active mode comes from Settings → Checkout (server-stored):
+   • ORDER_REQUEST  — customers submit carts without paying (default)
+   • ONLINE_PAYMENT — verified gateway only
+   • HYBRID         — customer chooses
+------------------------------------------------------------------- */
+
+const STEPS_BASE = ["Project", "Details", "Files"] as const;
+const ACCEPTED = [".pdf", ".jpg", ".jpeg", ".png", ".svg", ".docx", ".zip", ".mp4", ".mp3"];
+const MAX_MB = 25;
+
+/** Google G icon — used on the "Continue with Google" button */
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+    <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+    <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+    <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+    <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+  </svg>
+);
+
+/* 2026: checkout = payment, not interrogation. Contact basics only —
+   the per-package project brief (goals, pages, colours, style) owns the
+   deep questions right after payment, prefilled from what we know here. */
+interface Details { name: string; company: string; email: string; phone: string; extra: string }
+
+export default function Checkout() {
+  useDepartment(null);
+  const { items, remove, currency, promo, applyPromo, clearPromo, subtotal: shopSubtotal, discount: shopDiscount, clear, add } = useShop();
+  const pkg = useDesignPackage();
+  const { settings: checkoutSettings } = useCheckoutSettings();
+  const mode = effectiveCheckoutMode(checkoutSettings);
+  const allowOrderRequest = orderRequestEnabled(checkoutSettings);
+  const STEPS = [...STEPS_BASE, mode === "ONLINE_PAYMENT" ? "Payment" : "Review", "Done"] as const;
+  const [step, setStep] = useState(0);
+  const payMode = "full" as const;
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [orderReference, setOrderReference] = useState<string | null>(null);
+  const [submittedPricing, setSubmittedPricing] = useState<PricingStatus>("CONFIRMED");
+  const [submittedMethod, setSubmittedMethod] = useState<"order_request" | "online_payment">("order_request");
+  const [orderSnapshot, setOrderSnapshot] = useState<{ items: { name: string; price: number }[]; subtotal: number; discount: number; total: number } | null>(null);
+  const [submitPersistWarning, setSubmitPersistWarning] = useState<string | null>(null);
+  const [copiedRef, setCopiedRef] = useState(false);
+  const [promoInput, setPromoInput] = useState("");
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [details, setDetails] = useState<Details>({ name: "", company: "", email: "", phone: "", extra: "" });
+  const [errors, setErrors] = useState<Partial<Record<keyof Details, string>>>({});
+  const [files, setFiles] = useState<{ file: File; name: string; size: number }[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [acctPass, setAcctPass] = useState("");
+  const [showAcctPass, setShowAcctPass] = useState(false);
+  const [acctError, setAcctError] = useState<string | null>(null);
+  const [acctDone, setAcctDone] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [magicSent, setMagicSent] = useState(false);
+  const [saveDetails, setSaveDetails] = useState(true);
+  const [savedProfile, setSavedProfile] = useState<ClientProfile | null>(null);
+  const [intakePkg, setIntakePkg] = useState<IntakePackage | null>(null);
+  const [intakeOrderId, setIntakeOrderId] = useState<string | null>(null);
+  const [intakeOrderCtx, setIntakeOrderCtx] = useState<IntakeOrderContext | null>(null);
+  const [intakeOpen, setIntakeOpen] = useState(false);
+  const [duplicateModal, setDuplicateModal] = useState<{
+    isOpen: boolean;
+    recentOrder: RecentOrderRecord | null;
+    minutesAgo: number;
+  }>({ isOpen: false, recentOrder: null, minutesAgo: 0 });
+
+  const cartOverlaps = useMemo(() => auditCartOverlaps(items, pkg.items), [items, pkg.items]);
+
+  const fileRef = useRef<HTMLInputElement>(null);
+  const pendingMethod = useRef<"order_request" | "online_payment">("order_request");
+  const { user, signUp, signInGoogle, sendMagicLink } = useAuth();
+  const { services } = useContent();
+  const priceFor = (slug: string) => services.find((s) => s.slug === slug)?.price ?? 0;
+
+  // Unified items and pricing across main cart and custom design packages (2026 unified commerce standard)
+  const hasAnyItems = items.length > 0 || pkg.lines.length > 0;
+
+  // Server-authoritative pricing (Phase 6): recompute every agency line from
+  // the trusted catalog (rate sheet + admin overrides) — never trust prices
+  // stored in browser storage. Tier/variant/template lines keep their quoted
+  // price and are flagged for admin review instead of silent alteration.
+  const { lines: repricedLines, changedCount: repricedCount } = useMemo(
+    () => repriceCartLines(items, services),
+    [items, services]
+  );
+
+  // Order math in integer cents — floats never decide a financial total.
+  const agencySubtotalCents = repricedLines.reduce((s, l) => {
+    const base = toCents(l.unitPrice) + l.addons.reduce((a, x) => a + toCents(x.price), 0);
+    return s + (l.rush ? Math.round(base * 1.25) : base);
+  }, 0);
+  const agencySubRepriced = fromCents(agencySubtotalCents);
+  // Keep promo semantics while applying them to the corrected prices.
+  const agencyDiscount = shopSubtotal > 0 ? shopDiscount * (agencySubRepriced / shopSubtotal) : 0;
+  const subtotal = agencySubRepriced + pkg.subtotal;
+  const discount = agencyDiscount + (pkg.discount?.amount ?? 0);
+  const total = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
+  const dueToday = total;
+
+  const pricingStatus: PricingStatus = useMemo(() => {
+    const lines = [
+      ...items.map((i) => ({ serviceSlug: i.serviceSlug, addons: i.addons, templateSlug: i.templateSlug })),
+      ...pkg.lines.map(() => ({ tierLabel: "Design package" })),
+    ];
+    return cartPricingStatus(lines, services);
+  }, [items, pkg.lines, services]);
+  const quoteRequired = pricingStatus === "QUOTE_REQUIRED";
+
+  const pkgOrderItems = pkg.lines.map((l) => ({
+    name: `${l.service.name}${l.tier ? ` (${l.tier.name})` : ""}${l.sizeLabel ? ` — ${l.sizeLabel}` : ""}${l.qty > 1 ? ` × ${l.qty}` : ""}`,
+    tierLabel: "Design package",
+    unitPrice: Math.round((l.unitBase + l.optionsPerDesign) * 100) / 100,
+    addons: [
+      ...l.options.map((o) => ({ name: o.name, price: Math.round(o.amount * 100) / 100 })),
+      ...(l.projectFees > 0 ? [{ name: "Project fees", price: Math.round(l.projectFees * 100) / 100 }] : []),
+    ],
+    rush: l.options.some((o) => o.id === "rush"),
+    billing: "one_time" as const,
+  }));
+
+  // 2026 best practice: signed-in customers never retype saved details —
+  // prefill from their account profile, only into fields still empty.
+  useEffect(() => {
+    if (!user) return;
+    setDetails((d) => (d.email ? d : { ...d, email: user.email ?? d.email }));
+    getProfile(user.uid).then((p) => {
+      if (!p) return;
+      setSavedProfile(p);
+      setDetails((d) => ({
+        ...d,
+        name: d.name || p.name,
+        company: d.company || p.company,
+        email: d.email || p.email,
+        phone: d.phone || p.phone,
+      }));
+    });
+  }, [user]);
+
+  // Enhancement 3: quick-checkout — set by "Buy Now" on template detail pages.
+  // Skip the summary step, but NEVER skip contact details — an order without
+  // name/email is anonymous and unfulfillable, and breaks guest order claiming.
+  useEffect(() => {
+    if (sessionStorage.getItem("sk_quick_checkout") === "1" && hasAnyItems) {
+      sessionStorage.removeItem("sk_quick_checkout");
+      setStep(1); // straight to Your details
+    }
+  }, [hasAnyItems]);
+
+  // 2026 Batch Processing & Cart Management State
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [savedItems, setSavedItems] = useState<{ id: string; type: "agency" | "pkg"; item: any; date: string }[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sk-saved-cart") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [showSavedShelf, setShowSavedShelf] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sk-saved-cart", JSON.stringify(savedItems));
+    } catch {}
+  }, [savedItems]);
+
+  const allCartKeys = useMemo(() => {
+    return [...items.map((i) => i.key), ...pkg.lines.map((l) => l.key)];
+  }, [items, pkg.lines]);
+
+  const isAllSelected = allCartKeys.length > 0 && selectedKeys.length === allCartKeys.length;
+  const isSomeSelected = selectedKeys.length > 0;
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedKeys([]);
+    } else {
+      setSelectedKeys([...allCartKeys]);
+    }
+  };
+
+  const toggleSelectKey = (key: string) => {
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
+
+  // Undo buffer for single / batch deletes
+  const handleBatchDelete = () => {
+    if (selectedKeys.length === 0) return;
+    const deletedAgency = items.filter((i) => selectedKeys.includes(i.key));
+    const deletedPkg = pkg.lines.filter((l) => selectedKeys.includes(l.key));
+    const count = selectedKeys.length;
+
+    // Execute deletion
+    selectedKeys.forEach((key) => {
+      remove(key);
+      pkg.remove(key);
+    });
+    setSelectedKeys([]);
+
+    toast.success(`Removed ${count} item${count === 1 ? "" : "s"} from cart`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          deletedAgency.forEach((item) => add(item));
+          deletedPkg.forEach((line) => {
+            pkg.add(line.service.slug, { tierId: line.tier?.id, sizeId: line.size?.id, optionIds: line.options?.map((o: any) => o.id), qty: line.qty });
+          });
+          toast.success("Restored items to cart");
+        },
+      },
+    });
+  };
+
+  const handleSingleDelete = (key: string, name: string) => {
+    const agencyItem = items.find((i) => i.key === key);
+    const pkgLine = pkg.lines.find((l) => l.key === key);
+
+    remove(key);
+    pkg.remove(key);
+    setSelectedKeys((prev) => prev.filter((k) => k !== key));
+
+    toast.success(`Removed "${name}" from cart`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (agencyItem) add(agencyItem);
+          if (pkgLine) {
+            pkg.add(pkgLine.service.slug, { tierId: pkgLine.tier?.id, sizeId: pkgLine.size?.id, optionIds: pkgLine.options?.map((o: any) => o.id), qty: pkgLine.qty });
+          }
+          toast.success(`Restored "${name}"`);
+        },
+      },
+    });
+  };
+
+  const handleDuplicate = (type: "agency" | "pkg", item: any) => {
+    if (type === "agency") {
+      add({
+        serviceSlug: item.serviceSlug,
+        name: item.name,
+        unitPrice: item.unitPrice,
+        tierLabel: item.tierLabel,
+        addons: item.addons,
+        rush: item.rush,
+        billing: item.billing,
+        depositPct: item.depositPct,
+      });
+      toast.success(`Duplicated "${item.name}"`);
+    } else {
+      pkg.add(item.service.slug, { tierId: item.tier?.id, sizeId: item.size?.id, optionIds: item.options?.map((o: any) => o.id), qty: item.qty });
+      toast.success(`Duplicated "${item.service.name}"`);
+    }
+  };
+
+  const handleSingleSaveForLater = (type: "agency" | "pkg", item: any) => {
+    const newSaved = {
+      id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      type,
+      item,
+      date: new Date().toLocaleDateString(),
+    };
+    setSavedItems((prev) => [...prev, newSaved]);
+    if (type === "agency") {
+      remove(item.key);
+    } else {
+      pkg.remove(item.key);
+    }
+    setSelectedKeys((prev) => prev.filter((k) => k !== item.key));
+    setShowSavedShelf(true);
+    toast.success(`Moved "${type === "agency" ? item.name : item.service.name}" to Saved for Later`);
+  };
+
+  const handleBatchSaveForLater = () => {
+    if (selectedKeys.length === 0) return;
+    const toSaveAgency = items.filter((i) => selectedKeys.includes(i.key));
+    const toSavePkg = pkg.lines.filter((l) => selectedKeys.includes(l.key));
+
+    const newSaved = [
+      ...toSaveAgency.map((i) => ({ id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type: "agency" as const, item: i, date: new Date().toLocaleDateString() })),
+      ...toSavePkg.map((l) => ({ id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type: "pkg" as const, item: l, date: new Date().toLocaleDateString() })),
+    ];
+
+    setSavedItems((prev) => [...prev, ...newSaved]);
+    selectedKeys.forEach((key) => {
+      remove(key);
+      pkg.remove(key);
+    });
+    setSelectedKeys([]);
+    setShowSavedShelf(true);
+
+    toast.success(`Moved ${newSaved.length} item${newSaved.length === 1 ? "" : "s"} to Saved for Later`);
+  };
+
+  const handleRestoreSaved = (saved: { id: string; type: "agency" | "pkg"; item: any }) => {
+    if (saved.type === "agency") {
+      add(saved.item);
+    } else {
+      if (saved.item.sel) {
+        pkg.add(saved.item.service.slug, saved.item.sel);
+      } else {
+        pkg.add(saved.item.service.slug, {
+          tierId: saved.item.tier?.id,
+          sizeId: saved.item.size?.id,
+          optionIds: saved.item.options?.map((o: any) => o.id),
+          qty: saved.item.qty,
+        });
+      }
+    }
+    setSavedItems((prev) => prev.filter((s) => s.id !== saved.id));
+    toast.success("Item moved back to cart");
+  };
+
+  const handleRemoveSaved = (id: string) => {
+    setSavedItems((prev) => prev.filter((s) => s.id !== id));
+    toast.success("Item removed from saved list");
+  };
+
+  const handleBatchExportEstimate = () => {
+    const activeAgency = items.filter((i) => selectedKeys.length === 0 || selectedKeys.includes(i.key));
+    const activePkg = pkg.lines.filter((l) => selectedKeys.length === 0 || selectedKeys.includes(l.key));
+
+    const lines = [
+      "============================================================",
+      " SOCIAL KON10 MARKETING — PROJECT ESTIMATE & SCOPE SUMMARY",
+      ` Date: ${new Date().toLocaleDateString()} | Currency: ${currency}`,
+      ` Reference: SK-EST-${Date.now().toString().slice(-6)}`,
+      "============================================================",
+      "",
+      "--- SERVICES & PACKAGES ---",
+      ...activeAgency.map(
+        (i, idx) => {
+          const rl = repricedLines.find((r) => r.key === i.key) ?? i;
+          return `${idx + 1}. ${i.name} [${i.billing === "monthly" ? "Retainer" : "Project"}] — ${formatMoney((rl.unitPrice + rl.addons.reduce((s, a) => s + a.price, 0)) * (rl.rush ? 1.25 : 1), currency)}\n   Inclusions: ${serviceBySlug(i.serviceSlug)?.deliverables.join(", ") || "Standard scope"}\n   Deposit: ${i.depositPct}% upfront`;
+        }
+      ),
+      ...activePkg.map(
+        (l, idx) =>
+          `${activeAgency.length + idx + 1}. ${l.service.name} (${l.tier ? l.tier.name : "Custom"} ${l.sizeLabel ? `· ${l.sizeLabel}` : ""}) — ${formatMoney(l.lineTotal, currency)}\n   Turnaround: ${l.turnaround}\n   Options: ${l.options.map((o) => o.name).join(", ") || "Standard production"}`
+      ),
+      "",
+      "------------------------------------------------------------",
+      ` Subtotal:  ${formatMoney(subtotal, currency)}`,
+      discount > 0 ? ` Discount: -${formatMoney(discount, currency)}` : "",
+      ` Total:     ${formatMoney(total, currency)}`,
+      "============================================================",
+      " 50% deposit secures project kickoff. Remaining balance due",
+      " only upon final design & deliverables approval.",
+      " Questions? hello@socialkon10.com | Kingston, Jamaica",
+    ].filter(Boolean).join("\n");
+
+    const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SocialKon10_Estimate_${Date.now().toString().slice(-6)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Quote estimate downloaded");
+  };
+
+  useSEO({ title: "Checkout — Social Kon10 Marketing", description: "Configure and complete payment for your project or template.", path: "/checkout" });
+
+  const set = (k: keyof Details) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setDetails((d) => ({ ...d, [k]: e.target.value }));
+
+  const validateDetails = () => {
+    const e: typeof errors = {};
+    if (!details.name.trim()) e.name = "Your name is required.";
+    if (!/.+@.+\..+/.test(details.email)) e.email = "A valid email is required.";
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const onFiles = (list: FileList | null) => {
+    if (!list) return;
+    setFileError(null);
+    const next = [...files];
+    const candidates = Array.from(list);
+    // Phase 2 upload security: extension AND size are pre-checked, then the
+    // file head is sniffed — a renamed executable can never slip through as
+    // an "image". Async per-file so the UI stays responsive.
+    void (async () => {
+      for (const f of candidates) {
+        const ext = `.${f.name.split(".").pop()?.toLowerCase()}`;
+        if (!ACCEPTED.includes(ext)) { setFileError(`${f.name}: file type not accepted (${ACCEPTED.join(" ")})`); continue; }
+        if (f.size > MAX_MB * 1024 * 1024) { setFileError(`${f.name}: exceeds ${MAX_MB}MB limit`); continue; }
+        const verdict = await validateUploadFile(f);
+        if (!verdict.ok) { setFileError(`${f.name}: ${verdict.error}`); continue; }
+        next.push({ file: f, name: f.name, size: f.size });
+        track("file_upload", { name: f.name, size: f.size });
+        setFiles([...next]);
+      }
+    })();
+  };
+
+  /** Immutable order line items built from the REPRICED catalog values. */
+  const buildOrderItems = () => {
+    const agency = items.map((item, idx) => {
+      const base = cartToOrderItems([item])[0];
+      const r = repricedLines[idx];
+      return r ? { ...base, unitPrice: r.unitPrice, addons: r.addons.map((a) => ({ name: a.name, price: a.price })) } : base;
+    });
+    return [...agency, ...pkgOrderItems];
+  };
+
+  /**
+   * Dual-mode submit (Phase 4/5).
+   * order_request  → saves the order with paymentStatus UNPAID; no charge is attempted.
+   * online_payment → charges the verified gateway first, then saves the order.
+   */
+  const submit = async (method: "order_request" | "online_payment", forceDuplicate: boolean = false) => {
+    // hard guard: never submit without a reachable customer identity
+    if (!details.name.trim() || !/.+@.+\..+/.test(details.email)) {
+      setPayError(`We need your name and a valid email before ${method === "online_payment" ? "payment" : "submitting"} — so we can deliver your order and updates.`);
+      setStep(1);
+      return;
+    }
+    if (method === "order_request" && !agreeTerms) {
+      setPayError("Please agree to the terms and privacy notice before submitting your order request.");
+      return;
+    }
+
+    const allItemNames = [...items.map((i) => i.name), ...pkg.lines.map((l) => `${l.service.name}${l.sizeLabel ? ` (${l.sizeLabel})` : ""}`)];
+    const allOrderItems = buildOrderItems();
+    const fingerprint = computeOrderFingerprint(details.email, allOrderItems, dueToday);
+
+    // 2026 Duplicate Order Guard: identical order placed in the last 10 minutes
+    if (forceDuplicate !== true) {
+      const dupCheck = checkRecentDuplicateOrder(fingerprint);
+      if (dupCheck.isDuplicate && dupCheck.recentOrder) {
+        pendingMethod.current = method;
+        setDuplicateModal({
+          isOpen: true,
+          recentOrder: dupCheck.recentOrder,
+          minutesAgo: dupCheck.minutesAgo ?? 1,
+        });
+        return;
+      }
+    }
+
+    // Atomic submission lock to prevent double-clicks & concurrent tabs
+    if (!acquirePaymentLock()) {
+      setPayError("A submission is already in progress. Please wait a moment.");
+      return;
+    }
+
+    setPaying(true);
+    setPayError(null);
+    setSubmitPersistWarning(null);
+
+    // 1) Reserve the unique public order reference (server-side, collision-checked)
+    let reference: string;
+    try {
+      reference = await reserveOrderReference();
+    } catch {
+      releasePaymentLock();
+      setPaying(false);
+      setPayError("We couldn't allocate an order reference — please try again.");
+      return;
+    }
+
+    // 2) Online payment path: charge the verified gateway BEFORE saving the order
+    let transactionId: string | undefined;
+    if (method === "online_payment") {
+      track("payment_start", { value: dueToday, mode: payMode });
+      const provider = activeProviders(checkoutSettings)[0];
+      if (!provider) {
+        releasePaymentLock();
+        setPaying(false);
+        setPayError("Online payment isn't available right now — please submit an order request instead.");
+        return;
+      }
+      const res = await provider.pay({
+        orderId: reference,
+        amountUsd: dueToday,
+        description: allItemNames.join(", ") || "Services and design package",
+        kind: "full",
+      });
+      if (!res.ok) {
+        releasePaymentLock();
+        setPaying(false);
+        setPayError(res.error ?? "Payment failed — no charge was made. Try again.");
+        track("payment_failed", {});
+        return;
+      }
+      transactionId = res.transactionId;
+    }
+
+    // 3) Persist the order — immutable snapshot of items + catalog-verified prices
+    const paid = method === "online_payment" ? dueToday : 0;
+    let finalOid = reference;
+    try {
+      const attribution = getSessionAttribution();
+      const oid = await createOrder(
+        {
+          email: details.email,
+          name: details.name,
+          company: details.company,
+          items: allOrderItems,
+          subtotal: Math.round(subtotal * 100) / 100,
+          discount: Math.round(discount * 100) / 100,
+          total: Math.round(total * 100) / 100,
+          payMode,
+          amountPaid: paid,
+          balanceDue: Math.max(0, Math.round((total - paid) * 100) / 100),
+          promo: promo ? promo : (pkg.discount ? `PACKAGE:${pkg.discount.name}` : null),
+          reference,
+          checkoutMethod: method,
+          paymentStatus: paid > 0 && paid >= total ? "PAID" : "UNPAID",
+          pricingStatus,
+          currency,
+          paymentHistory: [],
+          details: {
+            ...details,
+            hasDesignPackage: pkg.lines.length > 0 ? "true" : "false",
+            ...(attribution.utm_source ? { utm_source: attribution.utm_source } : {}),
+            ...(attribution.utm_campaign ? { utm_campaign: attribution.utm_campaign } : {}),
+            ...(attribution.utm_medium ? { utm_medium: attribution.utm_medium } : {}),
+            ...(attribution.landing_page ? { landing_page: attribution.landing_page } : {}),
+            ...(attribution.session_id ? { session_id: attribution.session_id } : {}),
+          },
+          files: files.map((f) => ({ name: f.name, size: f.size })),
+        },
+        user
+      );
+      if (firebaseReady && files.length > 0) await attachFiles(oid, files.map((f) => f.file));
+      finalOid = oid;
+      setOrderId(oid);
+      window.dispatchEvent(new CustomEvent("sk-order-complete"));
+    } catch (err) {
+      console.error("Order persistence failed:", err);
+      if (method === "online_payment") {
+        // A charge happened — never conceal it. Confirm with an explicit warning.
+        setOrderId(finalOid);
+        setSubmitPersistWarning(`Your payment was received, but saving the order hit a problem. Please contact us at ${CONTACT.email} quoting reference ${reference} — we will complete your order manually.`);
+      } else {
+        // Order request: nothing was charged, nothing was saved — say so plainly.
+        releasePaymentLock();
+        setPaying(false);
+        setPayError("We couldn't save your order request — nothing was submitted. Please try again in a moment.");
+        return;
+      }
+    }
+    setOrderReference(reference);
+    setSubmittedMethod(method);
+    setSubmittedPricing(pricingStatus);
+    setOrderSnapshot({
+      items: allOrderItems.map((i) => ({
+        name: i.name,
+        price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
+      })),
+      subtotal, discount, total: method === "online_payment" ? dueToday : total,
+    });
+
+    // save details to the account for one-tap future checkouts (opt-out checkbox)
+    // merge-safe: never clobbers profile fields checkout doesn't collect
+    if (user && saveDetails) {
+      const base = savedProfile;
+      void saveProfile(user.uid, {
+        name: details.name, company: details.company, email: details.email,
+        phone: details.phone,
+        website: base?.website ?? "", industry: base?.industry ?? "",
+        address: base?.address ?? "", city: base?.city ?? "", country: base?.country ?? "",
+      });
+    }
+
+    // website packages → the intake brief doubles as the project agreement;
+    // pop it immediately post-submission (highest-intent moment).
+    // Snapshot the order BEFORE clear() so the brief can prefill + detect scope shifts.
+    const webItem = items.find((i) => isIntakePackage(i.serviceSlug));
+    if (webItem) {
+      setIntakePkg(intakePackageFor(webItem.serviceSlug));
+      setIntakeOrderId(finalOid);
+      setIntakeOrderCtx({
+        id: finalOid,
+        amountPaid: paid,
+        packageUnitPrice: webItem.unitPrice,
+        addonNames: items.flatMap((i) => [
+          ...i.addons.map((a) => a.name),
+          ...(i.billing === "monthly" ? [i.name] : []),
+        ]),
+        details: { ...details },
+        files: files.map((f) => ({ name: f.name, size: f.size })),
+      });
+    }
+
+    // transactional email: client confirmation + studio alert (fire-and-forget, never blocks;
+    // delivery state is tracked independently in the email audit log)
+    const portalUrl = `${window.location.origin}/client`;
+    const lineItems = allOrderItems.map((i) => ({
+      name: i.name,
+      price: Math.round((i.unitPrice + i.addons.reduce((s, a) => s + a.price, 0)) * (i.rush ? 1.25 : 1)),
+    }));
+    if (method === "order_request") {
+      void sendEmail(orderRequestConfirmationEmail({
+        to: details.email, name: details.name, reference,
+        items: lineItems, total, currency, quoteRequired, portalUrl,
+      }));
+    } else {
+      void sendEmail(orderConfirmationEmail({
+        to: details.email, name: details.name, orderId: reference,
+        items: lineItems, total: paid, portalUrl,
+      }));
+    }
+    void sendEmail(adminNewOrderEmail({
+      name: details.name, email: details.email, orderId: finalOid,
+      items: lineItems, total, reference,
+      checkoutMethod: method, quoteRequired,
+      adminUrl: `${window.location.origin}/admin`,
+    }));
+
+    // Enhancement 4: Send magic access link so guest can log in from email
+    if (firebaseReady && !user && details.email) {
+      const err = await sendMagicLink(details.email);
+      if (!err) setMagicSent(true);
+    }
+
+    // Record completed order fingerprint for duplicate order prevention
+    recordCompletedOrder(
+      reference,
+      fingerprint,
+      method === "online_payment" ? dueToday : total,
+      details.email,
+      allItemNames
+    );
+    releasePaymentLock();
+
+    setPaying(false);
+    if (method === "online_payment") {
+      track("purchase", { value: dueToday, transaction_id: transactionId });
+    } else {
+      track("order_request_submitted", { value: total, reference });
+    }
+    // First-party checkout complete event (Firestore + GA4 purchase + Meta Pixel Purchase)
+    trackCheckoutComplete({
+      orderId: reference,
+      total: method === "online_payment" ? dueToday : total,
+      itemCount: items.length + pkg.lines.length,
+    });
+    setStep(4);
+    if (webItem) setIntakeOpen(true);
+    clear();
+    pkg.clear();
+  };
+
+  const pay = (forceDuplicate: boolean = false) => submit("online_payment", forceDuplicate);
+  const submitRequest = (forceDuplicate: boolean = false) => submit("order_request", forceDuplicate);
+
+  /** Printable/downloadable order summary from the post-submit snapshot. */
+  const downloadOrderSummary = () => {
+    if (!orderSnapshot || !orderReference) return;
+    const lines = [
+      "============================================================",
+      " SOCIAL KON10 MARKETING — ORDER SUMMARY",
+      ` Reference: ${orderReference}`,
+      ` Date: ${new Date().toLocaleString()} | Currency: ${currency}`,
+      ` Customer: ${details.name}${details.company ? ` (${details.company})` : ""} · ${details.email}`,
+      ` Type: ${submittedMethod === "order_request" ? "ORDER REQUEST — no payment collected" : "ONLINE PAYMENT — paid"}`,
+      "============================================================",
+      "",
+      "--- ITEMS ---",
+      ...orderSnapshot.items.map((i, idx) => `${idx + 1}. ${i.name} — ${formatMoney(i.price, currency)}`),
+      "",
+      "------------------------------------------------------------",
+      ` Subtotal:  ${formatMoney(orderSnapshot.subtotal, currency)}`,
+      orderSnapshot.discount > 0 ? ` Discount: -${formatMoney(orderSnapshot.discount, currency)}` : "",
+      ` ${submittedPricing === "QUOTE_REQUIRED" ? "Estimated total" : "Total"}: ${formatMoney(orderSnapshot.total, currency)}${submittedPricing === "QUOTE_REQUIRED" ? " (estimate — final quote to follow)" : ""}`,
+      "============================================================",
+      submittedMethod === "order_request"
+        ? " No payment has been collected. The studio will contact you\n to confirm pricing and arrange payment after your approval."
+        : " Payment received in full. Thank you.",
+      ` Questions? ${CONTACT.email} | ${CONTACT.phone} | Kingston, Jamaica`,
+    ].filter(Boolean).join("\n");
+
+    const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SocialKon10_Order_${orderReference}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Order summary downloaded");
+  };
+
+  /** Post-purchase: create the client account with email + password and claim this order. */
+  const createAccount = async () => {
+    setAcctError(null);
+    const err = await signUp(details.email, acctPass);
+    if (err) { setAcctError(err); return; }
+    setAcctDone(true);
+    // claimOrders runs on next portal visit too; try immediately
+    if (fbAuth?.currentUser) await claimOrders(fbAuth.currentUser);
+  };
+
+  /** Post-purchase: 1-tap Google sign-in and claim orders. Enhancement 2. */
+  const signInWithGoogle = async () => {
+    setGoogleBusy(true);
+    setAcctError(null);
+    const err = await signInGoogle();
+    if (err) { setAcctError(err); setGoogleBusy(false); return; }
+    setAcctDone(true);
+    if (fbAuth?.currentUser) await claimOrders(fbAuth.currentUser);
+    setGoogleBusy(false);
+  };
+
+  const inputCls = "w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] transition-colors";
+  const labelCls = "font-meta text-[10px] text-[var(--muted)] block mb-1.5";
+
+  return (
+    <section className="wrap pt-14 md:pt-20 pb-24 max-w-5xl">
+      <Reveal>
+        <div className="flex justify-between font-meta text-[10px] text-[var(--muted)]">
+          <span className="idx">/checkout</span>
+          <span>Secure · provider-agnostic</span>
+        </div>
+      </Reveal>
+      <h1 className="display-section mt-6">Checkout</h1>
+
+      {/* progress indicator */}
+      <ol className="mt-10 flex flex-wrap items-center gap-x-3 gap-y-2 font-meta text-[10px]" aria-label="Checkout progress">
+        {STEPS.map((s, i) => (
+          <li key={s} className="flex items-center gap-3">
+            <span style={{ color: i < step ? "var(--muted)" : i === step ? "var(--dept)" : "var(--muted)" }}>
+              {i < step ? "✓" : String(i + 1).padStart(2, "0")} {s.toUpperCase()}
+            </span>
+            {i < STEPS.length - 1 && <span className="text-[var(--muted)]" aria-hidden>→</span>}
+          </li>
+        ))}
+      </ol>
+
+      <div className="mt-12">
+        {/* STEP 1 — project summary with 2026 Batch Processing */}
+        {step === 0 && (
+          <div>
+            {!hasAnyItems ? (
+              <div className="border border-[var(--line)] p-10 text-center" style={{ background: "var(--panel)" }}>
+                <p className="font-display text-xl font-bold uppercase">Your cart is empty</p>
+                <p className="text-sm text-[var(--muted)] mt-2">Browse packages or build your custom design package — transparent pricing, no surprises.</p>
+                <div className="mt-6 flex justify-center gap-4">
+                  <Link to="/packages" className="btn btn-fill">Browse packages</Link>
+                  <Link to="/custom-package" className="btn btn-ghost">Build a package</Link>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 2026 Package Overlap & Conflict Audit Banner */}
+                {cartOverlaps.length > 0 && (
+                  <div className="mb-6 p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 space-y-2">
+                    <div className="flex items-center gap-2 text-amber-500 font-bold font-meta text-[10px] uppercase tracking-wider">
+                      <span>⚠️ Package Overlap Detected</span>
+                    </div>
+                    <p className="text-xs text-[var(--ink)] leading-relaxed">
+                      Your cart contains deliverables that are already included as part of an active package:
+                    </p>
+                    <div className="space-y-1.5 pt-1">
+                      {cartOverlaps.map((o, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-3 text-xs bg-[var(--panel)]/80 p-2.5 rounded-xl border border-[var(--line)]">
+                          <span>
+                            <strong className="text-[var(--ink)]">{o.itemName || o.itemSlug}</strong> is already covered inside <span className="dept-accent font-semibold">{o.originPackageName}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const matchingCartItem = items.find((i) => i.serviceSlug === o.itemSlug);
+                              if (matchingCartItem) remove(matchingCartItem.key);
+                            }}
+                            className="font-meta text-[9px] text-red-500 hover:underline shrink-0 font-bold"
+                          >
+                            Remove Standalone Copy ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="font-meta text-[9px] text-[var(--muted)] pt-1">
+                      If you only need one design deliverable, removing the duplicate avoids paying twice. If you need both, you can safely keep both.
+                    </p>
+                  </div>
+                )}
+
+                {/* 2026 Master Selection & Batch Operations Header */}
+                <div className="mb-4 p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium select-none">
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={toggleSelectAll}
+                      className="accent-[var(--dept)] w-4 h-4 rounded"
+                    />
+                    <span className="font-meta text-[11px]">
+                      {isAllSelected ? "Deselect All" : "Select All"} ({allCartKeys.length} items)
+                    </span>
+                  </label>
+
+                  {/* Batch Action Bar (Triggered when 1 or more items are selected) */}
+                  {isSomeSelected ? (
+                    <div className="flex flex-wrap items-center gap-2 animate-in fade-in duration-150">
+                      <span className="px-2.5 py-1 rounded bg-[var(--dept-soft)] text-[var(--dept)] font-mono text-[10px] font-bold">
+                        {selectedKeys.length} SELECTED
+                      </span>
+
+                      <button
+                        onClick={handleBatchDelete}
+                        className="px-2.5 py-1.5 rounded border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all font-meta text-[10px] flex items-center gap-1.5"
+                        title="Delete selected items"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Selected</span>
+                      </button>
+
+                      <button
+                        onClick={handleBatchSaveForLater}
+                        className="px-2.5 py-1.5 rounded border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-[var(--ink)] hover:text-[var(--dept)] transition-all font-meta text-[10px] flex items-center gap-1.5"
+                        title="Save selected items for later"
+                      >
+                        <Bookmark className="w-3.5 h-3.5 text-[var(--dept)]" />
+                        <span>Save for Later</span>
+                      </button>
+
+                      <button
+                        onClick={handleBatchExportEstimate}
+                        className="px-2.5 py-1.5 rounded border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-[var(--ink)] hover:text-[var(--dept)] transition-all font-meta text-[10px] flex items-center gap-1.5"
+                        title="Export itemized quote estimate"
+                      >
+                        <Download className="w-3.5 h-3.5 text-[var(--dept)]" />
+                        <span>Export Estimate</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 text-[var(--muted)] font-meta text-[10px]">
+                      <button
+                        onClick={handleBatchExportEstimate}
+                        className="hover:text-[var(--dept)] flex items-center gap-1 transition-colors"
+                      >
+                        <Download className="w-3 h-3 text-[var(--dept)]" />
+                        <span>Export Full Cart Estimate</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Agency Services Section */}
+                {items.length > 0 && (
+                  <div>
+                    {pkg.lines.length > 0 && <span className="idx block mb-3">/agency-services</span>}
+                    <ul className="space-y-2">
+                      {items.map((i, iIdx) => {
+                        const matchedSvc = serviceBySlug(i.serviceSlug);
+                        const isSelected = selectedKeys.includes(i.key);
+                        // Display the catalog-repriced line so the row always
+                        // matches the totals (never the stale stored price).
+                        const rl = repricedLines[iIdx] ?? i;
+                        const itemPrice = (rl.unitPrice + rl.addons.reduce((s, a) => s + a.price, 0)) * (rl.rush ? 1.25 : 1);
+
+                        return (
+                          <li
+                            key={i.key}
+                            className={`p-4 border rounded-xl transition-all duration-200 grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 ${
+                              isSelected
+                                ? "border-[var(--dept)] bg-[var(--dept-soft)]/20 shadow-sm"
+                                : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectKey(i.key)}
+                              className="accent-[var(--dept)] w-4 h-4 rounded cursor-pointer mt-0.5"
+                              aria-label={`Select ${i.name}`}
+                            />
+
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-display text-base font-bold uppercase">{i.name}</span>
+                                {matchedSvc && (
+                                  <DeliverablesPopover
+                                    title={i.name}
+                                    tagline={matchedSvc.tagline}
+                                    deliverables={matchedSvc.deliverables}
+                                    timeline={matchedSvc.timeline}
+                                    revisions={matchedSvc.revisions}
+                                    depositPct={i.depositPct}
+                                    addons={matchedSvc.addons}
+                                    serviceSlug={matchedSvc.slug}
+                                    price={itemPrice}
+                                    billing={i.billing}
+                                    triggerText="View Scope"
+                                  />
+                                )}
+                              </div>
+                              <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
+                                {i.addons.length > 0 && `+ ${i.addons.map((a) => a.name).join(", ")} · `}
+                                {i.rush && "Rush +25% · "}
+                                {i.billing === "monthly" ? "Monthly retainer" : `${i.depositPct}% kickoff deposit`}
+                              </span>
+                            </div>
+
+                            <span className="font-display font-bold text-sm sm:text-base">
+                              {formatMoney(itemPrice, currency)}
+                            </span>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleSingleSaveForLater("agency", i)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
+                                title="Save for later"
+                                aria-label={`Save ${i.name} for later`}
+                              >
+                                <Bookmark className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDuplicate("agency", i)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+                                title="Duplicate this line item"
+                                aria-label={`Duplicate ${i.name}`}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleSingleDelete(i.key, i.name)}
+                                className="p-1.5 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 transition-colors"
+                                title="Remove from cart"
+                                aria-label={`Remove ${i.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Custom Design Package Section */}
+                {pkg.lines.length > 0 && (
+                  <div className={items.length > 0 ? "mt-8 pt-8 rule-t" : ""}>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                      <span className="idx">/custom-design-package</span>
+                      <Link to="/custom-package" className="font-meta text-[9px] dept-accent u-line">
+                        Customize in Package Builder ({pkg.lines.length} service{pkg.lines.length === 1 ? "" : "s"}) →
+                      </Link>
+                    </div>
+                    <ul className="space-y-2">
+                      {pkg.lines.map((l) => {
+                        const isSelected = selectedKeys.includes(l.key);
+
+                        return (
+                          <li
+                            key={l.key}
+                            className={`p-4 border rounded-xl transition-all duration-200 grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 ${
+                              isSelected
+                                ? "border-[var(--dept)] bg-[var(--dept-soft)]/20 shadow-sm"
+                                : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--line-strong)]"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectKey(l.key)}
+                              className="accent-[var(--dept)] w-4 h-4 rounded cursor-pointer mt-0.5"
+                              aria-label={`Select ${l.service.name}`}
+                            />
+
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-display text-base font-bold uppercase">{l.service.name}</span>
+                                <DeliverablesPopover
+                                  title={l.service.name}
+                                  deliverables={[
+                                    l.tier ? `${l.tier.name} tier scope` : "Standard design scope",
+                                    l.sizeLabel ? `Output size: ${l.sizeLabel}` : "Master vector output",
+                                    `Estimated turnaround: ${l.turnaround}`,
+                                    ...l.options.map((o) => `Add-on: ${o.name}`),
+                                  ]}
+                                  timeline={l.turnaround}
+                                  price={l.lineTotal}
+                                  triggerText="View Scope"
+                                />
+                              </div>
+                              <span className="block font-meta text-[9px] text-[var(--muted)] mt-1">
+                                {[
+                                  l.tier ? `${l.tier.name} tier` : null,
+                                  l.sizeLabel ? `Size: ${l.sizeLabel}` : null,
+                                  l.qty > 1 ? `Qty: ${l.qty}` : null,
+                                  l.options.length > 0 ? `+ ${l.options.map((o) => o.name).join(", ")}` : null,
+                                  l.turnaround,
+                                ].filter(Boolean).join(" · ")}
+                              </span>
+                            </div>
+
+                            <span className="font-display font-bold text-sm sm:text-base">
+                              {formatMoney(l.lineTotal, currency)}
+                            </span>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleSingleSaveForLater("pkg", l)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--dept)] transition-colors"
+                                title="Save for later"
+                                aria-label={`Save ${l.service.name} for later`}
+                              >
+                                <Bookmark className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDuplicate("pkg", l)}
+                                className="p-1.5 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+                                title="Duplicate this line item"
+                                aria-label={`Duplicate ${l.service.name}`}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleSingleDelete(l.key, l.service.name)}
+                                className="p-1.5 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 transition-colors"
+                                title="Remove from cart"
+                                aria-label={`Remove ${l.service.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+
+                    {pkg.discount && (
+                      <div className="mt-3 flex items-center justify-between border border-[var(--dept)] px-4 py-2.5 rounded-lg text-xs" style={{ background: "var(--dept-soft)" }}>
+                        <span className="font-meta text-[10px] dept-accent uppercase tracking-wider font-bold">✓ Automatic Bundle Discount</span>
+                        <span className="font-semibold">{pkg.discount.name} (−{formatMoney(pkg.discount.amount, currency)})</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* promo */}
+                <div className="mt-8 flex flex-wrap items-center gap-3">
+                  <label htmlFor="promo" className="font-meta text-[10px] text-[var(--muted)]">Promo code</label>
+                  <input id="promo" value={promoInput} onChange={(e) => setPromoInput(e.target.value)} className={`${inputCls} !w-44`} placeholder="WELCOME10" />
+                  <button className="btn btn-ghost !py-2.5" onClick={() => setPromoError(applyPromo(promoInput))}>Apply</button>
+                  {promo && <span className="font-meta text-[10px] dept-accent">{promo} applied <button onClick={clearPromo} className="underline ml-1">remove</button></span>}
+                  {promoError && <span className="font-meta text-[10px] text-red-600" role="alert">{promoError}</span>}
+                </div>
+
+                <div className="mt-8 pt-6 rule-t max-w-md ml-auto flex flex-col gap-2 text-sm">
+                  <div className="flex justify-between"><span className="text-[var(--muted)]">Subtotal</span><span>{formatMoney(subtotal, currency)}</span></div>
+                  {discount > 0 && <div className="flex justify-between dept-accent"><span>Discount</span><span>−{formatMoney(discount, currency)}</span></div>}
+                  <div className="flex justify-between font-display text-lg font-bold"><span>Order total</span><span>{formatMoney(total, currency)}</span></div>
+                </div>
+                <div className="mt-8 flex justify-end">
+                  <button className="btn btn-fill" onClick={() => { setStep(1); track("checkout_start", { value: total }); trackCheckoutStart(total); }}>Your details <span className="btn-arrow" aria-hidden>→</span></button>
+                </div>
+              </>
+            )}
+
+            {/* Saved for Later Shelf — always visible and accessible even when cart is empty */}
+            {savedItems.length > 0 && (
+              <div className="mt-8 pt-6 border-t border-[var(--line)]">
+                <button
+                  type="button"
+                  onClick={() => setShowSavedShelf((prev) => !prev)}
+                  className="flex items-center justify-between w-full py-2.5 px-3 rounded-lg bg-[var(--panel)] border border-[var(--line)] text-left font-meta text-[11px] text-[var(--muted)] hover:text-[var(--ink)] hover:border-[var(--dept)] transition-all"
+                >
+                  <span className="flex items-center gap-2">
+                    <Bookmark className="w-3.5 h-3.5 text-[var(--dept)]" />
+                    <span className="font-bold uppercase tracking-wider text-[var(--ink)]">
+                      Saved for later ({savedItems.length})
+                    </span>
+                    {!hasAnyItems && (
+                      <span className="font-meta text-[9px] px-2 py-0.5 rounded-full bg-[var(--dept-soft)] text-[var(--dept)] font-semibold">
+                        Ready to restore
+                      </span>
+                    )}
+                  </span>
+                  {showSavedShelf || !hasAnyItems ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {(showSavedShelf || !hasAnyItems) && (
+                  <ul className="mt-3 space-y-2 animate-in fade-in duration-200">
+                    {savedItems.map((s) => {
+                      const name = s.type === "agency" ? s.item.name : s.item.service?.name || "Design Item";
+                      const price = s.type === "agency"
+                        ? (s.item.unitPrice + s.item.addons.reduce((a: number, b: any) => a + b.price, 0)) * (s.item.rush ? 1.25 : 1)
+                        : s.item.lineTotal;
+
+                      return (
+                        <li
+                          key={s.id}
+                          className="p-3.5 rounded-lg border border-[var(--line)] bg-[var(--panel)] flex items-center justify-between gap-4 text-xs"
+                        >
+                          <div>
+                            <span className="font-display font-bold uppercase">{name}</span>
+                            <span className="block font-meta text-[9px] text-[var(--muted)] mt-0.5">
+                              Saved on {s.date} · {formatMoney(price, currency)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleRestoreSaved(s)}
+                              className="btn btn-dept !py-1 !px-2.5 text-[10px] font-meta"
+                            >
+                              Move to Cart
+                            </button>
+                            <button
+                              onClick={() => handleRemoveSaved(s.id)}
+                              className="p-1 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400"
+                              title="Delete saved item"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* STEP 2 — client information (the full project brief comes after payment) */}
+        {step === 1 && (
+          <form onSubmit={(e) => { e.preventDefault(); if (validateDetails()) setStep(2); }} noValidate>
+            <div className="grid sm:grid-cols-2 gap-5">
+              <div>
+                <label className={labelCls} htmlFor="f-name">Name *</label>
+                <input id="f-name" className={inputCls} value={details.name} onChange={set("name")} aria-invalid={!!errors.name} aria-describedby={errors.name ? "e-name" : undefined} />
+                {errors.name && <p id="e-name" className="font-meta text-[10px] text-red-600 mt-1" role="alert">{errors.name}</p>}
+              </div>
+              <div><label className={labelCls} htmlFor="f-company">Company</label><input id="f-company" className={inputCls} value={details.company} onChange={set("company")} /></div>
+              <div>
+                <label className={labelCls} htmlFor="f-email">Email *</label>
+                <input id="f-email" type="email" className={inputCls} value={details.email} onChange={set("email")} aria-invalid={!!errors.email} aria-describedby={errors.email ? "e-email" : undefined} />
+                {errors.email && <p id="e-email" className="font-meta text-[10px] text-red-600 mt-1" role="alert">{errors.email}</p>}
+              </div>
+              <div><label className={labelCls} htmlFor="f-phone">Phone</label><input id="f-phone" type="tel" className={inputCls} value={details.phone} onChange={set("phone")} /></div>
+              <div className="sm:col-span-2">
+                <label className={labelCls} htmlFor="f-extra">Anything we should know? <span className="text-[var(--muted)]">(optional)</span></label>
+                <textarea id="f-extra" rows={2} className={inputCls} value={details.extra} onChange={set("extra")} placeholder="Quick notes only — your full project brief comes right after payment." />
+              </div>
+            </div>
+            {items.some((i) => isIntakePackage(i.serviceSlug)) && (
+              <p className="mt-5 border border-[var(--dept)] px-4 py-3 font-meta text-[10px]" style={{ background: "var(--dept-soft)" }}>
+                ✓ GOALS, PAGES, COLOURS &amp; STYLE come next — your website project brief opens right after payment, prefilled with these details. It doubles as your signed project agreement.
+              </p>
+            )}
+            {user && (
+              <label className="mt-5 flex items-center gap-3 cursor-pointer text-[13px]">
+                <input type="checkbox" className="w-4 h-4 accent-[var(--dept)]" checked={saveDetails} onChange={(e) => setSaveDetails(e.target.checked)} />
+                Save these details to my account — prefill checkout and project forms next time
+              </label>
+            )}
+            <div className="mt-8 flex justify-between">
+              <button type="button" className="btn btn-ghost" onClick={() => setStep(0)}>← Back</button>
+              <button type="submit" className="btn btn-fill">Files <span className="btn-arrow" aria-hidden>→</span></button>
+            </div>
+          </form>
+        )}
+
+        {/* STEP 3 — file uploads */}
+        {step === 2 && (
+          <div>
+            <p className="text-sm text-[var(--muted)] max-w-xl">Existing logos, brand assets, content, references — anything that helps us start sharp. Accepted: {ACCEPTED.join(" ")} · max {MAX_MB}MB each.</p>
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+              onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+              onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(false); }}
+              onDrop={(e) => {
+                e.preventDefault(); e.stopPropagation();
+                setDragActive(false);
+                onFiles(e.dataTransfer.files);
+              }}
+              className={`mt-6 w-full border border-dashed px-6 py-14 text-center transition-colors ${
+                dragActive
+                  ? "border-[var(--dept)] bg-[var(--dept-soft)] shadow-[inset_0_0_0_1px_var(--dept)]"
+                  : "border-[var(--line-strong)] hover:border-[var(--dept)] hover:bg-[var(--dept-soft)]"
+              }`}
+              aria-label="Drop files here or browse"
+            >
+              <span className="font-display text-lg font-bold uppercase block">
+                {dragActive ? "Release to add files" : "Drop files or browse"}
+              </span>
+              <span className="font-meta text-[10px] text-[var(--muted)]">Drag &amp; drop works here · Stored securely · linked to your project</span>
+            </button>
+            <input ref={fileRef} type="file" multiple accept={ACCEPTED.join(",")} className="sr-only" onChange={(e) => onFiles(e.target.files)} aria-label="Upload project files" />
+            {fileError && <p className="font-meta text-[10px] text-red-600 mt-3" role="alert">{fileError}</p>}
+            {files.length > 0 && (
+              <ul className="mt-6">
+                {files.map((f, i) => (
+                  <li key={i} className="file-row grid-cols-[1fr_auto_auto] !py-3">
+                    <span className="text-sm">{f.name}</span>
+                    <span className="font-meta text-[9px] text-[var(--muted)]">{(f.size / 1024 / 1024).toFixed(1)}MB</span>
+                    <button className="font-meta text-[10px] text-[var(--muted)] hover:text-[var(--dept)]" onClick={() => setFiles((xs) => xs.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-8 flex justify-between">
+              <button className="btn btn-ghost" onClick={() => setStep(1)}>← Back</button>
+              <button className="btn btn-fill" onClick={() => setStep(3)}>{mode === "ONLINE_PAYMENT" ? "Payment" : "Review"} <span className="btn-arrow" aria-hidden>→</span></button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4 — review & submit / payment (mode-aware) */}
+        {step === 3 && (
+          <div className="grid md:grid-cols-2 gap-10">
+            <div>
+              <span className="idx">/order-summary</span>
+              <div className="mt-4 border border-[var(--line)] p-6 flex flex-col gap-4" style={{ background: "var(--panel)" }}>
+                <div>
+                  <h3 className="font-display text-base font-bold uppercase">Order Summary</h3>
+                  <p className="font-meta text-[9px] text-[var(--muted)] mt-1">
+                    {mode === "ONLINE_PAYMENT"
+                      ? "100% full payment upfront · instant access & kickoff"
+                      : quoteRequired
+                        ? "Estimate — the studio confirms final pricing before anything is charged"
+                        : "No payment is collected today — the studio confirms your order first"}
+                  </p>
+                </div>
+                <ul className="rule-t pt-4 flex flex-col gap-2 text-sm">
+                  {items.map((i, iIdx) => {
+                    const rl = repricedLines[iIdx] ?? i;
+                    return (
+                    <li key={i.key} className="flex justify-between gap-3">
+                      <span className="text-[var(--muted)]">{i.name}{rl.rush ? " (rush)" : ""}</span>
+                      <span>{formatMoney((rl.unitPrice + rl.addons.reduce((s, a) => s + a.price, 0)) * (rl.rush ? 1.25 : 1), currency)}</span>
+                    </li>
+                    );
+                  })}
+                  {pkg.lines.map((l) => (
+                    <li key={l.key} className="flex justify-between gap-3">
+                      <span className="text-[var(--muted)]">{l.service.name}{l.qty > 1 ? ` × ${l.qty}` : ""}</span>
+                      <span>{formatMoney(l.lineTotal, currency)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-col gap-2 rule-t pt-4 text-sm">
+                  <div className="flex justify-between"><span className="text-[var(--muted)]">Subtotal</span><span>{formatMoney(subtotal, currency)}</span></div>
+                  {discount > 0 && <div className="flex justify-between dept-accent"><span>Discount</span><span>−{formatMoney(discount, currency)}</span></div>}
+                  <div className="flex justify-between font-display text-lg font-bold rule-t pt-2 mt-1">
+                    <span>{mode === "ONLINE_PAYMENT" ? "Total Due Now" : quoteRequired ? "Estimated Total" : "Order Total"}</span>
+                    <span className="dept-accent">{formatMoney(total, currency)}</span>
+                  </div>
+                  {quoteRequired && (
+                    <p className="font-meta text-[9.5px] text-amber-600 leading-relaxed">
+                      ⚠ Your cart includes custom-quoted work — this total is an estimate, not a guaranteed price. SocialKon10 confirms the final amount with you first.
+                    </p>
+                  )}
+                </div>
+                <div className="rule-t pt-3 flex flex-col gap-1.5 font-meta text-[9.5px] text-[var(--muted)]">
+                  {mode === "ONLINE_PAYMENT" ? (
+                    <>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Instant order confirmation & receipt</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Immediate access to digital files & editor</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Direct kickoff & project onboarding</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> No payment collected at submission</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Studio reviews & confirms within 1 business day</p>
+                      <p className="flex items-center gap-2"><span className="dept-accent">✓</span> Unique order reference for tracking</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div>
+              <span className="idx">/{mode === "ONLINE_PAYMENT" ? "provider" : "submit"}</span>
+              <div className="mt-4 border border-[var(--line-strong)] p-6" style={{ background: "var(--panel)" }}>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-[var(--muted)] text-sm">{mode === "ONLINE_PAYMENT" ? "Total Due Today" : quoteRequired ? "Estimated Total" : "Order Total"}</span>
+                  <span className="font-display text-3xl font-bold">{formatMoney(mode === "ONLINE_PAYMENT" ? dueToday : total, currency)}</span>
+                </div>
+                {repricedCount > 0 && (
+                  <p className="mt-3 font-meta text-[9.5px] text-[var(--muted)] border border-[var(--line)] px-3 py-2">
+                    Prices refreshed to the current studio rate sheet ({repricedCount} line{repricedCount === 1 ? "" : "s"} updated).
+                  </p>
+                )}
+                <div className="mt-6 flex flex-col gap-2">
+                  {(!details.name.trim() || !/.+@.+\..+/.test(details.email)) && (
+                    <button
+                      onClick={() => setStep(1)}
+                      className="border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 px-4 py-3 text-left text-[12px] font-medium"
+                    >
+                      ⚠ Add your name &amp; email first — we need them to deliver your order and receipt. <span className="underline font-bold">Fill in details →</span>
+                    </button>
+                  )}
+
+                  {allowOrderRequest && (
+                    <>
+                      <label className="flex items-start gap-3 cursor-pointer text-[12px] text-[var(--muted)] border border-[var(--line)] px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 accent-[var(--dept)] mt-0.5 shrink-0"
+                          checked={agreeTerms}
+                          onChange={(e) => setAgreeTerms(e.target.checked)}
+                        />
+                        <span>
+                          I agree to the <Link to="/terms" className="underline dept-accent" target="_blank">terms of service</Link> and{" "}
+                          <Link to="/privacy" className="underline dept-accent" target="_blank">privacy notice</Link>.
+                        </span>
+                      </label>
+                      <button
+                        disabled={paying || !agreeTerms}
+                        onClick={() => void submitRequest(false)}
+                        className="btn btn-dept justify-center disabled:opacity-60"
+                      >
+                        {paying ? "Submitting…" : "Submit Order Request"} <span className="btn-arrow" aria-hidden>→</span>
+                      </button>
+                      <p className="font-meta text-[8.5px] text-[var(--muted)] leading-relaxed">
+                        No payment is taken. The studio reviews your request and confirms pricing &amp; schedule by email.
+                      </p>
+                    </>
+                  )}
+
+                  {mode === "HYBRID" && allowOrderRequest && (
+                    <div className="flex items-center gap-3 my-1">
+                      <div className="flex-1 h-px bg-[var(--line)]" />
+                      <span className="font-meta text-[9px] text-[var(--muted)]">OR PAY ONLINE NOW</span>
+                      <div className="flex-1 h-px bg-[var(--line)]" />
+                    </div>
+                  )}
+
+                  {activeProviders(checkoutSettings).map((p) => (
+                    <button key={p.id} disabled={paying} onClick={() => pay(false)} className="btn btn-fill justify-center disabled:opacity-60">
+                      {paying ? "Processing…" : `Pay with ${p.name}`} <span className="btn-arrow" aria-hidden>→</span>
+                    </button>
+                  ))}
+                </div>
+                {payError && <p className="font-meta text-[10px] text-red-600 mt-3" role="alert">{payError}</p>}
+                {mode !== "ORDER_REQUEST" && (
+                  <p className="font-meta text-[8.5px] text-[var(--muted)] mt-5 leading-relaxed">
+                    Cards are processed securely by the payment provider — we never see or store card data. 256-bit SSL encryption.
+                  </p>
+                )}
+              </div>
+              <div className="mt-6"><button className="btn btn-ghost" onClick={() => setStep(2)}>← Back</button></div>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 5 — confirmation */}
+        {step === 4 && (
+          <div className="border border-[var(--line-strong)] p-8 md:p-14 text-center" style={{ background: "var(--panel)" }}>
+            <span className="idx">/order-{orderReference ?? orderId}</span>
+            <h2 className="display-section mt-4">
+              {submittedMethod === "order_request" ? "Your Order Request Has Been Received!" : "Order confirmed."}
+            </h2>
+            <p className="mt-4 text-[var(--muted)] max-w-md mx-auto">
+              {submittedMethod === "order_request"
+                ? "No payment has been collected. The studio reviews your request and confirms pricing & next steps by email — usually within 1 business day."
+                : "Payment received in full. Your project is in the queue — next step: complete your project questionnaire."}
+            </p>
+
+            {submitPersistWarning && (
+              <p className="mt-4 max-w-md mx-auto border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 px-4 py-3 text-[12px]" role="alert">
+                {submitPersistWarning}
+              </p>
+            )}
+
+            {/* unique order reference + copy */}
+            {orderReference && (
+              <div className="mt-8 max-w-sm mx-auto border border-[var(--line)] p-5" style={{ background: "var(--bg)" }}>
+                <p className="font-meta text-[9px] text-[var(--muted)] uppercase tracking-wider">Your order reference</p>
+                <p className="font-display text-2xl font-bold mt-1 tracking-wide">{orderReference}</p>
+                <div className="mt-3 flex justify-center gap-2">
+                  <button
+                    className="btn btn-ghost !py-2 !px-3 text-[11px] flex items-center gap-1.5"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(orderReference).then(() => {
+                        setCopiedRef(true);
+                        setTimeout(() => setCopiedRef(false), 2000);
+                      });
+                    }}
+                  >
+                    {copiedRef ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedRef ? "Copied" : "Copy reference"}
+                  </button>
+                  <button className="btn btn-ghost !py-2 !px-3 text-[11px] flex items-center gap-1.5" onClick={downloadOrderSummary}>
+                    <Download className="w-3.5 h-3.5" /> Download summary
+                  </button>
+                  <button className="btn btn-ghost !py-2 !px-3 text-[11px] flex items-center gap-1.5" onClick={() => window.print()}>
+                    <Printer className="w-3.5 h-3.5" /> Print
+                  </button>
+                </div>
+                <p className="font-meta text-[8.5px] text-[var(--muted)] mt-3">
+                  Quote this reference when contacting us — it identifies your order but does not share your private details.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-8 max-w-sm mx-auto text-left">
+              {(submittedMethod === "order_request"
+                ? [
+                    "Confirmation email with your reference & summary",
+                    "Studio reviews your request (≤ 1 business day)",
+                    submittedPricing === "QUOTE_REQUIRED" ? "Final quote sent for your approval" : "Order confirmation sent by email",
+                    "Payment arranged only after you approve",
+                  ]
+                : ["Confirmation email with your receipt", "Project questionnaire link", "Onboarding instructions + file upload access", "Kickoff scheduling within 1 business day"]
+              ).map((s, i) => (
+                <div key={s} className="file-row grid-cols-[36px_1fr] !py-3 !cursor-default">
+                  <span className="idx">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="text-sm">{s}</span>
+                </div>
+              ))}
+            </div>
+            {submittedMethod === "order_request" && (
+              <p className="font-meta text-[10px] text-[var(--muted)] mt-4">
+                Status: <strong className="dept-accent">Order received · {submittedPricing === "QUOTE_REQUIRED" ? "estimated total" : "unpaid"}</strong> — nothing has been charged.
+              </p>
+            )}
+            {/* website packages: the project brief is the next step (also the agreement) */}
+            {intakePkg && (
+              <div className="mt-8 max-w-sm mx-auto border border-[var(--dept)] p-5 text-left" style={{ background: "var(--dept-soft)" }}>
+                <p className="font-meta text-[9px] dept-accent">NEXT STEP — WEBSITE PROJECT BRIEF</p>
+                <p className="text-sm mt-1">
+                  Tell the studio about your {intakePkg.name.toLowerCase()} — goals, pages, colours and files.
+                  It doubles as your signed project agreement.
+                </p>
+                <button className="btn btn-dept w-full justify-center mt-4" onClick={() => setIntakeOpen(true)}>
+                  Complete your brief <span className="btn-arrow" aria-hidden>→</span>
+                </button>
+                <p className="font-meta text-[8.5px] text-[var(--muted)] mt-2">Autosaves · about 5 minutes · also waiting in your client portal</p>
+              </div>
+            )}
+
+            <p className="font-meta text-[10px] text-[var(--muted)] mt-8">Questions? {CONTACT.phone} · {CONTACT.email}</p>
+
+            {/* Enhancement 4: Magic link notice */}
+            {magicSent && (
+              <div className="mt-6 max-w-sm mx-auto border border-[var(--dept)] p-4 text-left" style={{ background: "var(--dept-soft)" }}>
+                <p className="font-meta text-[9px] dept-accent mb-1">✉ MAGIC ACCESS LINK SENT</p>
+                <p className="text-sm">We emailed a 1-click sign-in link to <strong>{details.email}</strong> — click it to access your designs & order history instantly, no password needed.</p>
+              </div>
+            )}
+
+            {/* client account creation / portal access */}
+            {firebaseReady && !user && !acctDone && (
+              <div className="mt-8 max-w-sm mx-auto border border-[var(--line)] p-6 text-left">
+                <span className="idx">/client-portal</span>
+                <p className="font-display text-base font-bold uppercase mt-2">Track this project</p>
+                <p className="text-[13px] text-[var(--muted)] mt-1">Create your account to track orders, access files, and open templates in the editor.</p>
+
+                {/* Enhancement 2: Google 1-tap sign-in */}
+                <button
+                  disabled={googleBusy}
+                  onClick={signInWithGoogle}
+                  className="mt-4 w-full flex items-center justify-center gap-3 border border-[var(--line)] bg-white text-zinc-800 px-4 py-3 text-sm font-medium hover:border-[var(--dept)] transition-colors disabled:opacity-60"
+                >
+                  <GoogleIcon /> {googleBusy ? "Signing in…" : "Continue with Google"}
+                </button>
+
+                <div className="flex items-center gap-3 my-4">
+                  <div className="flex-1 h-px bg-[var(--line)]" />
+                  <span className="font-meta text-[9px] text-[var(--muted)]">OR SET A PASSWORD</span>
+                  <div className="flex-1 h-px bg-[var(--line)]" />
+                </div>
+
+                <label className="font-meta text-[10px] text-[var(--muted)] block mb-1.5" htmlFor="acct-email">Email</label>
+                <input id="acct-email" className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm" value={details.email} readOnly />
+                <label className="font-meta text-[10px] text-[var(--muted)] block mt-3 mb-1.5" htmlFor="acct-pass">Choose a password</label>
+                <div className="relative flex items-center">
+                  <input
+                    id="acct-pass"
+                    type={showAcctPass ? "text" : "password"}
+                    className="w-full bg-transparent border border-[var(--line)] px-4 py-3 text-sm outline-none focus:border-[var(--dept)] pr-12"
+                    value={acctPass}
+                    onChange={(e) => setAcctPass(e.target.value)}
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <PasswordEyeToggle
+                      show={showAcctPass}
+                      onToggle={() => setShowAcctPass((v) => !v)}
+                    />
+                  </div>
+                </div>
+                {acctError && <p className="font-meta text-[10px] text-red-600 mt-2" role="alert">{acctError}</p>}
+                <button className="btn btn-dept w-full justify-center mt-4" onClick={createAccount}>Create account <span className="btn-arrow" aria-hidden>→</span></button>
+              </div>
+            )}
+            {firebaseReady && (user || acctDone) && (
+              <div className="mt-8">
+                <Link to="/client" className="btn btn-dept">Open your client portal <span className="btn-arrow" aria-hidden>→</span></Link>
+              </div>
+            )}
+
+            <div className="mt-8 flex justify-center gap-4">
+              <Link to="/work" className="btn btn-ghost">Browse the archive</Link>
+              <Link to="/" className="btn btn-fill">Back home</Link>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* website intake brief — pops automatically after a website purchase */}
+      {intakeOpen && intakePkg && (
+        <IntakeWizard
+          user={user}
+          pkg={intakePkg}
+          orderId={intakeOrderId}
+          prefill={{ name: details.name, email: details.email, business: details.company }}
+          order={intakeOrderCtx}
+          profile={savedProfile}
+          priceFor={priceFor}
+          onClose={() => setIntakeOpen(false)}
+        />
+      )}
+
+      {duplicateModal.recentOrder && (
+        <DuplicateOrderModal
+          isOpen={duplicateModal.isOpen}
+          onClose={() => setDuplicateModal({ isOpen: false, recentOrder: null, minutesAgo: 0 })}
+          recentOrder={duplicateModal.recentOrder}
+          minutesAgo={duplicateModal.minutesAgo}
+          onConfirmDuplicate={() => void submit(pendingMethod.current, true)}
+        />
+      )}
+    </section>
+  );
+}
