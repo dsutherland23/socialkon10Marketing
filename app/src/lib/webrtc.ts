@@ -367,23 +367,128 @@ export class WebRTCMeshSession {
   }
 }
 
-/** Request screen share stream (window, specific app software, tab, or entire display).
- *  systemAudio and selfBrowserSurface are Chrome-only hints — guarded with
- *  feature detection so Safari/Firefox don't receive unsupported constraint keys. */
-export async function getDisplayMediaStream(options?: {
+export type DisplaySurfaceType = "window" | "browser" | "monitor";
+export type ScreenCaptureOptimization = "detail" | "motion";
+
+export interface DisplayMediaOptions {
   preferWindow?: boolean;
+  surface?: DisplaySurfaceType;
   withAudio?: boolean;
-}): Promise<MediaStream> {
+  optimizeFor?: ScreenCaptureOptimization;
+}
+
+/** Check whether native screen/application capture (getDisplayMedia) is supported on this device/browser */
+export function isDisplayMediaSupported(): boolean {
+  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia);
+}
+
+/** Apply WebRTC MediaStreamTrack contentHint ("detail" for crisp app UI/text, "motion" for 60fps video) */
+export function applyScreenTrackOptimization(
+  stream: MediaStream | null | undefined,
+  optimizeFor: ScreenCaptureOptimization
+): void {
+  if (!stream) return;
+  const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack) return;
+  try {
+    if ("contentHint" in videoTrack) {
+      videoTrack.contentHint = optimizeFor;
+    }
+  } catch {
+    // Ignore if read-only in older engines
+  }
+}
+
+/** Inspect an active screen-share MediaStream to identify the shared surface (App Window, Browser Tab, or Full Monitor) */
+export function detectSharedSurface(stream?: MediaStream | null): {
+  surface: DisplaySurfaceType | "unknown";
+  label: string;
+  shortLabel: string;
+  icon: string;
+  resolution?: string;
+  hasSystemAudio: boolean;
+} {
+  if (!stream) {
+    return {
+      surface: "unknown",
+      label: "Live Screen",
+      shortLabel: "Screen",
+      icon: "🖥️",
+      hasSystemAudio: false,
+    };
+  }
+  const videoTrack = stream.getVideoTracks()[0];
+  const settings = (videoTrack?.getSettings?.() ?? {}) as Record<string, unknown>;
+  const rawSurface = String(settings.displaySurface || "");
+  const width = typeof settings.width === "number" ? settings.width : undefined;
+  const height = typeof settings.height === "number" ? settings.height : undefined;
+  const resolution = width && height ? `${width}×${height}` : undefined;
+  const hasSystemAudio = stream.getAudioTracks().length > 0;
+
+  if (rawSurface === "window") {
+    return {
+      surface: "window",
+      label: "Application Window",
+      shortLabel: "App Window",
+      icon: "🪟",
+      resolution,
+      hasSystemAudio,
+    };
+  }
+  if (rawSurface === "browser") {
+    return {
+      surface: "browser",
+      label: "Browser Tab",
+      shortLabel: "Browser Tab",
+      icon: "🌐",
+      resolution,
+      hasSystemAudio,
+    };
+  }
+  if (rawSurface === "monitor") {
+    return {
+      surface: "monitor",
+      label: "Entire Screen",
+      shortLabel: "Full Screen",
+      icon: "🖥️",
+      resolution,
+      hasSystemAudio,
+    };
+  }
+  return {
+    surface: "unknown",
+    label: "Live Broadcast",
+    shortLabel: "Screen",
+    icon: "🖥️",
+    resolution,
+    hasSystemAudio,
+  };
+}
+
+/** Request screen share stream (application window, browser tab, or entire display).
+ *  Implements 2026 W3C Screen Capture best practices:
+ *  - Explicit `displaySurface` ("window" | "browser" | "monitor")
+ *  - `CaptureController` focus management
+ *  - `surfaceSwitching: "include"` & `selfBrowserSurface` Hall-of-Mirrors protection
+ *  - `track.contentHint` ("detail" for crisp creative software vs "motion" for video)
+ *  - Progressive fallback for Safari/Firefox compatibility */
+export async function getDisplayMediaStream(options?: DisplayMediaOptions): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error("Screen sharing is not supported in this browser.");
   }
 
-  // Build constraints progressively — Chrome-only hints are only added when supported
+  const targetSurface: DisplaySurfaceType | undefined =
+    options?.surface ?? (options?.preferWindow ? "window" : undefined);
+  const optimizeFor: ScreenCaptureOptimization = options?.optimizeFor ?? "detail";
+
   const videoConstraints: Record<string, unknown> = {
     cursor: "always",
+    width: { ideal: 1920, max: optimizeFor === "detail" ? 2560 : 1920 },
+    height: { ideal: 1080, max: optimizeFor === "detail" ? 1440 : 1080 },
+    frameRate: optimizeFor === "motion" ? { ideal: 60, max: 60 } : { ideal: 30, max: 60 },
   };
-  if (options?.preferWindow) {
-    videoConstraints.displaySurface = "window";
+  if (targetSurface) {
+    videoConstraints.displaySurface = targetSurface;
   }
 
   const constraints: Record<string, unknown> = {
@@ -391,17 +496,66 @@ export async function getDisplayMediaStream(options?: {
     audio: options?.withAudio ?? true,
   };
 
-  // selfBrowserSurface & systemAudio are Chrome-specific; guard with duck-typing
-  // to avoid breaking Safari / Firefox which reject unknown constraint keys.
-  const testConstraints = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
-  if ("selfBrowserSurface" in testConstraints || /Chrome/.test(navigator.userAgent)) {
-    constraints.selfBrowserSurface = "include";
-  }
-  if ("systemAudio" in testConstraints || /Chrome/.test(navigator.userAgent)) {
-    constraints.systemAudio = "include";
+  // Optional 2026 W3C CaptureController for window/tab focus behavior
+  let controller: any = null;
+  const CaptureControllerCtor = (globalThis as any).CaptureController;
+  if (typeof CaptureControllerCtor === "function") {
+    try {
+      controller = new CaptureControllerCtor();
+      constraints.controller = controller;
+    } catch {
+      controller = null;
+    }
   }
 
-  return navigator.mediaDevices.getDisplayMedia(constraints as any);
+  // Chromium 2026 Screen Capture hints (guarded for cross-browser compatibility)
+  const testConstraints = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
+  const isChromium = /Chrome|Chromium|Edg/.test(navigator.userAgent);
+  if ("selfBrowserSurface" in testConstraints || isChromium) {
+    // Exclude the meeting tab itself when picking an app window or full screen to prevent Hall-of-Mirrors
+    constraints.selfBrowserSurface = targetSurface === "browser" ? "include" : "exclude";
+  }
+  if ("surfaceSwitching" in testConstraints || isChromium) {
+    constraints.surfaceSwitching = "include";
+  }
+  if ("monitorTypeSurfaces" in testConstraints || isChromium) {
+    constraints.monitorTypeSurfaces = "include";
+  }
+  if ("systemAudio" in testConstraints || isChromium) {
+    constraints.systemAudio = options?.withAudio === false ? "exclude" : "include";
+  }
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia(constraints as any);
+  } catch (err: any) {
+    // Do not retry if the user explicitly cancelled the picker dialog
+    if (err?.name === "NotAllowedError" || err?.name === "AbortError") {
+      throw err;
+    }
+    // Progressive fallback for browsers that reject advanced constraint keys
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: targetSurface ? ({ displaySurface: targetSurface } as any) : true,
+      audio: options?.withAudio ?? false,
+    });
+  }
+
+  // Configure focus behavior after capture starts if CaptureController is active
+  if (controller && typeof controller.setFocusBehavior === "function") {
+    try {
+      const capturedSurface = detectSharedSurface(stream).surface;
+      if (capturedSurface === "window" || capturedSurface === "browser") {
+        controller.setFocusBehavior("focus-captured-surface");
+      } else {
+        controller.setFocusBehavior("no-focus-change");
+      }
+    } catch {
+      // Focus behavior already finalized or unsupported for this surface
+    }
+  }
+
+  applyScreenTrackOptimization(stream, optimizeFor);
+  return stream;
 }
 
 /** Stop all tracks on a media stream */
