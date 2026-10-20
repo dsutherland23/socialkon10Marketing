@@ -4,6 +4,11 @@ import {
   mergeParticipantUpdate,
   normalizeRoomCode,
   distributeParticipantsEvenly,
+  createDefaultCoDesignLayers,
+  applyBrandPaletteToCoDesign,
+  CO_DESIGN_BRAND_PALETTES,
+  CO_DESIGN_ARTBOARD_PRESETS,
+  type CoDesignSessionState,
   type MeetingParticipant,
   type MeetingBreakoutRoom,
 } from "../meetings";
@@ -195,5 +200,97 @@ describe("Breakout Rooms engine", () => {
     });
     expect(backOnMain[0].currentBreakoutRoomId).toBeNull();
     expect(backOnMain[0].helpRequestedRoomId).toBeNull();
+  });
+});
+
+describe("In-Meeting Co-Design Studio Engine", () => {
+  it("creates balanced default vector and typography layers with custom titles", () => {
+    const layers = createDefaultCoDesignLayers({
+      headline: "Q4 Growth Campaign Launch",
+      subheadline: "Accelerating brand metrics with AI-native creative",
+      categoryBadge: "EXCLUSIVE 2026",
+      ctaText: "Claim Beta Access →",
+    });
+
+    expect(layers).toHaveLength(4);
+
+    const badge = layers.find((l) => l.id === "layer_badge_cat");
+    expect(badge).toBeDefined();
+    expect(badge?.text).toBe("EXCLUSIVE 2026");
+    expect(badge?.type).toBe("badge");
+    expect(badge?.borderRadius).toBe(999);
+
+    const headline = layers.find((l) => l.id === "layer_headline_main");
+    expect(headline).toBeDefined();
+    expect(headline?.text).toBe("Q4 Growth Campaign Launch");
+    expect(headline?.fontFamily).toBe("Syne");
+    expect(headline?.fontSize).toBeGreaterThanOrEqual(28);
+
+    const cta = layers.find((l) => l.id === "layer_cta_primary");
+    expect(cta).toBeDefined();
+    expect(cta?.text).toBe("Claim Beta Access →");
+  });
+
+  it("applies Brand Harmony Palette themes dynamically across artboard and swatches", () => {
+    const defaultLayers = createDefaultCoDesignLayers();
+    const initialSession: CoDesignSessionState = {
+      active: true,
+      title: "Brand Campaign",
+      sourceType: "preset",
+      hostId: "h1",
+      hostName: "Creative Director",
+      allowParticipantEdits: true,
+      artboardPreset: "square_1080",
+      backgroundColor: "#090D16",
+      backgroundGradient: "linear-gradient(135deg, #090D16 0%, #151C33 55%, #2A1245 100%)",
+      backgroundDim: 30,
+      brandPalette: CO_DESIGN_BRAND_PALETTES[0].swatches,
+      showSafeZone: false,
+      showGrid: false,
+      layers: defaultLayers,
+      versions: [],
+      updatedAt: new Date().toISOString(),
+      updatedBy: "Creative Director",
+    };
+
+    const rethemed = applyBrandPaletteToCoDesign(
+      initialSession,
+      "obsidian_gold",
+      "Designer Alex"
+    );
+
+    const goldPalette = CO_DESIGN_BRAND_PALETTES.find((p) => p.id === "obsidian_gold");
+    expect(rethemed.backgroundColor).toBe(goldPalette?.backgroundColor);
+    expect(rethemed.brandPalette).toEqual(goldPalette?.swatches);
+    expect(rethemed.updatedBy).toBe("Designer Alex");
+
+    const rethemedCta = rethemed.layers.find((l) => l.id === "layer_cta_primary");
+    expect(rethemedCta?.fillColor).toBe(goldPalette?.swatches[0]);
+  });
+
+  it("supports all 4 industry artboard canvas ratios (1:1, 9:16, 16:9, 3:4)", () => {
+    expect(CO_DESIGN_ARTBOARD_PRESETS.square_1080.aspect).toBe("1 / 1");
+    expect(CO_DESIGN_ARTBOARD_PRESETS.square_1080.widthPx).toBe(1080);
+    expect(CO_DESIGN_ARTBOARD_PRESETS.square_1080.heightPx).toBe(1080);
+
+    expect(CO_DESIGN_ARTBOARD_PRESETS.story_9_16.aspect).toBe("9 / 16");
+    expect(CO_DESIGN_ARTBOARD_PRESETS.story_9_16.widthPx).toBe(1080);
+    expect(CO_DESIGN_ARTBOARD_PRESETS.story_9_16.heightPx).toBe(1920);
+
+    expect(CO_DESIGN_ARTBOARD_PRESETS.landscape_16_9.aspect).toBe("16 / 9");
+    expect(CO_DESIGN_ARTBOARD_PRESETS.landscape_16_9.widthPx).toBe(1920);
+    expect(CO_DESIGN_ARTBOARD_PRESETS.landscape_16_9.heightPx).toBe(1080);
+
+    expect(CO_DESIGN_ARTBOARD_PRESETS.poster_3_4.aspect).toBe("3 / 4");
+    expect(CO_DESIGN_ARTBOARD_PRESETS.poster_3_4.widthPx).toBe(1200);
+    expect(CO_DESIGN_ARTBOARD_PRESETS.poster_3_4.heightPx).toBe(1600);
+  });
+
+  it("maintains 5 distinct curated brand palettes with valid swatches", () => {
+    expect(CO_DESIGN_BRAND_PALETTES.length).toBeGreaterThanOrEqual(5);
+    for (const pal of CO_DESIGN_BRAND_PALETTES) {
+      expect(pal.swatches.length).toBeGreaterThanOrEqual(5);
+      expect(pal.backgroundColor).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    }
   });
 });

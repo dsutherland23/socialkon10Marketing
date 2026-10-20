@@ -85,6 +85,20 @@ import {
   type ProofingMockupItem,
   type CanvasStroke,
   type CanvasPin,
+  type CoDesignLayer,
+  type CoDesignCollaboratorCursor,
+  type CoDesignArtboardPresetId,
+  CO_DESIGN_BRAND_PALETTES,
+  CO_DESIGN_ARTBOARD_PRESETS,
+  createDefaultCoDesignLayers,
+  applyBrandPaletteToCoDesign,
+  startMeetingCoDesignSession,
+  updateMeetingCoDesignSession,
+  stopMeetingCoDesignSession,
+  saveCoDesignVersionSnapshot,
+  restoreCoDesignVersionSnapshot,
+  updateCoDesignCursor,
+  subscribeToCoDesignCursors,
 } from "../lib/meetings";
 import {
   getMediaDevices,
@@ -340,6 +354,25 @@ export default function MeetingRoom() {
   const [isStudioBroadcasting, setIsStudioBroadcasting] = useState(false);
   const [clientDesigns, setClientDesigns] = useState<CustomerDesign[]>([]);
   const [loadingClientDesigns, setLoadingClientDesigns] = useState(false);
+
+  // In-Meeting Synchronized Co-Design Studio Stage State
+  const [selectedCoDesignLayerId, setSelectedCoDesignLayerId] = useState<string | null>(null);
+  const [coDesignCursors, setCoDesignCursors] = useState<Map<string, CoDesignCollaboratorCursor>>(new Map());
+  const [showCoDesignSnapshotsModal, setShowCoDesignSnapshotsModal] = useState(false);
+  const [newSnapshotLabel, setNewSnapshotLabel] = useState("");
+  const [showCoDesignThemeMenu, setShowCoDesignThemeMenu] = useState(false);
+  const [showCoDesignPresetsMenu, setShowCoDesignPresetsMenu] = useState(false);
+  const [showLayerInspector, setShowLayerInspector] = useState(false);
+  const coDesignCanvasRef = useRef<HTMLDivElement>(null);
+  const coDesignDragRef = useRef<{
+    layerId: string;
+    startClientX: number;
+    startClientY: number;
+    origX: number;
+    origY: number;
+    containerWidth: number;
+    containerHeight: number;
+  } | null>(null);
 
   useEffect(() => {
     if (showStudioCoDesignModal) {
@@ -1083,7 +1116,7 @@ export default function MeetingRoom() {
                   `${r.id}:${r.name}:${r.status}:${(r.assignedParticipants || []).join(",")}:${(r.activeParticipants || []).join(",")}:${r.endsAt || ""}`
               )
               .join("|");
-            return `${pSig}#${bSig}#${m.breakoutBroadcast?.id || ""}#${Boolean(m.breakoutAllowSelfSelect)}`;
+            return `${pSig}#${bSig}#${m.breakoutBroadcast?.id || ""}#${Boolean(m.breakoutAllowSelfSelect)}#${m.coDesignSession?.updatedAt || ""}:${m.coDesignSession?.active ? 1 : 0}`;
           };
           return sig(prev) === sig(fresh) ? prev : fresh;
         });
@@ -1281,6 +1314,60 @@ export default function MeetingRoom() {
     });
     return () => unsubLaser();
   }, [meeting?.id, phase]);
+
+  // 12b. Real-Time In-Meeting Co-Design Session Sync & Announcements
+  const prevCoDesignActive = useRef(false);
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const session = meeting.coDesignSession;
+    if (session?.active && !prevCoDesignActive.current && !isHost) {
+      playDoorbellChime();
+      triggerHapticFeedback([120, 60, 180]);
+      toast.info(`🎨 ${session.hostName || "Host"} launched Live Studio Co-Design!`, {
+        duration: 7000,
+        action: {
+          label: "View Stage",
+          onClick: () => {
+            setActiveDrawer("none");
+            setIsProofingMaximized(false);
+          },
+        },
+      });
+    }
+    prevCoDesignActive.current = Boolean(session?.active);
+  }, [meeting?.coDesignSession?.active, phase, isHost]);
+
+  // 12c. Real-Time Collaborator Cursors on Co-Design Artboard
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting" || !meeting.coDesignSession?.active) return;
+    const unsubCursors = subscribeToCoDesignCursors(meeting.id, myParticipantId, (c) => {
+      setCoDesignCursors((prev) => {
+        const next = new Map(prev);
+        next.set(c.participantId, c);
+        return next;
+      });
+    });
+    const timer = window.setInterval(() => {
+      const cutoff = Date.now() - 10000;
+      setCoDesignCursors((prev) => {
+        let changed = false;
+        const next = new Map();
+        for (const [k, v] of prev.entries()) {
+          if ((v.updatedAt || 0) >= cutoff) {
+            next.set(k, v);
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 8000);
+
+    return () => {
+      unsubCursors();
+      window.clearInterval(timer);
+    };
+  }, [meeting?.id, meeting?.coDesignSession?.active, myParticipantId, phase]);
 
   // 13. Auto-scroll chat box when new messages arrive
   useEffect(() => {
@@ -1690,6 +1777,422 @@ export default function MeetingRoom() {
     }
   };
 
+  // 2026 In-Meeting Synchronized Co-Design Studio Handlers
+  const handleLaunchInMeetingCoDesign = async (options: {
+    title: string;
+    sourceType: "deliverable" | "client_design" | "preset";
+    sourceId?: string;
+    backgroundImage?: string;
+    headline?: string;
+    subheadline?: string;
+    categoryBadge?: string;
+    preset?: CoDesignArtboardPresetId;
+    paletteId?: string;
+  }) => {
+    if (!meeting) return;
+    setShowStudioCoDesignModal(false);
+    setActiveDrawer("none");
+    setIsProofingMaximized(false);
+    setSelectedCoDesignLayerId(null);
+
+    const initialLayers = createDefaultCoDesignLayers({
+      headline: options.headline || options.title,
+      subheadline: options.subheadline,
+      categoryBadge: options.categoryBadge,
+    });
+
+    const newSession = await startMeetingCoDesignSession(meeting.id, {
+      title: options.title,
+      sourceType: options.sourceType,
+      sourceId: options.sourceId,
+      hostId: myParticipantId,
+      hostName: displayName,
+      allowParticipantEdits: true,
+      artboardPreset: options.preset || "square_1080",
+      backgroundImage: options.backgroundImage,
+      initialLayers,
+      brandPalettePresetId: options.paletteId || "neon_cyber",
+    });
+    setMeeting((prev) => (prev ? { ...prev, coDesignSession: newSession } : prev));
+    toast.success(`🎨 Launched Live Co-Design: "${options.title}"`);
+  };
+
+  const handleUpdateCoDesignLayer = async (
+    layerId: string,
+    patch: Partial<CoDesignLayer>
+  ) => {
+    if (!meeting?.coDesignSession) return;
+    const session = meeting.coDesignSession;
+    const canEdit = isHost || session.allowParticipantEdits;
+    if (!canEdit) {
+      toast.error("Host has locked co-editing for participants.");
+      return;
+    }
+    const nextLayers = session.layers.map((l) =>
+      l.id === layerId ? { ...l, ...patch, updatedBy: displayName } : l
+    );
+    await updateMeetingCoDesignSession(
+      meeting.id,
+      { layers: nextLayers },
+      displayName
+    );
+    setMeeting((prev) =>
+      prev && prev.coDesignSession
+        ? {
+            ...prev,
+            coDesignSession: {
+              ...prev.coDesignSession,
+              layers: nextLayers,
+            },
+          }
+        : prev
+    );
+  };
+
+  const handleAddCoDesignLayer = async (
+    type: "text" | "badge" | "shape",
+    shapeKind?: "rect" | "circle" | "pill"
+  ) => {
+    if (!meeting?.coDesignSession) return;
+    const session = meeting.coDesignSession;
+    const canEdit = isHost || session.allowParticipantEdits;
+    if (!canEdit) return;
+
+    const palette = session.brandPalette || CO_DESIGN_BRAND_PALETTES[0].swatches;
+    const [primary, , textClr, badgeBg, badgeTxt] = palette;
+
+    const layerCount = session.layers.length + 1;
+    const newId = `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    let newLayer: CoDesignLayer;
+
+    if (type === "badge") {
+      newLayer = {
+        id: newId,
+        type: "badge",
+        name: `CTA Badge #${layerCount}`,
+        text: "ORDER NOW →",
+        x: 50,
+        y: 50 + (layerCount % 3) * 6,
+        fontSize: 14,
+        fontFamily: "Space Grotesk",
+        fontWeight: "extrabold",
+        textAlign: "center",
+        color: badgeTxt,
+        fillColor: badgeBg,
+        opacity: 1,
+        borderRadius: 12,
+        locked: false,
+      };
+    } else if (type === "shape") {
+      newLayer = {
+        id: newId,
+        type: "shape",
+        name: `${shapeKind || "Rect"} Frame #${layerCount}`,
+        shapeKind: shapeKind || "rect",
+        x: 50,
+        y: 50,
+        width: 60,
+        height: 40,
+        fontSize: 14,
+        fontFamily: "Inter",
+        fontWeight: "normal",
+        color: primary,
+        fillColor: `${primary}20`,
+        opacity: 0.8,
+        borderRadius: shapeKind === "circle" ? 999 : 16,
+        locked: false,
+      };
+    } else {
+      newLayer = {
+        id: newId,
+        type: "text",
+        name: `Text Layer #${layerCount}`,
+        text: "Add custom headline or copy here",
+        x: 50,
+        y: 50 + (layerCount % 3) * 5,
+        width: 75,
+        fontSize: 22,
+        fontFamily: "Syne",
+        fontWeight: "bold",
+        textAlign: "center",
+        color: textClr || "#FFFFFF",
+        opacity: 1,
+        locked: false,
+      };
+    }
+
+    const nextLayers = [...session.layers, newLayer];
+    setSelectedCoDesignLayerId(newId);
+    setShowLayerInspector(true);
+    await updateMeetingCoDesignSession(
+      meeting.id,
+      { layers: nextLayers },
+      displayName
+    );
+    setMeeting((prev) =>
+      prev && prev.coDesignSession
+        ? {
+            ...prev,
+            coDesignSession: {
+              ...prev.coDesignSession,
+              layers: nextLayers,
+            },
+          }
+        : prev
+    );
+    toast.success(`+ Added ${newLayer.name}`);
+  };
+
+  const handleDeleteCoDesignLayer = async (layerId: string) => {
+    if (!meeting?.coDesignSession) return;
+    const session = meeting.coDesignSession;
+    const canEdit = isHost || session.allowParticipantEdits;
+    if (!canEdit) return;
+
+    const nextLayers = session.layers.filter((l) => l.id !== layerId);
+    if (selectedCoDesignLayerId === layerId) {
+      setSelectedCoDesignLayerId(null);
+      setShowLayerInspector(false);
+    }
+    await updateMeetingCoDesignSession(
+      meeting.id,
+      { layers: nextLayers },
+      displayName
+    );
+    setMeeting((prev) =>
+      prev && prev.coDesignSession
+        ? {
+            ...prev,
+            coDesignSession: {
+              ...prev.coDesignSession,
+              layers: nextLayers,
+            },
+          }
+        : prev
+    );
+    toast.info("Layer removed");
+  };
+
+  const handleDuplicateCoDesignLayer = async (layerId: string) => {
+    if (!meeting?.coDesignSession) return;
+    const session = meeting.coDesignSession;
+    const target = session.layers.find((l) => l.id === layerId);
+    if (!target) return;
+
+    const duplicated: CoDesignLayer = {
+      ...target,
+      id: `layer_${Date.now()}_copy`,
+      name: `${target.name} (Copy)`,
+      x: Math.min(90, target.x + 4),
+      y: Math.min(90, target.y + 4),
+    };
+    const nextLayers = [...session.layers, duplicated];
+    setSelectedCoDesignLayerId(duplicated.id);
+    await updateMeetingCoDesignSession(
+      meeting.id,
+      { layers: nextLayers },
+      displayName
+    );
+    setMeeting((prev) =>
+      prev && prev.coDesignSession
+        ? {
+            ...prev,
+            coDesignSession: {
+              ...prev.coDesignSession,
+              layers: nextLayers,
+            },
+          }
+        : prev
+    );
+    toast.success("Layer duplicated");
+  };
+
+  const handleReorderCoDesignLayer = async (
+    layerId: string,
+    direction: "front" | "back"
+  ) => {
+    if (!meeting?.coDesignSession) return;
+    const session = meeting.coDesignSession;
+    const idx = session.layers.findIndex((l) => l.id === layerId);
+    if (idx === -1) return;
+
+    const target = session.layers[idx];
+    const without = session.layers.filter((l) => l.id !== layerId);
+    const nextLayers =
+      direction === "front" ? [...without, target] : [target, ...without];
+
+    await updateMeetingCoDesignSession(
+      meeting.id,
+      { layers: nextLayers },
+      displayName
+    );
+    setMeeting((prev) =>
+      prev && prev.coDesignSession
+        ? {
+            ...prev,
+            coDesignSession: {
+              ...prev.coDesignSession,
+              layers: nextLayers,
+            },
+          }
+        : prev
+    );
+  };
+
+  /** Render the Co-Design artboard layers to an off-screen canvas and capture PNG */
+  const captureCoDesignCanvasSnapshot = async (): Promise<string | null> => {
+    if (!meeting?.coDesignSession) return null;
+    const session = meeting.coDesignSession;
+    const preset =
+      CO_DESIGN_ARTBOARD_PRESETS[session.artboardPreset] ||
+      CO_DESIGN_ARTBOARD_PRESETS.square_1080;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = preset.widthPx;
+    canvas.height = preset.heightPx;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    // 1. Draw Background
+    if (session.backgroundImage) {
+      try {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject();
+          img.src = session.backgroundImage!;
+        });
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      } catch {
+        ctx.fillStyle = session.backgroundColor || "#090D16";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      if (session.backgroundDim > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${session.backgroundDim / 100})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    } else {
+      ctx.fillStyle = session.backgroundColor || "#090D16";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 2. Draw Vector & Text Layers
+    for (const layer of session.layers) {
+      if (layer.hidden) continue;
+      const cx = (layer.x / 100) * canvas.width;
+      const cy = (layer.y / 100) * canvas.height;
+      const scaleFactor = canvas.width / 420; // Scale relative to mobile/desktop preview
+
+      ctx.save();
+      ctx.globalAlpha = layer.opacity ?? 1;
+      ctx.translate(cx, cy);
+      if (layer.rotation) {
+        ctx.rotate((layer.rotation * Math.PI) / 180);
+      }
+
+      const layerW = ((layer.width || 70) / 100) * canvas.width;
+      const layerH = ((layer.height || 20) / 100) * canvas.height;
+
+      if (layer.type === "shape") {
+        ctx.strokeStyle = layer.color;
+        ctx.lineWidth = 3 * scaleFactor;
+        ctx.fillStyle = layer.fillColor || "transparent";
+        ctx.beginPath();
+        if (layer.shapeKind === "circle") {
+          ctx.arc(0, 0, Math.min(layerW, layerH) / 2, 0, Math.PI * 2);
+        } else {
+          const r = (layer.borderRadius || 12) * scaleFactor;
+          const x0 = -layerW / 2;
+          const y0 = -layerH / 2;
+          ctx.roundRect(x0, y0, layerW, layerH, r);
+        }
+        if (layer.fillColor && layer.fillColor !== "transparent") ctx.fill();
+        ctx.stroke();
+      } else if (layer.type === "badge") {
+        const text = layer.text || "";
+        const scaledFont = Math.round(layer.fontSize * scaleFactor);
+        ctx.font = `${layer.fontWeight === "extrabold" ? 800 : 700} ${scaledFont}px "${layer.fontFamily}", sans-serif`;
+        const metrics = ctx.measureText(text);
+        const padX = 22 * scaleFactor;
+        const padY = 12 * scaleFactor;
+        const badgeW = metrics.width + padX * 2;
+        const badgeH = scaledFont + padY * 2;
+        const radius = Math.min(badgeH / 2, (layer.borderRadius || 12) * scaleFactor);
+
+        ctx.fillStyle = layer.fillColor || "#00F0FF";
+        ctx.beginPath();
+        ctx.roundRect(-badgeW / 2, -badgeH / 2, badgeW, badgeH, radius);
+        ctx.fill();
+
+        ctx.fillStyle = layer.color || "#000000";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, 0, 0);
+      } else if (layer.type === "text") {
+        const text = layer.text || "";
+        const scaledFont = Math.round(layer.fontSize * scaleFactor);
+        ctx.font = `${layer.fontWeight === "extrabold" ? 800 : layer.fontWeight === "bold" ? 700 : 400} ${scaledFont}px "${layer.fontFamily}", sans-serif`;
+        ctx.fillStyle = layer.color || "#FFFFFF";
+        ctx.textAlign = (layer.textAlign as any) || "center";
+        ctx.textBaseline = "middle";
+
+        // Multi-line word wrapping
+        const words = text.split(" ");
+        let line = "";
+        const lines: string[] = [];
+        const maxLineW = layerW;
+
+        for (let n = 0; n < words.length; n++) {
+          const testLine = line + words[n] + " ";
+          const testWidth = ctx.measureText(testLine).width;
+          if (testWidth > maxLineW && n > 0) {
+            lines.push(line);
+            line = words[n] + " ";
+          } else {
+            line = testLine;
+          }
+        }
+        lines.push(line);
+
+        const lineHeight = scaledFont * 1.25;
+        const startY = -((lines.length - 1) * lineHeight) / 2;
+        lines.forEach((l, idx) => {
+          ctx.fillText(l.trim(), 0, startY + idx * lineHeight);
+        });
+      }
+
+      ctx.restore();
+    }
+
+    return canvas.toDataURL("image/png");
+  };
+
+  /** Push active Co-Design artboard to Deliverable Proofing Canvas */
+  const handleSnapCoDesignToProof = async () => {
+    if (!meeting?.coDesignSession) return;
+    try {
+      const dataUrl = await captureCoDesignCanvasSnapshot();
+      if (!dataUrl) {
+        toast.error("Could not capture canvas render.");
+        return;
+      }
+      const title = `${meeting.coDesignSession.title} (v${meeting.coDesignSession.versions?.length || 1})`;
+      await addMeetingProofingArtwork(meeting.id, {
+        title,
+        category: "Live Studio Co-Design",
+        image: dataUrl,
+        uploadedBy: `${displayName} (Live Studio)`,
+        notes: "Real-time vector and typography co-design snapshot pushed to client proofing canvas.",
+      });
+      toast.success(`📸 Co-Design artwork pushed to Proof Canvas as "${title}"!`);
+      setActiveDrawer("proofing");
+    } catch {
+      toast.error("Failed to snapshot Co-Design canvas.");
+    }
+  };
+
+  /** Open Full KON10 Vector Studio in external tab & launch app screen share */
   const handleStartStudioCoDesign = async (templateSlug?: string) => {
     setShowStudioCoDesignModal(false);
     const targetSlug = templateSlug || "new";
@@ -4074,10 +4577,8 @@ export default function MeetingRoom() {
                     <span className="font-meta text-[8px] text-[var(--muted)]">Live Firestore Work</span>
                   </div>
                   {clientDesigns.map((d) => (
-                    <button
+                    <div
                       key={d.id}
-                      type="button"
-                      onClick={() => handleStartStudioCoDesign(d.templateSlug || d.id)}
                       className="w-full p-2.5 rounded-2xl border border-[var(--line)] hover:border-[var(--dept)] bg-[var(--bg)] text-left flex items-center gap-3 transition-all group shadow-sm"
                     >
                       {d.thumbnail && d.thumbnail.length > 50 ? (
@@ -4104,10 +4605,33 @@ export default function MeetingRoom() {
                           {d.email ? `Client: ${d.email}` : "Customer Draft"} · {d.templateSlug || "Custom"}
                         </p>
                       </div>
-                      <span className="text-xs font-bold text-[var(--dept)] group-hover:translate-x-1 transition-transform">
-                        ✏️ Edit Live →
-                      </span>
-                    </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleLaunchInMeetingCoDesign({
+                              title: d.title || "Client Design Concept",
+                              sourceType: "client_design",
+                              sourceId: d.id,
+                              backgroundImage: d.thumbnail,
+                              headline: d.title,
+                            })
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-meta text-[9px] font-bold uppercase transition-colors"
+                          title="Open interactive multi-user vector & typography canvas right in this meeting"
+                        >
+                          🎨 In-Meeting
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStartStudioCoDesign(d.templateSlug || d.id)}
+                          className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] font-bold uppercase transition-colors"
+                          title="Pop out KON10 Studio Editor in a new tab with screen share"
+                        >
+                          ↗️ Pop-Out
+                        </button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -4118,13 +4642,8 @@ export default function MeetingRoom() {
                   Meeting Proofing Deliverables ({proofingMockups.length})
                 </span>
                 {proofingMockups.map((m, idx) => (
-                  <button
+                  <div
                     key={m.id}
-                    type="button"
-                    onClick={() => {
-                      setProofingIndex(idx);
-                      handleStartStudioCoDesign(m.id);
-                    }}
                     className={`w-full p-2.5 rounded-2xl border text-left flex items-center gap-3 transition-all group ${
                       idx === proofingIndex
                         ? "border-[var(--dept)] bg-[var(--dept)]/10 shadow-md"
@@ -4157,33 +4676,84 @@ export default function MeetingRoom() {
                         {m.category} {m.uploadedBy ? `· by ${m.uploadedBy}` : ""}
                       </p>
                     </div>
-                    <span className="text-xs font-bold text-[var(--dept)] group-hover:translate-x-1 transition-transform">
-                      ✏️ Launch →
-                    </span>
-                  </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProofingIndex(idx);
+                          handleLaunchInMeetingCoDesign({
+                            title: m.title,
+                            sourceType: "deliverable",
+                            sourceId: m.id,
+                            backgroundImage: m.image,
+                            categoryBadge: m.category,
+                          });
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-meta text-[9px] font-bold uppercase transition-colors"
+                        title="Open interactive multi-user vector & typography canvas right in this meeting"
+                      >
+                        🎨 In-Meeting
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProofingIndex(idx);
+                          handleStartStudioCoDesign(m.id);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-meta text-[9px] font-bold uppercase transition-colors"
+                        title="Pop out KON10 Studio Editor in a new tab with screen share"
+                      >
+                        ↗️ Pop-Out
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
 
               {/* 3. Blank Collaborative Canvas */}
               <div className="pt-2 border-t border-[var(--line)]">
-                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1">
+                <span className="font-meta text-[9px] uppercase font-bold text-[var(--muted)] block mb-1.5">
                   Or Start Blank Design Canvas:
                 </span>
-                <button
-                  type="button"
-                  onClick={() => handleStartStudioCoDesign("quick-collab")}
-                  className="w-full p-3 rounded-2xl border border-dashed border-purple-500/50 hover:border-purple-400 bg-purple-950/20 hover:bg-purple-950/40 text-left flex items-center gap-3 transition-all group"
-                >
-                  <span className="text-2xl">✨</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-display text-xs font-bold uppercase text-purple-200 group-hover:text-purple-300">
-                      Blank 1080×1080 Collaborative Canvas
-                    </p>
-                    <p className="font-meta text-[9px] text-[var(--muted)] mt-0.5">
-                      Create a fresh vector design from scratch and broadcast live to client.
-                    </p>
-                  </div>
-                </button>
+                <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleLaunchInMeetingCoDesign({
+                        title: "Live Collaborative Post",
+                        sourceType: "preset",
+                        preset: "square_1080",
+                      })
+                    }
+                    className="flex-1 p-3 rounded-2xl border border-purple-500/60 hover:border-purple-400 bg-purple-950/30 hover:bg-purple-950/50 text-left flex items-center gap-3 transition-all group"
+                  >
+                    <span className="text-2xl">🎨</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-xs font-bold uppercase text-purple-200 group-hover:text-purple-300">
+                        🎨 In-Meeting Co-Design
+                      </p>
+                      <p className="font-meta text-[8.5px] text-neutral-300 mt-0.5">
+                        Interactive synchronized vector & text canvas with live participant cursors.
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStartStudioCoDesign("quick-collab")}
+                    className="p-3 rounded-2xl border border-neutral-700 hover:border-neutral-500 bg-neutral-900/80 hover:bg-neutral-900 text-left flex items-center gap-2.5 transition-all group shrink-0"
+                    title="Open KON10 Studio full editor in new tab"
+                  >
+                    <span className="text-xl">↗️</span>
+                    <div>
+                      <p className="font-display text-xs font-bold uppercase text-neutral-200">
+                        Pop-Out Editor
+                      </p>
+                      <p className="font-meta text-[8.5px] text-[var(--muted)]">
+                        Studio WebRTC stream
+                      </p>
+                    </div>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -4780,6 +5350,987 @@ export default function MeetingRoom() {
                                   playsInline
                                 />
                               )}
+                            </div>
+                          )}
+                          <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
+                            <span className="bg-black/70 px-1.5 py-0.5 rounded text-[8px] font-meta text-white truncate max-w-[85%]">
+                              {p.displayName}
+                            </span>
+                            {p.isMuted && <span className="text-[9px]">🔇</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            /* ==================================================================
+               2. IN-MEETING LIVE CO-DESIGN STUDIO STAGE
+               - Real-Time Multi-User Synchronized Vector, Typography & CTA Canvas
+               - Live Collaborator Cursors with Participant Names
+               - Direct Layer Dragging, Resizing, and In-Meeting Layer Inspector
+               - Brand Kit Harmony Palettes (Neon Cyber, Obsidian Gold, etc.)
+               - 1-Click Push to Deliverables Proofing Canvas & Version Snapshots
+               - Integrated Bottom Video/Audio Filmstrip for Face-to-Face Collaboration
+               ================================================================== */
+            if (meeting?.coDesignSession?.active) {
+              const session = meeting.coDesignSession;
+              const preset =
+                CO_DESIGN_ARTBOARD_PRESETS[session.artboardPreset] ||
+                CO_DESIGN_ARTBOARD_PRESETS.square_1080;
+              const canEdit = isHost || session.allowParticipantEdits;
+              const selectedLayer = session.layers.find(
+                (l) => l.id === selectedCoDesignLayerId
+              );
+
+              return (
+                <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden select-none">
+                  {/* Co-Design Unified Studio Stage Card */}
+                  <div className="flex-1 min-h-0 flex flex-col bg-neutral-950 rounded-2xl border border-purple-500/50 shadow-2xl overflow-hidden relative">
+                    {/* Top Non-Overlapping Studio Header & Tool Bar */}
+                    <div className="px-2.5 sm:px-4 py-2 bg-neutral-900/95 border-b border-neutral-800 flex flex-wrap items-center justify-between gap-2 shrink-0 z-20">
+                      {/* Left: Studio Badge, Title & Collaborator Count */}
+                      <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+                        <span className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse shrink-0" />
+                        <span className="font-meta text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-200 border border-purple-400/40 uppercase tracking-wider shrink-0">
+                          🎨 Co-Design Studio
+                        </span>
+                        <h3 className="font-display text-xs sm:text-sm font-bold uppercase text-white truncate max-w-[140px] sm:max-w-xs">
+                          {session.title}
+                        </h3>
+                        <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-black/40 border border-purple-500/30 text-purple-200 hidden md:inline shrink-0">
+                          {coDesignCursors.size + 1} live
+                        </span>
+                      </div>
+
+                      {/* Right: Presets, Theme, Safe-Zones, Snapshots & Snap to Proof */}
+                      <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 overflow-x-auto">
+                        {/* 1. Artboard Preset Switcher */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowCoDesignPresetsMenu((v) => !v)}
+                            className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9.5px] font-bold border border-neutral-700 flex items-center gap-1 transition-colors"
+                            title="Switch Artboard Canvas Ratio (1:1 Square, 9:16 Reel, 16:9 Hero, 3:4 Poster)"
+                          >
+                            <span>📐</span>
+                            <span>{preset.shortLabel}</span>
+                            <span className="text-[8px]">▾</span>
+                          </button>
+                          {showCoDesignPresetsMenu && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-40"
+                                onClick={() => setShowCoDesignPresetsMenu(false)}
+                              />
+                              <div className="absolute top-full right-0 mt-1 z-50 w-52 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700 rounded-xl shadow-2xl p-1.5 space-y-1">
+                                {(
+                                  Object.values(CO_DESIGN_ARTBOARD_PRESETS) as typeof preset[]
+                                ).map((p) => (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={async () => {
+                                      setShowCoDesignPresetsMenu(false);
+                                      await updateMeetingCoDesignSession(
+                                        meeting.id,
+                                        { artboardPreset: p.id },
+                                        displayName
+                                      );
+                                      setMeeting((prev) =>
+                                        prev && prev.coDesignSession
+                                          ? {
+                                              ...prev,
+                                              coDesignSession: {
+                                                ...prev.coDesignSession,
+                                                artboardPreset: p.id,
+                                              },
+                                            }
+                                          : prev
+                                      );
+                                      toast.info(`Canvas preset: ${p.label}`);
+                                    }}
+                                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-meta flex items-center justify-between ${
+                                      session.artboardPreset === p.id
+                                        ? "bg-purple-600 text-white font-bold"
+                                        : "text-neutral-300 hover:bg-neutral-800"
+                                    }`}
+                                  >
+                                    <span>{p.label}</span>
+                                    {session.artboardPreset === p.id && <span>✓</span>}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* 2. Theme / Brand Kit Swapper */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowCoDesignThemeMenu((v) => !v)}
+                            className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9.5px] font-bold border border-neutral-700 flex items-center gap-1 transition-colors"
+                            title="Apply curated Brand Kit Harmony Palette"
+                          >
+                            <span>🎨</span>
+                            <span className="hidden sm:inline">Theme</span>
+                            <span className="text-[8px]">▾</span>
+                          </button>
+                          {showCoDesignThemeMenu && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-40"
+                                onClick={() => setShowCoDesignThemeMenu(false)}
+                              />
+                              <div className="absolute top-full right-0 mt-1 z-50 w-56 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700 rounded-xl shadow-2xl p-2 space-y-1.5">
+                                <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block px-1">
+                                  Brand Kit Harmony Palettes
+                                </span>
+                                {CO_DESIGN_BRAND_PALETTES.map((pal) => (
+                                  <button
+                                    key={pal.id}
+                                    type="button"
+                                    onClick={async () => {
+                                      setShowCoDesignThemeMenu(false);
+                                      const rethemed = applyBrandPaletteToCoDesign(
+                                        session,
+                                        pal.id,
+                                        displayName
+                                      );
+                                      await updateMeetingCoDesignSession(
+                                        meeting.id,
+                                        rethemed,
+                                        displayName
+                                      );
+                                      setMeeting((prev) =>
+                                        prev && prev.coDesignSession
+                                          ? {
+                                              ...prev,
+                                              coDesignSession: rethemed,
+                                            }
+                                          : prev
+                                      );
+                                      toast.success(`Theme applied: ${pal.name}`);
+                                    }}
+                                    className="w-full text-left p-2 rounded-lg hover:bg-neutral-800 flex items-center justify-between gap-2 transition-colors"
+                                  >
+                                    <span className="font-meta text-[10px] text-white font-bold truncate">
+                                      {pal.name}
+                                    </span>
+                                    <div className="flex gap-1 shrink-0">
+                                      {pal.swatches.slice(0, 4).map((sw, sIdx) => (
+                                        <span
+                                          key={sIdx}
+                                          className="w-3 h-3 rounded-full border border-neutral-600 shrink-0"
+                                          style={{ backgroundColor: sw }}
+                                        />
+                                      ))}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* 3. Safe Zone Guides & Grid Toggles */}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const next = !session.showSafeZone;
+                            await updateMeetingCoDesignSession(
+                              meeting.id,
+                              { showSafeZone: next },
+                              displayName
+                            );
+                            setMeeting((prev) =>
+                              prev && prev.coDesignSession
+                                ? {
+                                    ...prev,
+                                    coDesignSession: {
+                                      ...prev.coDesignSession,
+                                      showSafeZone: next,
+                                    },
+                                  }
+                                : prev
+                            );
+                          }}
+                          className={`px-2 py-1 rounded-lg font-meta text-[9.5px] font-bold border transition-colors flex items-center gap-1 ${
+                            session.showSafeZone
+                              ? "bg-cyan-500/20 text-cyan-200 border-cyan-400"
+                              : "bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white"
+                          }`}
+                          title="Toggle Social & Reel UI Safe-Zone Guides"
+                        >
+                          <span>📐</span>
+                          <span className="hidden sm:inline">Safe Zones</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const next = !session.showGrid;
+                            await updateMeetingCoDesignSession(
+                              meeting.id,
+                              { showGrid: next },
+                              displayName
+                            );
+                            setMeeting((prev) =>
+                              prev && prev.coDesignSession
+                                ? {
+                                    ...prev,
+                                    coDesignSession: {
+                                      ...prev.coDesignSession,
+                                      showGrid: next,
+                                    },
+                                  }
+                                : prev
+                            );
+                          }}
+                          className={`px-2 py-1 rounded-lg font-meta text-[9.5px] font-bold border transition-colors flex items-center gap-1 ${
+                            session.showGrid
+                              ? "bg-purple-500/20 text-purple-200 border-purple-400"
+                              : "bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white"
+                          }`}
+                          title="Toggle Rule-of-Thirds Grid Guides"
+                        >
+                          <span>▦</span>
+                        </button>
+
+                        {/* 4. Snap to Proofing Canvas */}
+                        <button
+                          type="button"
+                          onClick={handleSnapCoDesignToProof}
+                          className="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-display text-[9.5px] font-bold uppercase flex items-center gap-1 shadow-sm transition-colors"
+                          title="Composite canvas layers and push directly to Client Proofing Canvas for approval"
+                        >
+                          <span>📸</span>
+                          <span>Snap to Proof</span>
+                        </button>
+
+                        {/* 5. Version History & Checkpoints */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowCoDesignSnapshotsModal((v) => !v)}
+                            className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9.5px] font-bold border border-neutral-700 flex items-center gap-1 transition-colors"
+                            title="Co-Design Version History & Checkpoints"
+                          >
+                            <span>📜</span>
+                            <span className="hidden sm:inline">
+                              v{session.versions?.length || 1}
+                            </span>
+                            <span className="text-[8px]">▾</span>
+                          </button>
+                          {showCoDesignSnapshotsModal && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-40"
+                                onClick={() => setShowCoDesignSnapshotsModal(false)}
+                              />
+                              <div className="absolute top-full right-0 mt-1 z-50 w-64 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700 rounded-2xl shadow-2xl p-2.5 space-y-2">
+                                <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
+                                  <span className="font-meta text-[9px] uppercase font-bold text-neutral-300">
+                                    Version History ({session.versions?.length || 1})
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const label =
+                                        newSnapshotLabel.trim() ||
+                                        `v${(session.versions?.length || 0) + 1} Revision`;
+                                      const snap =
+                                        await saveCoDesignVersionSnapshot(
+                                          meeting.id,
+                                          label,
+                                          displayName
+                                        );
+                                      if (snap) {
+                                        setMeeting((prev) =>
+                                          prev && prev.coDesignSession
+                                            ? {
+                                                ...prev,
+                                                coDesignSession: {
+                                                  ...prev.coDesignSession,
+                                                  versions: [
+                                                    ...(prev.coDesignSession.versions || []),
+                                                    snap,
+                                                  ],
+                                                },
+                                              }
+                                            : prev
+                                        );
+                                      }
+                                      setNewSnapshotLabel("");
+                                      toast.success(`Saved snapshot "${label}"`);
+                                    }}
+                                    className="px-2 py-0.5 rounded bg-purple-600 hover:bg-purple-500 text-white font-meta text-[8.5px] font-bold"
+                                  >
+                                    + Save v{(session.versions?.length || 0) + 1}
+                                  </button>
+                                </div>
+
+                                <div className="max-h-48 overflow-y-auto space-y-1">
+                                  {(session.versions || []).map((v) => (
+                                    <div
+                                      key={v.id}
+                                      className="p-1.5 rounded-lg bg-neutral-950/80 border border-neutral-800 flex items-center justify-between gap-1 text-[10px]"
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="font-bold text-white truncate">
+                                          {v.label}
+                                        </p>
+                                        <p className="font-meta text-[8.5px] text-neutral-400">
+                                          {v.createdBy} · {new Date(v.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                                        </p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          setShowCoDesignSnapshotsModal(false);
+                                          await restoreCoDesignVersionSnapshot(
+                                            meeting.id,
+                                            v.id,
+                                            displayName
+                                          );
+                                          setMeeting((prev) =>
+                                            prev && prev.coDesignSession
+                                              ? {
+                                                  ...prev,
+                                                  coDesignSession: {
+                                                    ...prev.coDesignSession,
+                                                    artboardPreset: v.artboardPreset,
+                                                    backgroundColor: v.backgroundColor,
+                                                    backgroundGradient: v.backgroundGradient,
+                                                    backgroundImage: v.backgroundImage,
+                                                    backgroundDim: v.backgroundDim,
+                                                    brandPalette: v.brandPalette,
+                                                    layers: JSON.parse(JSON.stringify(v.layers)),
+                                                  },
+                                                }
+                                              : prev
+                                          );
+                                          toast.success(`Restored "${v.label}"`);
+                                        }}
+                                        className="px-2 py-0.5 rounded bg-neutral-800 hover:bg-purple-600 text-neutral-200 hover:text-white font-meta text-[8.5px] font-bold shrink-0"
+                                      >
+                                        Restore
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* 6. Host Permission Mode Toggle & Close Stage */}
+                        {isHost ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const next = !session.allowParticipantEdits;
+                                await updateMeetingCoDesignSession(
+                                  meeting.id,
+                                  { allowParticipantEdits: next },
+                                  displayName
+                                );
+                                setMeeting((prev) =>
+                                  prev && prev.coDesignSession
+                                    ? {
+                                        ...prev,
+                                        coDesignSession: {
+                                          ...prev.coDesignSession,
+                                          allowParticipantEdits: next,
+                                        },
+                                      }
+                                    : prev
+                                );
+                                toast.info(
+                                  next
+                                    ? "🤝 Collaboration ON: All participants can edit layers."
+                                    : "🔒 View-Only Mode: Only host can edit layers."
+                                );
+                              }}
+                              className={`px-2 py-1 rounded-lg font-meta text-[9.5px] font-bold border transition-colors flex items-center gap-1 ${
+                                session.allowParticipantEdits
+                                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-400"
+                                  : "bg-amber-500/20 text-amber-300 border-amber-400"
+                              }`}
+                              title={
+                                session.allowParticipantEdits
+                                  ? "All attendees can edit layers (Click to lock)"
+                                  : "View-only for attendees (Click to allow edits)"
+                              }
+                            >
+                              <span>{session.allowParticipantEdits ? "🤝" : "🔒"}</span>
+                              <span className="hidden md:inline">
+                                {session.allowParticipantEdits ? "Editable" : "Locked"}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await stopMeetingCoDesignSession(meeting.id);
+                                setMeeting((prev) =>
+                                  prev && prev.coDesignSession
+                                    ? {
+                                        ...prev,
+                                        coDesignSession: {
+                                          ...prev.coDesignSession,
+                                          active: false,
+                                        },
+                                      }
+                                    : prev
+                                );
+                                toast.info("Closed Live Co-Design Studio");
+                              }}
+                              className="px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-300 font-meta text-[9.5px] font-bold flex items-center gap-1"
+                              title="End Co-Design session & return to regular stage"
+                            >
+                              <span>✕</span>
+                              <span className="hidden sm:inline">Close</span>
+                            </button>
+                          </>
+                        ) : (
+                          <span
+                            className={`font-meta text-[9px] px-2 py-1 rounded-lg border font-bold ${
+                              canEdit
+                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                : "bg-neutral-800 text-neutral-400 border-neutral-700"
+                            }`}
+                          >
+                            {canEdit ? "🤝 You can edit" : "🔒 View Only"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Quick Add Layer Floating Bar (When Edits Allowed) */}
+                    {canEdit && (
+                      <div className="px-3 py-1.5 bg-neutral-900/80 border-b border-neutral-800 flex items-center justify-between gap-2 overflow-x-auto shrink-0 z-10 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 mr-1">
+                            Add Layer:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddCoDesignLayer("text")}
+                            className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9px] font-bold flex items-center gap-1"
+                          >
+                            <span>✍️</span> + Headline
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddCoDesignLayer("badge")}
+                            className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9px] font-bold flex items-center gap-1"
+                          >
+                            <span>🏷️</span> + CTA Badge
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddCoDesignLayer("shape", "rect")}
+                            className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9px] font-bold flex items-center gap-1"
+                          >
+                            <span>▢</span> + Frame
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddCoDesignLayer("shape", "circle")}
+                            className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9px] font-bold flex items-center gap-1"
+                          >
+                            <span>◯</span> + Circle
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleStartStudioCoDesign(session.sourceId)}
+                            className="px-2 py-1 rounded-lg bg-purple-950/60 hover:bg-purple-900 border border-purple-500/30 text-purple-200 font-meta text-[9px] font-bold flex items-center gap-1"
+                            title="Open in full KON10 Vector Studio and broadcast"
+                          >
+                            <span>↗️</span>
+                            <span className="hidden sm:inline">Pop-Out Editor</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Center Artboard Viewport with Live Canvas */}
+                    <div
+                      ref={coDesignCanvasRef}
+                      className="flex-1 min-h-0 relative bg-neutral-950 flex items-center justify-center p-3 sm:p-6 overflow-hidden"
+                      onClick={() => setSelectedCoDesignLayerId(null)}
+                      onPointerMove={(e) => {
+                        const rect = coDesignCanvasRef.current?.getBoundingClientRect();
+                        if (!rect || rect.width === 0 || rect.height === 0) return;
+                        const x = Math.max(
+                          0,
+                          Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)
+                        );
+                        const y = Math.max(
+                          0,
+                          Math.min(100, ((e.clientY - rect.top) / rect.height) * 100)
+                        );
+                        // Throttled cursor broadcast
+                        void updateCoDesignCursor(meeting.id, {
+                          participantId: myParticipantId,
+                          displayName,
+                          color: isHost ? "#A855F7" : "#00F0FF",
+                          x: Number(x.toFixed(1)),
+                          y: Number(y.toFixed(1)),
+                          selectedLayerId: selectedCoDesignLayerId,
+                        });
+
+                        // Layer dragging logic
+                        if (coDesignDragRef.current && canEdit) {
+                          const drag = coDesignDragRef.current;
+                          const dx =
+                            ((e.clientX - drag.startClientX) / drag.containerWidth) *
+                            100;
+                          const dy =
+                            ((e.clientY - drag.startClientY) / drag.containerHeight) *
+                            100;
+                          const nextX = Math.max(
+                            5,
+                            Math.min(95, Number((drag.origX + dx).toFixed(1)))
+                          );
+                          const nextY = Math.max(
+                            5,
+                            Math.min(95, Number((drag.origY + dy).toFixed(1)))
+                          );
+                          void handleUpdateCoDesignLayer(drag.layerId, {
+                            x: nextX,
+                            y: nextY,
+                          });
+                        }
+                      }}
+                      onPointerUp={() => {
+                        coDesignDragRef.current = null;
+                      }}
+                    >
+                      {/* The Scaled Artboard */}
+                      <div
+                        style={{
+                          aspectRatio: preset.aspect,
+                          backgroundColor: session.backgroundColor,
+                          backgroundImage: session.backgroundGradient,
+                        }}
+                        className="relative w-full max-w-[560px] max-h-[72vh] rounded-2xl shadow-2xl border border-neutral-700/80 overflow-hidden flex items-center justify-center transition-all duration-200"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* Optional Background Image */}
+                        {session.backgroundImage && (
+                          <img
+                            src={session.backgroundImage}
+                            alt="Background"
+                            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                          />
+                        )}
+
+                        {/* Background Dim Overlay */}
+                        {session.backgroundImage && session.backgroundDim > 0 && (
+                          <div
+                            className="absolute inset-0 bg-black pointer-events-none"
+                            style={{ opacity: session.backgroundDim / 100 }}
+                          />
+                        )}
+
+                        {/* Social Reel 9:16 Safe Zone Overlay */}
+                        {session.showSafeZone && (
+                          <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-3">
+                            <div className="border-b border-dashed border-red-500/60 pb-1 text-[8px] font-mono text-red-300 font-bold uppercase tracking-wider">
+                              ⚠️ IG/TikTok Top Header Margin (15%)
+                            </div>
+                            <div className="border-t border-dashed border-red-500/60 pt-1 text-[8px] font-mono text-red-300 font-bold uppercase tracking-wider text-right">
+                              ⚠️ Caption &amp; Audio UI Margin (22%)
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Rule of Thirds Grid Overlay */}
+                        {session.showGrid && (
+                          <div className="absolute inset-0 pointer-events-none z-10 grid grid-cols-3 grid-rows-3 border border-cyan-500/20">
+                            <div className="border-r border-b border-cyan-500/20" />
+                            <div className="border-r border-b border-cyan-500/20" />
+                            <div className="border-b border-cyan-500/20" />
+                            <div className="border-r border-b border-cyan-500/20" />
+                            <div className="border-r border-b border-cyan-500/20" />
+                            <div className="border-b border-cyan-500/20" />
+                            <div className="border-r border-cyan-500/20" />
+                            <div className="border-r border-cyan-500/20" />
+                            <div />
+                          </div>
+                        )}
+
+                        {/* Synchronized Vector, Typography & Badge Layers */}
+                        {session.layers.map((layer) => {
+                          if (layer.hidden) return null;
+                          const isSelected = selectedCoDesignLayerId === layer.id;
+
+                          return (
+                            <div
+                              key={layer.id}
+                              style={{
+                                left: `${layer.x}%`,
+                                top: `${layer.y}%`,
+                                width: layer.width ? `${layer.width}%` : undefined,
+                                height: layer.height ? `${layer.height}%` : undefined,
+                                opacity: layer.opacity ?? 1,
+                                transform: `translate(-50%, -50%) rotate(${layer.rotation || 0}deg)`,
+                              }}
+                              className={`absolute cursor-pointer transition-shadow ${
+                                isSelected
+                                  ? "ring-2 ring-purple-400 ring-offset-2 ring-offset-black z-30"
+                                  : "hover:ring-1 hover:ring-purple-400/50 z-20"
+                              }`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCoDesignLayerId(layer.id);
+                                setShowLayerInspector(true);
+                              }}
+                              onPointerDown={(e) => {
+                                if (!canEdit || layer.locked) return;
+                                e.stopPropagation();
+                                const container = e.currentTarget.parentElement;
+                                if (!container) return;
+                                const cRect = container.getBoundingClientRect();
+                                coDesignDragRef.current = {
+                                  layerId: layer.id,
+                                  startClientX: e.clientX,
+                                  startClientY: e.clientY,
+                                  origX: layer.x,
+                                  origY: layer.y,
+                                  containerWidth: cRect.width,
+                                  containerHeight: cRect.height,
+                                };
+                                setSelectedCoDesignLayerId(layer.id);
+                              }}
+                            >
+                              {/* Selected Layer Tag */}
+                              {isSelected && (
+                                <div className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-purple-600 text-white font-meta text-[8px] font-bold whitespace-nowrap shadow-md pointer-events-none">
+                                  {layer.name} {layer.locked ? "🔒" : "✥"}
+                                </div>
+                              )}
+
+                              {layer.type === "shape" && (
+                                <div
+                                  style={{
+                                    borderColor: layer.color,
+                                    backgroundColor: layer.fillColor || "transparent",
+                                    borderRadius: layer.borderRadius ?? 16,
+                                  }}
+                                  className="w-full h-full border-2"
+                                />
+                              )}
+
+                              {layer.type === "badge" && (
+                                <div
+                                  style={{
+                                    backgroundColor: layer.fillColor || "#00F0FF",
+                                    color: layer.color || "#000000",
+                                    fontFamily: layer.fontFamily,
+                                    fontSize: `${layer.fontSize}px`,
+                                    borderRadius: layer.borderRadius ?? 999,
+                                  }}
+                                  className="px-4 py-2 font-extrabold uppercase shadow-lg text-center tracking-wider leading-none"
+                                >
+                                  {layer.text}
+                                </div>
+                              )}
+
+                              {layer.type === "text" && (
+                                <div
+                                  style={{
+                                    color: layer.color || "#FFFFFF",
+                                    fontFamily: layer.fontFamily,
+                                    fontSize: `${layer.fontSize}px`,
+                                    fontWeight:
+                                      layer.fontWeight === "extrabold"
+                                        ? 800
+                                        : layer.fontWeight === "bold"
+                                        ? 700
+                                        : 400,
+                                    textAlign: layer.textAlign || "center",
+                                  }}
+                                  className="leading-tight select-none drop-shadow-md break-words"
+                                >
+                                  {layer.text}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {/* Real-Time Collaborator Cursors Overlay */}
+                        {Array.from(coDesignCursors.values()).map((c) => (
+                          <div
+                            key={c.participantId}
+                            style={{
+                              left: `${c.x}%`,
+                              top: `${c.y}%`,
+                            }}
+                            className="absolute pointer-events-none z-40 transition-all duration-100 ease-out flex items-center gap-1 -translate-x-1 -translate-y-1"
+                          >
+                            <svg
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill={c.color || "#00F0FF"}
+                              stroke="#000000"
+                              strokeWidth="1.5"
+                              className="drop-shadow-lg"
+                            >
+                              <polygon points="3 3 10 21 14 14 21 10 3 3" />
+                            </svg>
+                            <span
+                              style={{ backgroundColor: c.color || "#00F0FF" }}
+                              className="px-1.5 py-0.5 rounded-full text-black font-meta text-[8px] font-extrabold shadow-md whitespace-nowrap"
+                            >
+                              {c.displayName}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Selected Layer Inspector Popover / Sidebar */}
+                      {selectedLayer && showLayerInspector && canEdit && (
+                        <div className="absolute bottom-3 right-3 sm:top-3 sm:bottom-auto z-40 w-72 bg-neutral-900/95 backdrop-blur-xl border border-purple-500/50 rounded-2xl shadow-2xl p-3 text-white space-y-2.5 animate-in fade-in zoom-in-95 duration-100">
+                          <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
+                            <span className="font-meta text-[9.5px] uppercase font-bold text-purple-300">
+                              Edit: {selectedLayer.name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setShowLayerInspector(false)}
+                              className="text-neutral-400 hover:text-white text-xs font-bold"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* Editable Text / Badge Input */}
+                          {(selectedLayer.type === "text" ||
+                            selectedLayer.type === "badge") && (
+                            <div className="space-y-1">
+                              <label className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block">
+                                Text Copy:
+                              </label>
+                              <textarea
+                                value={selectedLayer.text || ""}
+                                onChange={(e) =>
+                                  void handleUpdateCoDesignLayer(selectedLayer.id, {
+                                    text: e.target.value,
+                                  })
+                                }
+                                rows={2}
+                                className="w-full bg-neutral-950 border border-neutral-700 focus:border-purple-500 rounded-lg p-1.5 text-xs text-white outline-none"
+                              />
+                            </div>
+                          )}
+
+                          {/* Font Family & Size */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block">
+                                Typography:
+                              </label>
+                              <select
+                                value={selectedLayer.fontFamily}
+                                onChange={(e) =>
+                                  void handleUpdateCoDesignLayer(selectedLayer.id, {
+                                    fontFamily: e.target.value as any,
+                                  })
+                                }
+                                className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1 text-[10px] text-white outline-none"
+                              >
+                                <option value="Syne">Syne (Bold Modern)</option>
+                                <option value="Space Grotesk">Space Grotesk</option>
+                                <option value="Inter">Inter Clean</option>
+                                <option value="Playfair Display">Playfair Serif</option>
+                                <option value="JetBrains Mono">JetBrains Mono</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block">
+                                Size: {selectedLayer.fontSize}px
+                              </label>
+                              <input
+                                type="range"
+                                min={12}
+                                max={64}
+                                value={selectedLayer.fontSize}
+                                onChange={(e) =>
+                                  void handleUpdateCoDesignLayer(selectedLayer.id, {
+                                    fontSize: Number(e.target.value),
+                                  })
+                                }
+                                className="w-full accent-purple-500 cursor-pointer"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Color Swatches from Active Brand Palette */}
+                          <div className="space-y-1">
+                            <label className="font-meta text-[8.5px] uppercase font-bold text-neutral-400 block">
+                              Color Swatches:
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              {(session.brandPalette || []).map((clr, cIdx) => (
+                                <button
+                                  key={cIdx}
+                                  type="button"
+                                  onClick={() =>
+                                    void handleUpdateCoDesignLayer(selectedLayer.id, {
+                                      color: clr,
+                                    })
+                                  }
+                                  style={{ backgroundColor: clr }}
+                                  className="w-5 h-5 rounded-full border border-neutral-700 hover:scale-110 transition-transform"
+                                  title={`Apply ${clr}`}
+                                />
+                              ))}
+                              {selectedLayer.type === "badge" && (
+                                <span className="text-[9px] font-meta text-neutral-400 ml-1">
+                                  Fill:
+                                </span>
+                              )}
+                              {selectedLayer.type === "badge" &&
+                                (session.brandPalette || []).map((clr, cIdx) => (
+                                  <button
+                                    key={`fill-${cIdx}`}
+                                    type="button"
+                                    onClick={() =>
+                                      void handleUpdateCoDesignLayer(
+                                        selectedLayer.id,
+                                        { fillColor: clr }
+                                      )
+                                    }
+                                    style={{ backgroundColor: clr }}
+                                    className="w-4 h-4 rounded-md border border-neutral-700 hover:scale-110 transition-transform"
+                                    title={`Badge fill ${clr}`}
+                                  />
+                                ))}
+                            </div>
+                          </div>
+
+                          {/* Layer Order & Actions */}
+                          <div className="pt-1.5 border-t border-neutral-800 flex items-center justify-between gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleReorderCoDesignLayer(
+                                  selectedLayer.id,
+                                  "front"
+                                )
+                              }
+                              className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9px] font-bold"
+                              title="Bring to Front"
+                            >
+                              Bring Front
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDuplicateCoDesignLayer(selectedLayer.id)
+                              }
+                              className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-meta text-[9px] font-bold"
+                              title="Duplicate layer"
+                            >
+                              Duplicate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDeleteCoDesignLayer(selectedLayer.id)
+                              }
+                              className="px-2 py-1 rounded bg-neutral-800 hover:bg-red-950/70 text-red-300 font-meta text-[9px] font-bold"
+                              title="Delete layer"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Compact Bottom Participant Filmstrip during Co-Design */}
+                  <div className="flex items-center gap-2 overflow-x-auto py-0.5 shrink-0 h-14 sm:h-16">
+                    {/* Local Tile */}
+                    <div
+                      className={`relative h-full w-28 sm:w-36 shrink-0 bg-neutral-900 rounded-xl overflow-hidden border flex items-center justify-center ${
+                        speakingIds.has(myParticipantId)
+                          ? "border-emerald-400 ring-1 ring-emerald-400"
+                          : "border-neutral-800"
+                      }`}
+                    >
+                      {!isVideoOff && localStream ? (
+                        <VideoTile
+                          stream={localStream}
+                          muted={true}
+                          isMirrored={true}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex items-center gap-1.5 px-2 text-center">
+                          <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-400 flex items-center justify-center text-[10px] font-bold text-purple-300 shrink-0">
+                            {displayName.slice(0, 2).toUpperCase()}
+                          </div>
+                          <span className="font-meta text-[9px] font-bold text-neutral-300 truncate">
+                            You
+                          </span>
+                        </div>
+                      )}
+                      <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
+                        <span className="bg-black/70 px-1.5 py-0.5 rounded text-[8px] font-meta text-white truncate">
+                          You (Co-Designing)
+                        </span>
+                        {isMicMuted && <span className="text-[9px]">🔇</span>}
+                      </div>
+                    </div>
+
+                    {/* Remote Participants */}
+                    {otherConnectedParticipants.map((p) => {
+                      const pStream = remoteStreams.get(p.id);
+                      const showCameraVideo =
+                        !p.isVideoOff &&
+                        pStream &&
+                        pStream
+                          .getVideoTracks()
+                          .some((t) => t.enabled && t.readyState === "live");
+
+                      return (
+                        <div
+                          key={p.id}
+                          className={`relative h-full w-28 sm:w-36 shrink-0 bg-neutral-900 rounded-xl overflow-hidden border flex items-center justify-center ${
+                            speakingIds.has(p.id)
+                              ? "border-emerald-400 ring-1 ring-emerald-400"
+                              : "border-neutral-800"
+                          }`}
+                        >
+                          {showCameraVideo ? (
+                            <VideoTile
+                              stream={pStream}
+                              muted={false}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex items-center gap-1.5 px-2 text-center">
+                              <div className="w-7 h-7 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-[10px] font-bold text-neutral-300 shrink-0">
+                                {p.displayName.slice(0, 2).toUpperCase()}
+                              </div>
+                              <span className="font-meta text-[9px] font-bold text-neutral-300 truncate">
+                                {p.displayName}
+                              </span>
                             </div>
                           )}
                           <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">

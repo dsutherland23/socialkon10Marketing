@@ -218,6 +218,90 @@ export interface LiveProofingState {
   updatedAt: string;
 }
 
+export type CoDesignArtboardPresetId =
+  | "square_1080"
+  | "story_9_16"
+  | "landscape_16_9"
+  | "poster_3_4";
+
+export type CoDesignFontFamily =
+  | "Syne"
+  | "Space Grotesk"
+  | "Inter"
+  | "Playfair Display"
+  | "JetBrains Mono";
+
+export interface CoDesignLayer {
+  id: string;
+  type: "text" | "badge" | "shape" | "image";
+  name: string;
+  text?: string;
+  imageUrl?: string;
+  shapeKind?: "rect" | "circle" | "pill" | "line";
+  x: number; // percentage 0-100 (center X)
+  y: number; // percentage 0-100 (center Y)
+  width?: number; // percentage 5-100 of artboard
+  height?: number; // percentage 5-100 of artboard
+  fontSize: number; // px on reference canvas (12-72)
+  fontFamily: CoDesignFontFamily;
+  fontWeight: "normal" | "bold" | "extrabold";
+  textAlign?: "left" | "center" | "right";
+  color: string; // text color or shape border color
+  fillColor?: string; // pill/badge/shape fill color
+  opacity: number; // 0.1 - 1
+  rotation?: number; // -180 to 180 deg
+  borderRadius?: number; // px
+  locked?: boolean;
+  hidden?: boolean;
+  updatedBy?: string;
+}
+
+export interface CoDesignVersionSnapshot {
+  id: string;
+  label: string;
+  createdBy: string;
+  createdAt: string;
+  artboardPreset: CoDesignArtboardPresetId;
+  backgroundColor: string;
+  backgroundGradient?: string;
+  backgroundImage?: string;
+  backgroundDim: number;
+  brandPalette: string[];
+  layers: CoDesignLayer[];
+}
+
+export interface CoDesignCollaboratorCursor {
+  participantId: string;
+  displayName: string;
+  color: string;
+  x: number; // 0-100
+  y: number; // 0-100
+  selectedLayerId?: string | null;
+  updatedAt?: number;
+}
+
+export interface CoDesignSessionState {
+  active: boolean;
+  title: string;
+  sourceType: "deliverable" | "client_design" | "preset";
+  sourceId?: string;
+  hostId: string;
+  hostName: string;
+  allowParticipantEdits: boolean;
+  artboardPreset: CoDesignArtboardPresetId;
+  backgroundColor: string;
+  backgroundGradient?: string;
+  backgroundImage?: string;
+  backgroundDim: number; // 0-85% overlay dim on background photo
+  brandPalette: string[];
+  showSafeZone: boolean;
+  showGrid: boolean;
+  layers: CoDesignLayer[];
+  versions: CoDesignVersionSnapshot[];
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface MeetingRecord {
   id: string;
   title: string;
@@ -257,6 +341,8 @@ export interface MeetingRecord {
   };
   intelligence?: MeetingIntelligence;
   liveProofing?: LiveProofingState;
+  /** Synchronized in-meeting multi-user Co-Design canvas state */
+  coDesignSession?: CoDesignSessionState;
   /** "Come watch" ping broadcast when someone starts presenting (Zoom-style) */
   liveInvite?: { type: "screen_share" | "co_design" | "proofing"; senderId: string; senderName: string; sentAt: string };
   createdAt: string;
@@ -2387,5 +2473,528 @@ export function subscribeToWebRTCSignals(
       } catch {}
     }
     fsUnsub();
+  };
+}
+
+/* ---------------- Real-Time In-Meeting Co-Design Studio Engine ---------------- */
+
+export interface CoDesignBrandPalettePreset {
+  id: string;
+  name: string;
+  backgroundColor: string;
+  backgroundGradient: string;
+  swatches: string[]; // [primaryAccent, secondaryAccent, headlineColor, badgeBg, badgeText]
+}
+
+export const CO_DESIGN_BRAND_PALETTES: CoDesignBrandPalettePreset[] = [
+  {
+    id: "neon_cyber",
+    name: "Neon Cyber Studio",
+    backgroundColor: "#090D16",
+    backgroundGradient: "linear-gradient(135deg, #090D16 0%, #151C33 55%, #2A1245 100%)",
+    swatches: ["#00F0FF", "#A855F7", "#FFFFFF", "#00F0FF", "#090D16"],
+  },
+  {
+    id: "obsidian_gold",
+    name: "Obsidian & Luxury Gold",
+    backgroundColor: "#0C0A09",
+    backgroundGradient: "linear-gradient(135deg, #0C0A09 0%, #1C1917 60%, #2E2315 100%)",
+    swatches: ["#F59E0B", "#FDE68A", "#FAFAF9", "#F59E0B", "#0C0A09"],
+  },
+  {
+    id: "emerald_growth",
+    name: "Emerald Performance",
+    backgroundColor: "#061814",
+    backgroundGradient: "linear-gradient(135deg, #061814 0%, #0B2E26 55%, #083A42 100%)",
+    swatches: ["#10B981", "#38BDF8", "#F8FAFC", "#10B981", "#04130F"],
+  },
+  {
+    id: "sunset_coral",
+    name: "Sunset Coral Campaign",
+    backgroundColor: "#1A0B12",
+    backgroundGradient: "linear-gradient(135deg, #1A0B12 0%, #381224 55%, #4A1D1A 100%)",
+    swatches: ["#F43F5E", "#FB923C", "#FFF1F2", "#F43F5E", "#FFFFFF"],
+  },
+  {
+    id: "editorial_ivory",
+    name: "Editorial Ivory & Ink",
+    backgroundColor: "#F5F2EB",
+    backgroundGradient: "linear-gradient(135deg, #F5F2EB 0%, #EAE3D5 100%)",
+    swatches: ["#111827", "#DC2626", "#111827", "#111827", "#F5F2EB"],
+  },
+];
+
+export const CO_DESIGN_ARTBOARD_PRESETS: Record<
+  CoDesignArtboardPresetId,
+  { id: CoDesignArtboardPresetId; label: string; shortLabel: string; aspect: string; widthPx: number; heightPx: number }
+> = {
+  square_1080: {
+    id: "square_1080",
+    label: "1080×1080 Social Post (1:1)",
+    shortLabel: "1:1 Square",
+    aspect: "1 / 1",
+    widthPx: 1080,
+    heightPx: 1080,
+  },
+  story_9_16: {
+    id: "story_9_16",
+    label: "1080×1920 IG / TikTok Reel (9:16)",
+    shortLabel: "9:16 Reel",
+    aspect: "9 / 16",
+    widthPx: 1080,
+    heightPx: 1920,
+  },
+  landscape_16_9: {
+    id: "landscape_16_9",
+    label: "1920×1080 Web / YouTube Hero (16:9)",
+    shortLabel: "16:9 Hero",
+    aspect: "16 / 9",
+    widthPx: 1920,
+    heightPx: 1080,
+  },
+  poster_3_4: {
+    id: "poster_3_4",
+    label: "1200×1600 Print Poster / Flyer (3:4)",
+    shortLabel: "3:4 Poster",
+    aspect: "3 / 4",
+    widthPx: 1200,
+    heightPx: 1600,
+  },
+};
+
+/** Generate default interactive layers for a newly launched Co-Design session */
+export function createDefaultCoDesignLayers(options?: {
+  headline?: string;
+  subheadline?: string;
+  categoryBadge?: string;
+  ctaText?: string;
+  brandPalette?: string[];
+}): CoDesignLayer[] {
+  const palette = options?.brandPalette || CO_DESIGN_BRAND_PALETTES[0].swatches;
+  const [accent, , textClr, badgeBg, badgeTxt] = palette;
+
+  return [
+    {
+      id: "layer_badge_cat",
+      type: "badge",
+      name: "Category Badge",
+      text: options?.categoryBadge || "CAMPAIGN PREVIEW 2026",
+      x: 50,
+      y: 28,
+      fontSize: 13,
+      fontFamily: "Space Grotesk",
+      fontWeight: "bold",
+      textAlign: "center",
+      color: badgeTxt || "#090D16",
+      fillColor: badgeBg || accent || "#00F0FF",
+      opacity: 1,
+      borderRadius: 999,
+      locked: false,
+    },
+    {
+      id: "layer_headline_main",
+      type: "text",
+      name: "Main Headline",
+      text: options?.headline || "Scale Your Organic Reach With AI-Optimized Visuals",
+      x: 50,
+      y: 46,
+      width: 82,
+      fontSize: 34,
+      fontFamily: "Syne",
+      fontWeight: "extrabold",
+      textAlign: "center",
+      color: textClr || "#FFFFFF",
+      opacity: 1,
+      locked: false,
+    },
+    {
+      id: "layer_subheadline_desc",
+      type: "text",
+      name: "Supporting Narrative",
+      text:
+        options?.subheadline ||
+        "Live co-designed in Social Kon10 Studio with multi-participant synchronisation.",
+      x: 50,
+      y: 64,
+      width: 76,
+      fontSize: 16,
+      fontFamily: "Inter",
+      fontWeight: "normal",
+      textAlign: "center",
+      color: "#94A3B8",
+      opacity: 0.95,
+      locked: false,
+    },
+    {
+      id: "layer_cta_primary",
+      type: "badge",
+      name: "Call-To-Action Button",
+      text: options?.ctaText || "Claim Exclusive Access →",
+      x: 50,
+      y: 78,
+      fontSize: 15,
+      fontFamily: "Space Grotesk",
+      fontWeight: "bold",
+      textAlign: "center",
+      color: "#090D16",
+      fillColor: accent || "#00F0FF",
+      opacity: 1,
+      borderRadius: 12,
+      locked: false,
+    },
+  ];
+}
+
+/** Apply a curated Brand Kit harmony theme to an existing Co-Design session */
+export function applyBrandPaletteToCoDesign(
+  current: CoDesignSessionState,
+  palettePresetId: string,
+  updatedBy: string
+): CoDesignSessionState {
+  const preset =
+    CO_DESIGN_BRAND_PALETTES.find((p) => p.id === palettePresetId) ||
+    CO_DESIGN_BRAND_PALETTES[0];
+
+  const [primary, , textClr, badgeBg, badgeTxt] = preset.swatches;
+
+  const rethemedLayers = current.layers.map((layer) => {
+    if (layer.id === "layer_badge_cat") {
+      return {
+        ...layer,
+        color: badgeTxt,
+        fillColor: badgeBg,
+        updatedBy,
+      };
+    }
+    if (layer.id === "layer_headline_main") {
+      return {
+        ...layer,
+        color: textClr,
+        updatedBy,
+      };
+    }
+    if (layer.id === "layer_cta_primary") {
+      return {
+        ...layer,
+        color: badgeTxt,
+        fillColor: primary,
+        updatedBy,
+      };
+    }
+    return layer;
+  });
+
+  return {
+    ...current,
+    backgroundColor: preset.backgroundColor,
+    backgroundGradient: preset.backgroundGradient,
+    brandPalette: preset.swatches,
+    layers: rethemedLayers,
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+  };
+}
+
+/** Start a real-time Co-Design session in a meeting */
+export async function startMeetingCoDesignSession(
+  meetingId: string,
+  options: {
+    title: string;
+    sourceType: "deliverable" | "client_design" | "preset";
+    sourceId?: string;
+    hostId: string;
+    hostName: string;
+    allowParticipantEdits?: boolean;
+    artboardPreset?: CoDesignArtboardPresetId;
+    backgroundImage?: string;
+    backgroundDim?: number;
+    initialLayers?: CoDesignLayer[];
+    brandPalettePresetId?: string;
+  }
+): Promise<CoDesignSessionState> {
+  const normId = normalizeRoomCode(meetingId);
+  const palettePreset =
+    CO_DESIGN_BRAND_PALETTES.find((p) => p.id === options.brandPalettePresetId) ||
+    CO_DESIGN_BRAND_PALETTES[0];
+
+  const layers =
+    options.initialLayers && options.initialLayers.length > 0
+      ? options.initialLayers
+      : createDefaultCoDesignLayers({
+          headline: options.title,
+          brandPalette: palettePreset.swatches,
+        });
+
+  const nowIso = new Date().toISOString();
+  const initialSnapshot: CoDesignVersionSnapshot = {
+    id: `v_init_${Date.now()}`,
+    label: "v1 Initial Concept",
+    createdBy: options.hostName,
+    createdAt: nowIso,
+    artboardPreset: options.artboardPreset || "square_1080",
+    backgroundColor: palettePreset.backgroundColor,
+    backgroundGradient: palettePreset.backgroundGradient,
+    backgroundImage: options.backgroundImage || "",
+    backgroundDim: options.backgroundDim ?? 35,
+    brandPalette: palettePreset.swatches,
+    layers,
+  };
+
+  const sessionState: CoDesignSessionState = {
+    active: true,
+    title: options.title,
+    sourceType: options.sourceType,
+    sourceId: options.sourceId,
+    hostId: options.hostId,
+    hostName: options.hostName,
+    allowParticipantEdits: options.allowParticipantEdits ?? true,
+    artboardPreset: options.artboardPreset || "square_1080",
+    backgroundColor: palettePreset.backgroundColor,
+    backgroundGradient: palettePreset.backgroundGradient,
+    backgroundImage: options.backgroundImage || "",
+    backgroundDim: options.backgroundDim ?? 35,
+    brandPalette: palettePreset.swatches,
+    showSafeZone: false,
+    showGrid: false,
+    layers,
+    versions: [initialSnapshot],
+    updatedAt: nowIso,
+    updatedBy: options.hostName,
+  };
+
+  // 1. Instant cross-tab broadcast via BroadcastChannel
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_codesign_${normId}`);
+      bc.postMessage({ type: "session_updated", session: sessionState });
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  // 2. Persist to Firestore meeting doc and localStorage cache
+  try {
+    localStorage.setItem(`sk_codesign_${normId}`, JSON.stringify(sessionState));
+  } catch {}
+
+  await updateMeeting(meetingId, {
+    coDesignSession: sessionState,
+    liveInvite: {
+      type: "co_design",
+      senderId: options.hostId,
+      senderName: options.hostName,
+      sentAt: nowIso,
+    },
+  });
+
+  return sessionState;
+}
+
+/** Update the active Co-Design session with new layers, theme, or settings */
+export async function updateMeetingCoDesignSession(
+  meetingId: string,
+  partial: Partial<CoDesignSessionState>,
+  updatedBy: string
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting?.coDesignSession) return;
+
+  const updated: CoDesignSessionState = {
+    ...meeting.coDesignSession,
+    ...partial,
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+  };
+
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_codesign_${normId}`);
+      bc.postMessage({ type: "session_updated", session: updated });
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  try {
+    localStorage.setItem(`sk_codesign_${normId}`, JSON.stringify(updated));
+  } catch {}
+
+  await updateMeeting(meetingId, {
+    coDesignSession: updated,
+  });
+}
+
+/** Terminate the active Co-Design session */
+export async function stopMeetingCoDesignSession(meetingId: string): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_codesign_${normId}`);
+      bc.postMessage({ type: "session_stopped" });
+      setTimeout(() => bc.close(), 100);
+    }
+  } catch {}
+
+  await updateMeeting(meetingId, {
+    coDesignSession: {
+      active: false,
+      title: "",
+      sourceType: "preset",
+      hostId: "",
+      hostName: "",
+      allowParticipantEdits: false,
+      artboardPreset: "square_1080",
+      backgroundColor: "#090D16",
+      brandPalette: [],
+      showSafeZone: false,
+      showGrid: false,
+      layers: [],
+      versions: [],
+      updatedAt: new Date().toISOString(),
+      updatedBy: "",
+      backgroundDim: 0,
+    },
+  });
+}
+
+/** Save a named version snapshot of the current artboard state */
+export async function saveCoDesignVersionSnapshot(
+  meetingId: string,
+  label: string,
+  createdBy: string
+): Promise<CoDesignVersionSnapshot | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting?.coDesignSession) return null;
+
+  const current = meeting.coDesignSession;
+  const snapshot: CoDesignVersionSnapshot = {
+    id: `v_snap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    label: label.trim() || `v${(current.versions?.length || 0) + 1} Revision`,
+    createdBy,
+    createdAt: new Date().toISOString(),
+    artboardPreset: current.artboardPreset,
+    backgroundColor: current.backgroundColor,
+    backgroundGradient: current.backgroundGradient,
+    backgroundImage: current.backgroundImage,
+    backgroundDim: current.backgroundDim,
+    brandPalette: current.brandPalette,
+    layers: JSON.parse(JSON.stringify(current.layers)),
+  };
+
+  const updatedVersions = [...(current.versions || []), snapshot];
+  await updateMeetingCoDesignSession(
+    meetingId,
+    { versions: updatedVersions },
+    createdBy
+  );
+
+  return snapshot;
+}
+
+/** Restore the canvas to an earlier version checkpoint */
+export async function restoreCoDesignVersionSnapshot(
+  meetingId: string,
+  snapshotId: string,
+  restoredBy: string
+): Promise<boolean> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting?.coDesignSession?.versions) return false;
+
+  const target = meeting.coDesignSession.versions.find((v) => v.id === snapshotId);
+  if (!target) return false;
+
+  await updateMeetingCoDesignSession(
+    meetingId,
+    {
+      artboardPreset: target.artboardPreset,
+      backgroundColor: target.backgroundColor,
+      backgroundGradient: target.backgroundGradient,
+      backgroundImage: target.backgroundImage,
+      backgroundDim: target.backgroundDim,
+      brandPalette: target.brandPalette,
+      layers: JSON.parse(JSON.stringify(target.layers)),
+    },
+    `${restoredBy} (Restored ${target.label})`
+  );
+
+  return true;
+}
+
+/** Broadcast participant cursor position across the active Co-Design artboard */
+export async function updateCoDesignCursor(
+  meetingId: string,
+  cursor: CoDesignCollaboratorCursor
+): Promise<void> {
+  const normId = normalizeRoomCode(meetingId);
+  const payload: CoDesignCollaboratorCursor = {
+    ...cursor,
+    updatedAt: Date.now(),
+  };
+
+  // BroadcastChannel for instantaneous multi-tab / same-machine cursor motion
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel(`sk_codesign_cursor_${normId}`);
+      bc.postMessage(payload);
+      setTimeout(() => bc.close(), 60);
+    }
+  } catch {}
+
+  // Throttle writes to Firestore subcollection /meetings/{normId}/codesign_cursors/{pId}
+  if (firebaseReady && db) {
+    try {
+      await setDoc(
+        doc(db, "meetings", normId, "codesign_cursors", cursor.participantId),
+        cleanFirestoreObject(payload)
+      );
+    } catch {}
+  }
+}
+
+/** Subscribe to real-time collaborator cursors on the Co-Design artboard */
+export function subscribeToCoDesignCursors(
+  meetingId: string,
+  myParticipantId: string,
+  onCursor: (cursor: CoDesignCollaboratorCursor) => void
+): Unsubscribe {
+  const normId = normalizeRoomCode(meetingId);
+  let bc: BroadcastChannel | null = null;
+  let unsubFirestore: Unsubscribe = () => {};
+
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`sk_codesign_cursor_${normId}`);
+      bc.onmessage = (e) => {
+        const c = e.data as CoDesignCollaboratorCursor;
+        if (c && c.participantId && c.participantId !== myParticipantId) {
+          onCursor(c);
+        }
+      };
+    }
+  } catch {}
+
+  if (firebaseReady && db) {
+    try {
+      const colRef = collection(db, "meetings", normId, "codesign_cursors");
+      unsubFirestore = onSnapshot(colRef, (snap) => {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "added" || change.type === "modified") {
+            const c = change.doc.data() as CoDesignCollaboratorCursor;
+            if (
+              c &&
+              c.participantId &&
+              c.participantId !== myParticipantId &&
+              Date.now() - (c.updatedAt || 0) < 12000
+            ) {
+              onCursor(c);
+            }
+          }
+        });
+      });
+    } catch {}
+  }
+
+  return () => {
+    if (bc) bc.close();
+    unsubFirestore();
   };
 }
