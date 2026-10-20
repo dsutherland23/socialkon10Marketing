@@ -34,6 +34,7 @@ import {
   type MeetingRecord, type CallHistoryRecord, type SessionType,
 } from "../lib/meetings";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
+import { playDoorbellChime, triggerHapticFeedback } from "../lib/webrtc";
 import { ImageDropzone } from "../components/ImageDropzone";
 import { DesignStudio } from "./AdminDesign";
 import { TemplateStudio } from "./AdminTemplates";
@@ -8382,6 +8383,8 @@ export default function Admin() {
     let currIntakes: IntakeRecord[] = [];
     let currLeads: LeadRecord[] = [];
     let currMeetings: MeetingRecord[] = [];
+    let seenWaiting = new Set<string>();
+    let seenWaitingPrimed = false;
 
     const updateAlerts = () => {
       if (stop) return;
@@ -8398,6 +8401,24 @@ export default function Admin() {
       const lobbyWaiting = lobbyMeetings.reduce(
         (n, m) => n + (m.participants || []).filter((p) => p.status === "waiting").length, 0
       );
+
+      // Audible + toast knock for guests who just arrived (not on first load).
+      const waitingKeys = new Set<string>();
+      lobbyMeetings.forEach((m) =>
+        (m.participants || []).forEach((p) => { if (p.status === "waiting") waitingKeys.add(`${m.id}_${p.id}`); })
+      );
+      const fresh = Array.from(waitingKeys).filter((k) => !seenWaiting.has(k));
+      if (fresh.length > 0 && seenWaitingPrimed) {
+        playDoorbellChime();
+        triggerHapticFeedback([150, 80, 200]);
+        const first = lobbyMeetings[0];
+        toast.warning(`🔔 ${fresh.length} guest${fresh.length > 1 ? "s" : ""} waiting in "${first?.title || "a meeting"}"`, {
+          duration: 15000,
+          action: first?.roomId ? { label: "Open room", onClick: () => window.open(`/meet/${first.roomId}`, "_blank") } : undefined,
+        });
+      }
+      seenWaiting = waitingKeys;
+      seenWaitingPrimed = true;
       setAlerts({
         newOrders: currOrders.filter((o) => o.status === "ORDER RECEIVED").length,
         reviewReqs: currOrders.filter((o) => ["CLIENT REVIEW", "REVISION", "FINAL APPROVAL"].includes(o.status)).length,

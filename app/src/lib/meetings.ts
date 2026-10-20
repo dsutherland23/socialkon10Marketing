@@ -599,36 +599,60 @@ export function subscribeToMeeting(
   const targetKey = normalized || alphaKey || raw;
 
   if (firebaseReady && db) {
+    const firestore = db;
     let resolved = false;
-    const docRef = doc(db, "meetings", targetKey);
+    let cancelled = false;
+    let currentKey = "";
+    let innerUnsub: Unsubscribe = () => {};
 
-    const unsub = onSnapshot(
-      docRef,
-      (snap) => {
-        if (snap.exists()) {
-          resolved = true;
-          onUpdate(snap.data() as MeetingRecord);
-        } else {
-          // Check collection for legacy IDs / variations
-          getMeetingById(idOrRoomId).then((m) => {
-            if (m) {
-              resolved = true;
-              onUpdate(m);
-            } else if (!resolved) {
-              onUpdate(null);
+    // Every write (participants, waiting-room admits, status) targets the
+    // CANONICAL doc (`meeting.id`). createMeeting also stores a stale
+    // alphanumeric alias copy, so a client that arrived via the alias key
+    // would otherwise listen to a doc that never receives updates — and the
+    // host would never see guests knocking. Always follow the canonical doc.
+    const attach = (key: string) => {
+      innerUnsub();
+      currentKey = key;
+      innerUnsub = onSnapshot(
+        doc(firestore, "meetings", key),
+        (snap) => {
+          if (cancelled) return;
+          if (snap.exists()) {
+            resolved = true;
+            const data = snap.data() as MeetingRecord;
+            onUpdate(data);
+            if (data.id && data.id !== snap.id && data.id !== currentKey) {
+              attach(data.id);
             }
-          }).catch(() => {
-            if (!resolved) onUpdate(null);
-          });
+          } else {
+            // Check collection for legacy IDs / variations
+            getMeetingById(idOrRoomId).then((m) => {
+              if (cancelled) return;
+              if (m) {
+                resolved = true;
+                onUpdate(m);
+                if (m.id && m.id !== currentKey) attach(m.id);
+              } else if (!resolved) {
+                onUpdate(null);
+              }
+            }).catch(() => {
+              if (!cancelled && !resolved) onUpdate(null);
+            });
+          }
+        },
+        (err) => {
+          console.warn("Meeting subscribe notice:", err);
+          getMeetingById(idOrRoomId).then((m) => { if (!cancelled) onUpdate(m); });
         }
-      },
-      (err) => {
-        console.warn("Meeting subscribe notice:", err);
-        getMeetingById(idOrRoomId).then(onUpdate);
-      }
-    );
+      );
+    };
 
-    return () => unsub();
+    attach(targetKey);
+
+    return () => {
+      cancelled = true;
+      innerUnsub();
+    };
   }
 
   // Fallback polling for offline/IDB mode

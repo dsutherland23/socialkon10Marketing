@@ -39,6 +39,7 @@ import {
   type ParticipantRole,
   type ParticipantStatus,
   subscribeToMeeting,
+  getMeetingById,
   updateMeeting,
   updateParticipant,
   admitParticipant,
@@ -972,6 +973,39 @@ export default function MeetingRoom() {
     };
   }, [meeting, isHost, phase]);
 
+  // 9c. Safety net: while the host sits in the lobby / room, reconcile with the
+  // server every few seconds. A dropped or mis-targeted realtime listener must
+  // never leave a guest knocking unseen.
+  const meetingKeyRef = useRef<string>("");
+  useEffect(() => {
+    meetingKeyRef.current = meeting?.id || "";
+  }, [meeting?.id]);
+  useEffect(() => {
+    if (!isHost || (phase !== "in_meeting" && phase !== "lobby")) return;
+    let stopped = false;
+    const tick = async () => {
+      const key = meetingKeyRef.current;
+      if (!key) return;
+      try {
+        const fresh = await getMeetingById(key);
+        if (stopped || !fresh) return;
+        setMeeting((prev) => {
+          if (!prev) return fresh;
+          const sig = (m: MeetingRecord) =>
+            (m.participants || []).map((p) => `${p.id}:${p.status}`).sort().join("|");
+          return sig(prev) === sig(fresh) ? prev : fresh;
+        });
+      } catch {
+        // transient network error — try again next tick
+      }
+    };
+    const timer = window.setInterval(tick, 5000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [isHost, phase]);
+
   // 10. Listen for Fullscreen State Change
   useEffect(() => {
     const handleFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -1148,6 +1182,13 @@ export default function MeetingRoom() {
     }
 
     const myRole: ParticipantRole = isHost ? "host" : isAdmin ? "cohost" : "participant";
+
+    // Host clicked a button (user gesture) — the one moment browsers allow us
+    // to ask for OS notification permission, so knocks can reach them even
+    // when this tab is in the background.
+    if (isHost && typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
     const initialStatus: ParticipantStatus = (meeting.waitingRoomEnabled && !isHost) ? "waiting" : "joined";
 
     const hostParticipant = meeting.participants.find((p) => p.role === "host");
