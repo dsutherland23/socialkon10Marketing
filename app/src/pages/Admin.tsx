@@ -30,7 +30,7 @@ import { MessageThread } from "../components/messages";
 import {
   createMeeting, deleteMeeting, deleteMeetings, setMeetingsStatus, listAllMeetings,
   recordCallHistory, listCallHistory, deleteCallHistory, deleteCalls, downloadCalendarIcs,
-  generatePasscode, getMeetingShareDetails, subscribeAllMeetings,
+  generatePasscode, getMeetingShareDetails, subscribeAllMeetings, admitAllParticipants,
   type MeetingRecord, type CallHistoryRecord, type SessionType,
 } from "../lib/meetings";
 import { PasswordEyeToggle } from "../components/PasswordEyeToggle";
@@ -6664,6 +6664,13 @@ function AdminCommunications() {
 
   useEffect(() => {
     reloadData();
+    const unsub = subscribeAllMeetings((liveMeetings) => {
+      const sorted = [...liveMeetings].sort(
+        (a, b) => new Date(b.scheduledStart).getTime() - new Date(a.scheduledStart).getTime()
+      );
+      setMeetings(sorted);
+    });
+    return () => unsub();
   }, []);
 
   const filteredMeetings = meetings.filter((m) => {
@@ -7145,6 +7152,8 @@ function AdminCommunications() {
             <div className="grid md:grid-cols-2 gap-4">
               {filteredMeetings.map((m) => {
                 const isLive = m.status === "live";
+                const waitingGuests = (m.participants || []).filter((p) => p.status === "waiting");
+                const hasWaiting = waitingGuests.length > 0 && !["completed", "cancelled", "expired"].includes(m.status);
                 const isChecked = selectedMeetingIds.includes(m.id);
                 const dateStr = new Date(m.scheduledStart).toLocaleDateString(undefined, {
                   weekday: "short",
@@ -7159,14 +7168,16 @@ function AdminCommunications() {
                   <div
                     key={m.id}
                     className={`p-5 border rounded-2xl flex flex-col justify-between gap-4 shadow-sm transition-all ${
-                      isChecked
+                      hasWaiting
+                        ? "border-amber-500 bg-amber-500/5 ring-1 ring-amber-500/40"
+                        : isChecked
                         ? "border-[var(--dept)] bg-[var(--dept-soft)]/60 ring-1 ring-[var(--dept)]"
                         : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--dept)]"
                     }`}
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <input
                             type="checkbox"
                             checked={isChecked}
@@ -7182,6 +7193,11 @@ function AdminCommunications() {
                           }`}>
                             {m.status}
                           </span>
+                          {hasWaiting && (
+                            <span className="font-meta text-[8.5px] uppercase font-bold px-2 py-0.5 rounded-full border bg-amber-500/20 text-amber-400 border-amber-500/50 animate-pulse">
+                              🔔 {waitingGuests.length} Waiting in Lobby
+                            </span>
+                          )}
                         </div>
                         <span className="font-meta text-[9px] text-[var(--muted)]">
                           {m.durationMinutes} mins · {m.timezone}
@@ -7190,6 +7206,27 @@ function AdminCommunications() {
 
                       <h3 className="font-display text-base font-bold uppercase line-clamp-1">{m.title}</h3>
                       {m.description && <p className="text-xs text-[var(--muted)] line-clamp-2 mt-1">{m.description}</p>}
+
+                      {hasWaiting && (
+                        <div className="mt-2.5 p-2.5 bg-amber-500/10 border border-amber-500/40 rounded-xl flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-meta text-[9.5px] font-bold text-amber-400 truncate">
+                              ⏳ {waitingGuests.map((p) => p.displayName).join(", ")} waiting to join
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await admitAllParticipants(m.id);
+                              toast.success(`Admitted ${waitingGuests.length} participant(s) into "${m.title}"`);
+                              window.open(`/meet/${m.roomId}`, "_blank");
+                            }}
+                            className="font-meta text-[9px] px-2.5 py-1 bg-amber-500 text-black font-bold rounded-lg hover:bg-amber-400 shrink-0"
+                          >
+                            ⚡ Admit &amp; Join
+                          </button>
+                        </div>
+                      )}
 
                       <div className="mt-3 p-2.5 bg-[var(--bg)] border border-[var(--line)] rounded-xl text-[11px] space-y-1.5">
                         <div className="flex items-center justify-between">
@@ -8402,6 +8439,7 @@ export default function Admin() {
   const tabBadge = (t: (typeof TABS)[number]): number => {
     if (!alerts) return 0;
     if (t === "Orders") return alerts.newOrders + alerts.reviewReqs + alerts.unreadMsgs;
+    if (t === "Communications") return alerts.lobbyWaiting;
     if (t === "Intakes") return alerts.newBriefs;
     if (t === "Leads") return alerts.newLeads;
     return 0;

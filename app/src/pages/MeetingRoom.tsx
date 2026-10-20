@@ -869,27 +869,78 @@ export default function MeetingRoom() {
   }, [meeting, phase, myParticipantId]);
 
   // 9. Watch for incoming Waiting Room participants (Host Doorbell Notification)
-  // Chime + haptic + PERSISTENT actionable toast — an audible ping alone is
-  // too easy to miss while presenting.
-  const prevWaitingCount = useRef(0);
+  // Chime + haptic + PERSISTENT actionable toast + OS Notification + Tab Title Flash
+  // Works in both "lobby" (pre-join preview) and "in_meeting" phases so hosts
+  // never miss a guest knocking.
+  const prevWaitingIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!meeting || !isHost || phase !== "in_meeting") return;
-    const knocking = meeting.participants.filter((p) => p.status === "waiting");
-    const count = knocking.length;
-    if (count > prevWaitingCount.current && prevWaitingCount.current >= 0) {
+    if (!meeting || !isHost || (phase !== "in_meeting" && phase !== "lobby")) return;
+    const knocking = (meeting.participants || []).filter((p) => p.status === "waiting");
+    const currentIds = new Set(knocking.map((p) => p.id));
+    const newlyArrived = knocking.filter((p) => !prevWaitingIdsRef.current.has(p.id));
+    prevWaitingIdsRef.current = currentIds;
+
+    if (newlyArrived.length > 0) {
       playDoorbellChime();
       triggerHapticFeedback([150, 80, 200]);
+      const count = knocking.length;
       const names = knocking.map((p) => p.displayName).join(", ");
       toast.warning(`🔔 ${names} ${count > 1 ? "are" : "is"} waiting in the lobby`, {
-        duration: 12000,
+        duration: 15000,
         action: {
           label: count > 1 ? "Admit All" : "Admit",
           onClick: () => void admitAllParticipants(meeting.id),
         },
       });
+
+      // Browser / OS Notification when tab is backgrounded or screen-sharing another window
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "granted") {
+          try {
+            const n = new Notification(`🔔 Waiting Room: ${meeting.title}`, {
+              body: `${names} ${count > 1 ? "are" : "is"} waiting to be admitted.`,
+              icon: "/favicon.ico",
+              tag: `waiting_${meeting.id}`,
+            });
+            n.onclick = () => {
+              window.focus();
+              n.close();
+            };
+          } catch {}
+        } else if (Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {});
+        }
+      }
     }
-    prevWaitingCount.current = count;
-  }, [meeting?.participants, isHost, phase]);
+  }, [meeting?.participants, meeting?.id, meeting?.title, isHost, phase]);
+
+  // 9b. Flashing Tab Title & Periodic Gentle Reminder Chime while guests remain waiting
+  useEffect(() => {
+    if (!meeting || !isHost || (phase !== "in_meeting" && phase !== "lobby")) return;
+    const waiting = (meeting.participants || []).filter((p) => p.status === "waiting");
+    if (waiting.length === 0) return;
+
+    const baseTitle = `${meeting.title} — Social Kon10 Meet`;
+    let toggle = false;
+    const titleInterval = window.setInterval(() => {
+      toggle = !toggle;
+      document.title = toggle
+        ? `🔔 (${waiting.length}) Waiting in Lobby! — ${meeting.title}`
+        : baseTitle;
+    }, 1200);
+
+    // Replay a reminder chime every 35s if someone is still waiting un-admitted
+    const reminderInterval = window.setInterval(() => {
+      playDoorbellChime();
+      triggerHapticFeedback([100, 60, 140]);
+    }, 35000);
+
+    return () => {
+      window.clearInterval(titleInterval);
+      window.clearInterval(reminderInterval);
+      document.title = baseTitle;
+    };
+  }, [meeting?.participants, meeting?.title, isHost, phase]);
 
   // 10. Listen for Fullscreen State Change
   useEffect(() => {
@@ -2876,70 +2927,91 @@ export default function MeetingRoom() {
         ))}
       </div>
 
-      {/* Floating Waiting Room Admission Banner */}
-      {isHost && waitingParticipants.length > 0 && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-amber-950/95 border-2 border-amber-500 backdrop-blur-md px-4 py-3 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-4 max-w-lg w-[92%] animate-in slide-in-from-top-4 duration-200">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl animate-bounce">🔔</span>
-            <div>
-              <h4 className="font-display text-xs font-bold uppercase text-amber-300">
-                {waitingParticipants.length} Person Waiting in Lobby
-              </h4>
-              <p className="font-meta text-[9.5px] text-neutral-300 truncate max-w-xs">
-                {waitingParticipants.map((p) => p.displayName).join(", ")}
-              </p>
+      {/* Stacked Floating Top Alerts (Waiting Room + Raised Hands) — high z-index so never hidden by stage overlays */}
+      <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[65] flex flex-col items-center gap-2.5 w-[94%] max-w-xl pointer-events-none">
+        {/* Floating Waiting Room Admission Banner */}
+        {isHost && waitingParticipants.length > 0 && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="pointer-events-auto w-full bg-amber-950/95 border-2 border-amber-500 backdrop-blur-md px-4 py-3 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-4 duration-200"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-2xl animate-bounce shrink-0">🔔</span>
+              <div className="min-w-0">
+                <h4 className="font-display text-xs font-bold uppercase text-amber-300">
+                  {waitingParticipants.length} {waitingParticipants.length > 1 ? "People" : "Person"} Waiting in Lobby
+                </h4>
+                <p className="font-meta text-[9.5px] text-neutral-300 truncate max-w-xs">
+                  {waitingParticipants.map((p) => p.displayName).join(", ")}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {waitingParticipants.map((p) => (
+                <div key={p.id} className="flex items-center gap-1 bg-black/30 p-1 rounded-xl border border-amber-500/30">
+                  <button
+                    type="button"
+                    onClick={() => void admitParticipant(meeting.id, p.id)}
+                    className="btn btn-dept !py-1 !px-2.5 font-display text-[10px] font-bold uppercase rounded-lg"
+                    title={`Admit ${p.displayName}`}
+                  >
+                    ✓ Admit {p.displayName.split(" ")[0]}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeParticipant(meeting.id, p.id)}
+                    className="font-meta text-[9.5px] px-2 py-1 bg-red-600/80 hover:bg-red-500 text-white font-bold rounded-lg transition-colors"
+                    title={`Decline ${p.displayName}`}
+                    aria-label={`Decline ${p.displayName}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              {waitingParticipants.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => void admitAllParticipants(meeting.id)}
+                  className="font-meta text-[10px] px-3 py-1.5 bg-amber-500 text-black font-bold rounded-lg hover:bg-amber-400 shadow-sm"
+                >
+                  Admit All ({waitingParticipants.length})
+                </button>
+              )}
             </div>
           </div>
+        )}
 
-          <div className="flex items-center gap-2">
-            {waitingParticipants.map((p) => (
+        {/* Floating Attention Alert for Raised Hands */}
+        {activeParticipants.some((p) => p.isHandRaised) && (
+          <div className="pointer-events-auto w-full max-w-md bg-neutral-900/95 border-2 border-amber-400 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-top-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-xl animate-bounce">✋</span>
+              <div className="min-w-0">
+                <p className="font-display text-xs font-bold uppercase text-amber-300 truncate">
+                  {activeParticipants.filter((p) => p.isHandRaised).map((p) => p.displayName).join(", ")}
+                </p>
+                <p className="font-meta text-[8.5px] text-neutral-400">Raised hand to speak</p>
+              </div>
+            </div>
+
+            {isHost && (
               <button
-                key={p.id}
-                onClick={() => admitParticipant(meeting.id, p.id)}
-                className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase"
+                type="button"
+                onClick={() => {
+                  activeParticipants
+                    .filter((p) => p.isHandRaised)
+                    .forEach((p) => handleLowerParticipantHand(p.id));
+                }}
+                className="font-meta text-[9px] px-2.5 py-1 bg-amber-400 text-black font-bold rounded-lg hover:bg-amber-300 shrink-0"
               >
-                ✓ Admit {p.displayName.split(" ")[0]}
-              </button>
-            ))}
-            {waitingParticipants.length > 1 && (
-              <button
-                onClick={() => admitAllParticipants(meeting.id)}
-                className="font-meta text-[10px] px-3 py-1.5 bg-amber-500 text-black font-bold rounded-lg hover:bg-amber-400"
-              >
-                Admit All
+                Lower Hands
               </button>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Floating Attention Alert for Raised Hands */}
-      {activeParticipants.some((p) => p.isHandRaised) && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-neutral-900/95 border-2 border-amber-400 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-4 max-w-md w-[92%] animate-in slide-in-from-top-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="text-xl animate-bounce">✋</span>
-            <div className="min-w-0">
-              <p className="font-display text-xs font-bold uppercase text-amber-300 truncate">
-                {activeParticipants.filter((p) => p.isHandRaised).map((p) => p.displayName).join(", ")}
-              </p>
-              <p className="font-meta text-[8.5px] text-neutral-400">Raised hand to speak</p>
-            </div>
-          </div>
-
-          {isHost && (
-            <button
-              onClick={() => {
-                activeParticipants
-                  .filter((p) => p.isHandRaised)
-                  .forEach((p) => handleLowerParticipantHand(p.id));
-              }}
-              className="font-meta text-[9px] px-2.5 py-1 bg-amber-400 text-black font-bold rounded-lg hover:bg-amber-300 shrink-0"
-            >
-              Lower Hands
-            </button>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Floating Alert When Live Proofing is Active & Drawer is Closed (Attendees Only, Dismissable) */}
       {meeting.liveProofing?.active &&
