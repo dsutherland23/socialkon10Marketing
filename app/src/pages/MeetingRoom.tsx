@@ -36,6 +36,7 @@ import {
   type MeetingRecord,
   type MeetingParticipant,
   type MeetingChatMessage,
+  type MeetingBreakoutRoom,
   type ParticipantRole,
   type ParticipantStatus,
   subscribeToMeeting,
@@ -47,6 +48,18 @@ import {
   removeParticipant,
   setMeetingLock,
   endMeetingForAll,
+  createBreakoutRoom,
+  createMultipleBreakoutRooms,
+  updateBreakoutRoom,
+  deleteBreakoutRoom,
+  assignParticipantToBreakoutRoom,
+  autoAssignParticipantsToBreakoutRooms,
+  joinBreakoutRoom,
+  openAllBreakoutRooms,
+  closeAllBreakoutRooms,
+  setBreakoutAllowSelfSelect,
+  broadcastToBreakoutRooms,
+  requestBreakoutHostHelp,
   sendMeetingChatMessage,
   subscribeToMeetingChat,
   sendMeetingReaction,
@@ -362,7 +375,19 @@ export default function MeetingRoom() {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showDeviceSettingsModal, setShowDeviceSettingsModal] = useState(false);
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
+
+  // Breakout Rooms State
   const [newRoomName, setNewRoomName] = useState("");
+  const [newRoomTopic, setNewRoomTopic] = useState("");
+  const [breakoutTimerMinutes, setBreakoutTimerMinutes] = useState<number>(15);
+  const [breakoutQuickCount, setBreakoutQuickCount] = useState<number>(2);
+  const [breakoutBroadcastDraft, setBreakoutBroadcastDraft] = useState("");
+  const [dismissedBroadcastId, setDismissedBroadcastId] = useState<string | null>(null);
+  const [editingBreakoutRoomId, setEditingBreakoutRoomId] = useState<string | null>(null);
+  const [editingBreakoutName, setEditingBreakoutName] = useState("");
+  const [editingBreakoutTopic, setEditingBreakoutTopic] = useState("");
+  const [chatScope, setChatScope] = useState<"room" | "everyone">("room");
+  const [breakoutRemainingSeconds, setBreakoutRemainingSeconds] = useState<number | null>(null);
 
   // Lets the actual host claim host controls when they aren't auto-recognized:
   // demo mode has no auth at all, and live-mode hosts may simply be signed out.
@@ -400,12 +425,30 @@ export default function MeetingRoom() {
     .filter((p) => p.status === "waiting" && p.role !== "host")
     .filter((p, idx, arr) => arr.findIndex((x) => x.id === p.id) === idx);
 
-  const otherConnectedParticipants = activeParticipants.filter((p) => {
+  // Breakout Rooms Computed Context
+  const breakoutRooms: MeetingBreakoutRoom[] = meeting?.breakoutRooms || [];
+  const openBreakoutRooms = breakoutRooms.filter((r) => r.status === "open");
+  const myParticipantRecord = activeParticipants.find(
+    (p) => p.id === myParticipantId || (isHost && p.role === "host")
+  );
+  const myCurrentBreakoutRoomId = myParticipantRecord?.currentBreakoutRoomId || null;
+  const myActiveBreakoutRoom =
+    breakoutRooms.find((r) => r.id === myCurrentBreakoutRoomId && r.status !== "closed") || null;
+  const myAssignedBreakoutRoom =
+    breakoutRooms.find((r) => (r.assignedParticipants || []).includes(myParticipantId) && r.status === "open") || null;
+  const breakoutHelpRequests = activeParticipants.filter((p) => Boolean(p.helpRequestedRoomId));
+
+  const allOtherConnectedParticipants = activeParticipants.filter((p) => {
     if (p.id === effectiveMyId || p.id === myParticipantId) return false;
     if (isHost && p.role === "host") return false;
     if (user?.email && p.email && p.email.toLowerCase().trim() === user.email.toLowerCase().trim()) return false;
     return true;
   });
+
+  // Scope the video/audio stage to participants in the SAME room (Main Stage vs Active Breakout Room)
+  const otherConnectedParticipants = allOtherConnectedParticipants.filter(
+    (p) => (p.currentBreakoutRoomId || null) === (myActiveBreakoutRoom ? myActiveBreakoutRoom.id : null)
+  );
 
   // 0b. Smart gallery layout — measure the stage and compute the optimal
   // cols/rows (and pagination) from viewport size. Pure layout math; a
@@ -1026,8 +1069,22 @@ export default function MeetingRoom() {
         if (stopped || !fresh) return;
         setMeeting((prev) => {
           if (!prev) return fresh;
-          const sig = (m: MeetingRecord) =>
-            (m.participants || []).map((p) => `${p.id}:${p.status}:${p.displayName}`).sort().join("|");
+          const sig = (m: MeetingRecord) => {
+            const pSig = (m.participants || [])
+              .map(
+                (p) =>
+                  `${p.id}:${p.status}:${p.displayName}:${p.currentBreakoutRoomId || ""}:${p.helpRequestedRoomId || ""}`
+              )
+              .sort()
+              .join("|");
+            const bSig = (m.breakoutRooms || [])
+              .map(
+                (r) =>
+                  `${r.id}:${r.name}:${r.status}:${(r.assignedParticipants || []).join(",")}:${(r.activeParticipants || []).join(",")}:${r.endsAt || ""}`
+              )
+              .join("|");
+            return `${pSig}#${bSig}#${m.breakoutBroadcast?.id || ""}#${Boolean(m.breakoutAllowSelfSelect)}`;
+          };
           return sig(prev) === sig(fresh) ? prev : fresh;
         });
 
@@ -1070,6 +1127,95 @@ export default function MeetingRoom() {
     document.addEventListener("fullscreenchange", handleFs);
     return () => document.removeEventListener("fullscreenchange", handleFs);
   }, []);
+
+  // 10b. Breakout Rooms: Host Broadcast Alert, Help Request Alert, Assignment Prompt & Countdown Timer
+  const prevBroadcastIdRef = useRef<string>("");
+  useEffect(() => {
+    const bc = meeting?.breakoutBroadcast;
+    if (!meeting || phase !== "in_meeting" || !bc) return;
+    if (bc.id === prevBroadcastIdRef.current) return;
+    prevBroadcastIdRef.current = bc.id;
+    if (Date.now() - new Date(bc.sentAt).getTime() > 120000) return;
+    playMessageNotificationSound();
+    triggerHapticFeedback([120, 60, 120]);
+    toast.info(`📢 ${bc.senderName} (Broadcast): "${bc.message}"`, { duration: 10000 });
+  }, [meeting, phase]);
+
+  const prevHelpRequestsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!meeting || !isHost || phase !== "in_meeting") return;
+    const currentSet = new Set<string>();
+    const roomsMap = new Map((meeting.breakoutRooms || []).map((r) => [r.id, r]));
+    (meeting.participants || []).forEach((p) => {
+      if (p.helpRequestedRoomId && p.id !== myParticipantId) {
+        const key = `${p.id}:${p.helpRequestedRoomId}`;
+        currentSet.add(key);
+        if (!prevHelpRequestsRef.current.has(key)) {
+          const room = roomsMap.get(p.helpRequestedRoomId);
+          playHandRaiseChime();
+          triggerHapticFeedback([180, 80, 180]);
+          toast.warning(
+            `🆘 ${p.displayName} is asking for Host help in "${room?.name || "Breakout Room"}"`,
+            {
+              duration: 15000,
+              action: {
+                label: "Join Room",
+                onClick: () => {
+                  void joinBreakoutRoom(meeting.id, myParticipantId, p.helpRequestedRoomId!);
+                  void requestBreakoutHostHelp(meeting.id, p.id, null);
+                },
+              },
+            }
+          );
+        }
+      }
+    });
+    prevHelpRequestsRef.current = currentSet;
+  }, [meeting, isHost, phase, myParticipantId]);
+
+  const prevAssignedRoomIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!meeting || phase !== "in_meeting") return;
+    const assignedId = myAssignedBreakoutRoom?.id || null;
+    if (
+      assignedId &&
+      assignedId !== prevAssignedRoomIdRef.current &&
+      myCurrentBreakoutRoomId !== assignedId
+    ) {
+      playDoorbellChime();
+      triggerHapticFeedback([100, 60, 120]);
+      toast.info(`🔀 You have been assigned to "${myAssignedBreakoutRoom?.name}"`, {
+        duration: 12000,
+        action: {
+          label: "Join Room",
+          onClick: () => void joinBreakoutRoom(meeting.id, myParticipantId, assignedId),
+        },
+      });
+    }
+    prevAssignedRoomIdRef.current = assignedId;
+  }, [meeting, phase, myAssignedBreakoutRoom, myCurrentBreakoutRoomId, myParticipantId]);
+
+  // Live 1s countdown ticker when any open breakout room has an active timer (`endsAt`)
+  useEffect(() => {
+    const timedRoom = myActiveBreakoutRoom?.endsAt
+      ? myActiveBreakoutRoom
+      : openBreakoutRooms.find((r) => Boolean(r.endsAt));
+    if (!timedRoom?.endsAt || phase !== "in_meeting") {
+      setBreakoutRemainingSeconds(null);
+      return;
+    }
+    const updateTicker = () => {
+      const diffSec = Math.max(0, Math.floor((new Date(timedRoom.endsAt!).getTime() - Date.now()) / 1000));
+      setBreakoutRemainingSeconds(diffSec);
+      if (diffSec === 0 && isHost && meeting) {
+        void closeAllBreakoutRooms(meeting.id);
+        toast.info("⏱️ Breakout timer completed — recalling all participants to the Main Stage.");
+      }
+    };
+    updateTicker();
+    const timer = window.setInterval(updateTicker, 1000);
+    return () => window.clearInterval(timer);
+  }, [myActiveBreakoutRoom, openBreakoutRooms, phase, isHost, meeting]);
 
   // 11. Synchronize Live Proofing state across host and clients
   const prevProofingActive = useRef(false);
@@ -1586,12 +1732,22 @@ export default function MeetingRoom() {
     }
   };
 
+  const formatBreakoutCountdown = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatDraft.trim() || !meeting) return;
     const text = chatDraft.trim();
     setChatDraft("");
     const role: ParticipantRole = isHost ? "host" : isAdmin ? "cohost" : "participant";
+    const targetBreakoutId =
+      myActiveBreakoutRoom && chatScope === "room" ? myActiveBreakoutRoom.id : undefined;
+    const targetBreakoutName =
+      myActiveBreakoutRoom && chatScope === "room" ? myActiveBreakoutRoom.name : undefined;
 
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const optimisticMsg: MeetingChatMessage = {
@@ -1601,6 +1757,8 @@ export default function MeetingRoom() {
       senderName: displayName,
       senderRole: role,
       recipientId: chatRecipient || undefined,
+      breakoutRoomId: targetBreakoutId,
+      breakoutRoomName: targetBreakoutName,
       message: text,
       createdAt: new Date().toISOString(),
     };
@@ -1614,7 +1772,9 @@ export default function MeetingRoom() {
         displayName,
         role,
         text,
-        chatRecipient || undefined
+        chatRecipient || undefined,
+        targetBreakoutId,
+        targetBreakoutName
       );
       setChatMessages((prev) => prev.map((m) => (m.id === tempId ? sent : m)));
     } catch (err: any) {
@@ -3345,8 +3505,13 @@ export default function MeetingRoom() {
           )}
           {/* Live Screen / Studio Presentation Indicator in Header */}
           {(() => {
+            const myRoomScope = myActiveBreakoutRoom ? myActiveBreakoutRoom.id : null;
             const remoteSharer = meeting?.participants.find(
-              (p) => Boolean(p.isScreenSharing) && p.id !== myParticipantId && p.id !== effectiveMyId
+              (p) =>
+                Boolean(p.isScreenSharing) &&
+                p.id !== myParticipantId &&
+                p.id !== effectiveMyId &&
+                (p.currentBreakoutRoomId || null) === myRoomScope
             );
             if (!remoteSharer && !isScreenSharing) return null;
             return (
@@ -3468,10 +3633,158 @@ export default function MeetingRoom() {
         </div>
       </div>
 
+      {/* 1. ACTIVE BREAKOUT ROOM CONTROL BAR (Shown when user is inside a Breakout Room) */}
+      {myActiveBreakoutRoom && (
+        <div className="bg-gradient-to-r from-purple-950/95 via-indigo-950/90 to-purple-950/95 border-b border-purple-500/50 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-white z-20 shadow-lg shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-purple-400 animate-pulse shrink-0" />
+            <span className="font-meta text-[9px] px-2 py-0.5 rounded-full bg-purple-500/25 border border-purple-400/50 text-purple-200 font-extrabold uppercase tracking-wider shrink-0">
+              🔀 Breakout Room
+            </span>
+            <p className="font-display text-xs sm:text-sm font-bold uppercase text-white truncate">
+              {myActiveBreakoutRoom.name}
+            </p>
+            {myActiveBreakoutRoom.topic && (
+              <span className="font-meta text-[10px] text-purple-200/80 hidden md:inline truncate max-w-xs">
+                · {myActiveBreakoutRoom.topic}
+              </span>
+            )}
+            <span className="font-meta text-[9px] px-2 py-0.5 rounded bg-black/40 border border-purple-500/30 text-purple-200 shrink-0">
+              {otherConnectedParticipants.length + 1} in room
+            </span>
+            {breakoutRemainingSeconds !== null && (
+              <span
+                className={`font-mono text-[10px] px-2 py-0.5 rounded font-bold border shrink-0 ${
+                  breakoutRemainingSeconds <= 60
+                    ? "bg-red-500/25 border-red-400 text-red-200 animate-pulse"
+                    : "bg-amber-500/20 border-amber-400/50 text-amber-200"
+                }`}
+                title="Breakout session countdown timer"
+              >
+                ⏱️ {formatBreakoutCountdown(breakoutRemainingSeconds)}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!isHost && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const alreadyAsking = myParticipantRecord?.helpRequestedRoomId === myActiveBreakoutRoom.id;
+                  const updated = await requestBreakoutHostHelp(
+                    meeting.id,
+                    myParticipantId,
+                    alreadyAsking ? null : myActiveBreakoutRoom.id
+                  );
+                  if (updated) setMeeting({ ...updated });
+                  toast.info(
+                    alreadyAsking
+                      ? "Host help request cancelled."
+                      : `🆘 Alerted the Host to join "${myActiveBreakoutRoom.name}"!`
+                  );
+                }}
+                className={`font-meta text-[9.5px] px-2.5 py-1 rounded-lg border font-bold flex items-center gap-1 transition-all ${
+                  myParticipantRecord?.helpRequestedRoomId === myActiveBreakoutRoom.id
+                    ? "bg-amber-500 text-black border-amber-300 animate-pulse"
+                    : "bg-purple-900/70 hover:bg-purple-800 text-purple-100 border-purple-500/50"
+                }`}
+                title="Ask the meeting host to visit this breakout room"
+              >
+                <span>🆘</span>
+                <span className="hidden sm:inline">
+                  {myParticipantRecord?.helpRequestedRoomId === myActiveBreakoutRoom.id
+                    ? "Host Notified"
+                    : "Ask Host for Help"}
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setActiveDrawer(activeDrawer === "breakouts" ? "none" : "breakouts")}
+              className="font-meta text-[9.5px] px-2.5 py-1 rounded-lg bg-purple-900/70 hover:bg-purple-800 text-purple-100 border border-purple-500/50 font-bold flex items-center gap-1 transition-colors"
+            >
+              <span>🔀</span>
+              <span className="hidden sm:inline">Rooms</span>
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const updated = await joinBreakoutRoom(meeting.id, myParticipantId, null);
+                if (updated) setMeeting({ ...updated });
+                toast.success("Returned to Main Stage");
+              }}
+              className="font-meta text-[9.5px] px-2.5 py-1 rounded-lg bg-white text-purple-950 hover:bg-purple-100 font-extrabold flex items-center gap-1 shadow-sm transition-colors"
+              title="Leave this breakout room and return to the Main Stage"
+            >
+              <span>↩️</span>
+              <span>Main Stage</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 2. ASSIGNED BREAKOUT ROOM INVITATION BANNER (Shown on Main Stage when user has an open assigned room) */}
+      {!myActiveBreakoutRoom && myAssignedBreakoutRoom && (
+        <div className="bg-gradient-to-r from-purple-950/90 via-neutral-900 to-purple-950/90 border-b border-purple-500/40 px-3 sm:px-6 py-2 flex items-center justify-between gap-2 text-xs text-white z-20 shadow-md shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm shrink-0">🔀</span>
+            <p className="font-meta text-[11px] text-purple-200 truncate">
+              You are assigned to Breakout Room:{" "}
+              <strong className="text-white font-display uppercase">{myAssignedBreakoutRoom.name}</strong>
+              {myAssignedBreakoutRoom.topic ? ` — ${myAssignedBreakoutRoom.topic}` : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={async () => {
+                const updated = await joinBreakoutRoom(meeting.id, myParticipantId, myAssignedBreakoutRoom.id);
+                if (updated) setMeeting({ ...updated });
+                toast.success(`Joined "${myAssignedBreakoutRoom.name}"`);
+              }}
+              className="btn btn-dept !py-1 !px-3 font-display text-[9.5px] font-bold uppercase shrink-0 shadow-sm"
+            >
+              🚪 Join Breakout Room
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. HOST BROADCAST ANNOUNCEMENT BANNER (Visible across Main Stage and all Breakout Rooms) */}
+      {meeting.breakoutBroadcast &&
+        meeting.breakoutBroadcast.id !== dismissedBroadcastId &&
+        Date.now() - new Date(meeting.breakoutBroadcast.sentAt).getTime() < 90_000 && (
+          <div className="bg-gradient-to-r from-amber-950/95 via-neutral-900 to-amber-950/95 border-b border-amber-400/60 px-3 sm:px-6 py-2 flex items-center justify-between gap-2 text-xs text-white z-20 shadow-lg shrink-0 animate-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-base shrink-0">📢</span>
+              <p className="font-meta text-[11px] text-amber-200 truncate">
+                <strong className="uppercase font-display text-amber-300 mr-1.5">
+                  Host Broadcast ({meeting.breakoutBroadcast.senderName}):
+                </strong>
+                <span className="text-white font-medium">{meeting.breakoutBroadcast.message}</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDismissedBroadcastId(meeting.breakoutBroadcast?.id || null)}
+              className="w-6 h-6 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-[10px] font-bold shrink-0"
+              title="Dismiss announcement"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
       {/* Floating Screen Broadcast Alert for Attendees (Only shown when Stage is covered by a Drawer or Maximized Proofing) */}
       {(() => {
+        const myRoomScope = myActiveBreakoutRoom ? myActiveBreakoutRoom.id : null;
         const remoteSharer = meeting?.participants.find(
-          (p) => Boolean(p.isScreenSharing) && p.id !== myParticipantId && p.id !== effectiveMyId
+          (p) =>
+            Boolean(p.isScreenSharing) &&
+            p.id !== myParticipantId &&
+            p.id !== effectiveMyId &&
+            (p.currentBreakoutRoomId || null) === myRoomScope
         );
         if (!remoteSharer || (activeDrawer === "none" && !isProofingMaximized)) return null;
         return (
@@ -4022,8 +4335,13 @@ export default function MeetingRoom() {
         {/* Stage & Video Tiles */}
         <div className="flex-1 p-2 sm:p-4 flex flex-col gap-2 sm:gap-3 overflow-hidden h-full min-h-0">
           {(() => {
+            const myRoomScope = myActiveBreakoutRoom ? myActiveBreakoutRoom.id : null;
             const remoteScreenSharer = meeting?.participants.find(
-              (p) => (p.status === "joined" || p.status === "admitted") && p.isScreenSharing && p.id !== myParticipantId
+              (p) =>
+                (p.status === "joined" || p.status === "admitted") &&
+                p.isScreenSharing &&
+                p.id !== myParticipantId &&
+                (p.currentBreakoutRoomId || null) === myRoomScope
             );
             const activeScreenPresenter = isScreenSharing
               ? { id: myParticipantId, displayName: `${displayName} (You)`, isLocal: true }
@@ -4816,27 +5134,73 @@ export default function MeetingRoom() {
             {/* DRAWER: CHAT */}
             {activeDrawer === "chat" && (
               <div className="flex-1 flex flex-col h-full overflow-hidden bg-neutral-950 md:bg-neutral-900/50">
+                {/* Breakout Room Chat Scope Switcher */}
+                {myActiveBreakoutRoom && (
+                  <div className="px-3 py-2 bg-purple-950/40 border-b border-purple-500/30 flex items-center justify-between gap-1.5 shrink-0">
+                    <span className="font-meta text-[9px] text-purple-200 uppercase font-bold truncate">
+                      Chat Scope:
+                    </span>
+                    <div className="flex items-center gap-1 bg-neutral-900 p-0.5 rounded-lg border border-neutral-800">
+                      <button
+                        type="button"
+                        onClick={() => setChatScope("room")}
+                        className={`font-meta text-[9px] px-2 py-1 rounded-md font-bold transition-all ${
+                          chatScope === "room"
+                            ? "bg-purple-600 text-white shadow-xs"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                      >
+                        🔀 {myActiveBreakoutRoom.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatScope("everyone")}
+                        className={`font-meta text-[9px] px-2 py-1 rounded-md font-bold transition-all ${
+                          chatScope === "everyone"
+                            ? "bg-[var(--dept)] text-black shadow-xs"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                      >
+                        🌐 Everyone
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Chat Message Stream */}
                 <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3 text-xs">
-                  {chatMessages.length === 0 ? (
-                    <div className="text-center py-12 px-4 space-y-2">
-                      <span className="text-3xl">💬</span>
-                      <p className="font-display text-xs font-bold uppercase text-neutral-300">
-                        In-Meeting Public Chat
-                      </p>
-                      <p className="font-meta text-[10px] text-neutral-500 max-w-xs mx-auto">
-                        Messages sent here are visible to all admitted attendees in this session.
-                      </p>
-                    </div>
-                  ) : (
-                    chatMessages.map((msg) => {
+                  {(() => {
+                    const visibleChatMessages = chatMessages.filter(
+                      (m) =>
+                        !m.breakoutRoomId ||
+                        m.breakoutRoomId === myActiveBreakoutRoom?.id ||
+                        isHost
+                    );
+                    if (visibleChatMessages.length === 0) {
+                      return (
+                        <div className="text-center py-12 px-4 space-y-2">
+                          <span className="text-3xl">{myActiveBreakoutRoom && chatScope === "room" ? "🔀" : "💬"}</span>
+                          <p className="font-display text-xs font-bold uppercase text-neutral-300">
+                            {myActiveBreakoutRoom && chatScope === "room"
+                              ? `${myActiveBreakoutRoom.name} Room Chat`
+                              : "In-Meeting Public Chat"}
+                          </p>
+                          <p className="font-meta text-[10px] text-neutral-500 max-w-xs mx-auto">
+                            {myActiveBreakoutRoom && chatScope === "room"
+                              ? "Messages sent in Room mode are shared with members inside this breakout room."
+                              : "Messages sent here are visible to all admitted attendees in this session."}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return visibleChatMessages.map((msg) => {
                       const isMe = msg.senderId === myParticipantId;
                       return (
                         <div
                           key={msg.id}
                           className={`flex flex-col ${isMe ? "items-end" : "items-start"} max-w-[92%] ${isMe ? "ml-auto" : "mr-auto"}`}
                         >
-                          <div className="flex items-center gap-1.5 mb-1 px-1">
+                          <div className="flex items-center flex-wrap gap-1.5 mb-1 px-1">
                             <span
                               className={`font-display text-[10.5px] font-bold ${
                                 isMe
@@ -4853,6 +5217,11 @@ export default function MeetingRoom() {
                                 HOST
                               </span>
                             )}
+                            {msg.breakoutRoomName && (
+                              <span className="bg-purple-500/20 border border-purple-500/40 text-purple-200 text-[8px] font-bold px-1.5 py-0.2 rounded-full">
+                                🔀 {msg.breakoutRoomName}
+                              </span>
+                            )}
                             <span className="font-meta text-[8px] text-neutral-500">
                               {new Date(msg.createdAt).toLocaleTimeString([], {
                                 hour: "numeric",
@@ -4865,6 +5234,8 @@ export default function MeetingRoom() {
                             className={`p-2.5 sm:p-3 rounded-2xl text-xs break-words shadow-sm leading-relaxed ${
                               isMe
                                 ? "bg-[var(--dept)]/15 border border-[var(--dept)]/35 text-white rounded-tr-none"
+                                : msg.breakoutRoomId
+                                ? "bg-purple-950/60 border border-purple-500/40 text-purple-100 rounded-tl-none"
                                 : "bg-neutral-800/90 border border-neutral-700/60 text-neutral-200 rounded-tl-none"
                             }`}
                           >
@@ -4872,8 +5243,8 @@ export default function MeetingRoom() {
                           </div>
                         </div>
                       );
-                    })
-                  )}
+                    });
+                  })()}
                   <div ref={chatEndRef} />
                 </div>
 
@@ -5512,38 +5883,794 @@ export default function MeetingRoom() {
               </div>
             )}
 
-            {/* DRAWER: BREAKOUT ROOMS */}
+            {/* DRAWER: BREAKOUT ROOMS (2026 Full Creation, Assignment, Viewing & Session Manager) */}
             {activeDrawer === "breakouts" && (
-              <div className="flex-1 p-4 overflow-y-auto space-y-4 text-xs">
-                {isHost ? (
+              <div className="flex-1 p-3 sm:p-4 overflow-y-auto overscroll-contain space-y-4 text-xs bg-neutral-950 md:bg-neutral-900/50">
+                {/* Active Status Summary Banner */}
+                <div className="p-3 rounded-2xl bg-gradient-to-br from-purple-950/60 via-neutral-900 to-neutral-900 border border-purple-500/30 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-sm">
+                        🔀
+                      </span>
+                      <div>
+                        <p className="font-display text-xs font-bold uppercase text-white">
+                          Breakout Sessions
+                        </p>
+                        <p className="font-meta text-[9px] text-purple-200/80">
+                          {breakoutRooms.length === 0
+                            ? "No breakout rooms created yet"
+                            : `${openBreakoutRooms.length} open · ${breakoutRooms.length} total`}
+                        </p>
+                      </div>
+                    </div>
+                    {breakoutRemainingSeconds !== null && (
+                      <span className="font-mono text-[10px] px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-200 font-bold">
+                        ⏱️ {formatBreakoutCountdown(breakoutRemainingSeconds)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Current Location Pill */}
+                  <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-purple-500/20 text-[10px]">
+                    <span className="font-meta text-neutral-400">Your Location:</span>
+                    {myActiveBreakoutRoom ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-full bg-purple-500/25 border border-purple-400/50 text-purple-200 font-bold">
+                          🟢 {myActiveBreakoutRoom.name}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const updated = await joinBreakoutRoom(meeting.id, myParticipantId, null);
+                            if (updated) setMeeting({ ...updated });
+                            toast.success("Returned to Main Stage");
+                          }}
+                          className="px-2 py-0.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white font-meta text-[9px] font-bold"
+                        >
+                          ↩️ Main Stage
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold font-meta text-[9px]">
+                        🌐 Main Stage
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* HOST CREATION, QUICK SPLIT, TIMER & GLOBAL SESSION CONTROLS */}
+                {isHost && (
                   <div className="space-y-3">
-                    <p className="text-neutral-400 text-xs">
-                      Split participants into smaller creative breakout sessions.
-                    </p>
-                    <div className="flex gap-2">
+                    {/* 1. Create Single Custom Room */}
+                    <div className="p-3 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <p className="font-meta text-[9px] uppercase font-bold text-purple-300 tracking-wider">
+                          + Create Breakout Room
+                        </p>
+                        <div className="flex items-center gap-1">
+                          <span className="font-meta text-[8.5px] text-neutral-400">Timer:</span>
+                          <select
+                            value={breakoutTimerMinutes}
+                            onChange={(e) => setBreakoutTimerMinutes(Number(e.target.value))}
+                            className="bg-neutral-800 border border-neutral-700 rounded-lg px-1.5 py-0.5 text-[9.5px] text-white outline-none"
+                            aria-label="Breakout timer duration"
+                          >
+                            <option value={0}>No limit</option>
+                            <option value={5}>5 min</option>
+                            <option value={10}>10 min</option>
+                            <option value={15}>15 min</option>
+                            <option value={30}>30 min</option>
+                          </select>
+                        </div>
+                      </div>
+
                       <input
                         type="text"
                         value={newRoomName}
                         onChange={(e) => setNewRoomName(e.target.value)}
-                        placeholder="Room name (e.g. Brainstorm 1)"
-                        className="flex-1 bg-neutral-800 border border-neutral-700 px-3 py-1.5 rounded text-xs outline-none text-white placeholder-neutral-500"
+                        placeholder="Room name (e.g. Brand Strategy, Design Pod A)"
+                        className="w-full bg-neutral-950 border border-neutral-700 focus:border-purple-500 px-3 py-2 rounded-xl text-xs outline-none text-white placeholder-neutral-500"
                       />
-                      <button
-                        onClick={() => {
-                          if (!newRoomName.trim()) return;
-                          toast.success(`Breakout room "${newRoomName}" created.`);
-                          setNewRoomName("");
-                        }}
-                        className="btn btn-dept !py-1.5 !px-3 font-meta text-[10px]"
-                      >
-                        Create
-                      </button>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newRoomTopic}
+                          onChange={(e) => setNewRoomTopic(e.target.value)}
+                          placeholder="Creative topic / goal (optional)"
+                          className="flex-1 bg-neutral-950 border border-neutral-700 focus:border-purple-500 px-3 py-1.5 rounded-xl text-[11px] outline-none text-white placeholder-neutral-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const nameToUse =
+                              newRoomName.trim() || `Breakout Room ${breakoutRooms.length + 1}`;
+                            const updated = await createBreakoutRoom(meeting.id, nameToUse, {
+                              topic: newRoomTopic.trim() || undefined,
+                              durationMinutes:
+                                breakoutTimerMinutes > 0 ? breakoutTimerMinutes : undefined,
+                              status: "open",
+                            });
+                            if (updated) {
+                              setMeeting({ ...updated });
+                              setNewRoomName("");
+                              setNewRoomTopic("");
+                              toast.success(`Created "${nameToUse}"`);
+                            }
+                          }}
+                          className="btn btn-dept !py-1.5 !px-3.5 font-display text-[10px] font-bold uppercase shrink-0"
+                        >
+                          + Add Room
+                        </button>
+                      </div>
                     </div>
+
+                    {/* 2. Quick Split & Auto-Assign Generator */}
+                    <div className="p-3 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <p className="font-meta text-[9px] uppercase font-bold text-cyan-300 tracking-wider">
+                          ⚡ Quick Split &amp; Auto-Assign
+                        </p>
+                        <div className="flex items-center gap-1">
+                          {[2, 3, 4].map((count) => (
+                            <button
+                              key={count}
+                              type="button"
+                              onClick={() => setBreakoutQuickCount(count)}
+                              className={`font-meta text-[9px] px-2 py-0.5 rounded-md border font-bold transition-colors ${
+                                breakoutQuickCount === count
+                                  ? "bg-cyan-500/20 border-cyan-400 text-cyan-200"
+                                  : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
+                              }`}
+                            >
+                              {count} Rooms
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const updated = await createMultipleBreakoutRooms(
+                              meeting.id,
+                              breakoutQuickCount,
+                              {
+                                autoAssign: true,
+                                durationMinutes:
+                                  breakoutTimerMinutes > 0 ? breakoutTimerMinutes : undefined,
+                                openImmediately: true,
+                              }
+                            );
+                            if (updated) {
+                              setMeeting({ ...updated });
+                              toast.success(
+                                `Created ${breakoutQuickCount} Breakout Rooms & auto-assigned attendees!`
+                              );
+                            }
+                          }}
+                          className="py-2 px-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-display text-[10px] font-bold uppercase flex items-center justify-center gap-1 shadow-sm transition-colors"
+                        >
+                          <span>🎲</span> Split &amp; Auto-Assign
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (breakoutRooms.length === 0) {
+                              const updated = await createMultipleBreakoutRooms(
+                                meeting.id,
+                                breakoutQuickCount,
+                                {
+                                  autoAssign: false,
+                                  durationMinutes:
+                                    breakoutTimerMinutes > 0 ? breakoutTimerMinutes : undefined,
+                                  openImmediately: true,
+                                }
+                              );
+                              if (updated) {
+                                setMeeting({ ...updated });
+                                toast.success(`Created ${breakoutQuickCount} empty Breakout Rooms`);
+                              }
+                            } else {
+                              const updated = await autoAssignParticipantsToBreakoutRooms(
+                                meeting.id,
+                                false
+                              );
+                              if (updated) {
+                                setMeeting({ ...updated });
+                                toast.success("Redistributed participants evenly across rooms!");
+                              }
+                            }
+                          }}
+                          className="py-2 px-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 font-display text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-colors"
+                        >
+                          <span>⚖️</span>{" "}
+                          {breakoutRooms.length === 0
+                            ? `Create ${breakoutQuickCount} Empty`
+                            : "Rebalance All"}
+                        </button>
+                      </div>
+
+                      {/* Self-Select Permission Toggle */}
+                      <label className="flex items-center justify-between gap-2 pt-1.5 border-t border-neutral-800 cursor-pointer select-none">
+                        <span className="font-meta text-[10px] text-neutral-300">
+                          Allow participants to choose &amp; switch rooms freely
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(meeting.breakoutAllowSelfSelect)}
+                          onChange={async (e) => {
+                            const allow = e.target.checked;
+                            const updated = await setBreakoutAllowSelfSelect(meeting.id, allow);
+                            if (updated) setMeeting({ ...updated });
+                            toast.info(
+                              allow
+                                ? "Participants can now self-select any open Breakout Room."
+                                : "Participants restricted to their assigned Breakout Room."
+                            );
+                          }}
+                          className="h-4 w-4 accent-purple-500 rounded cursor-pointer"
+                        />
+                      </label>
+                    </div>
+
+                    {/* 3. Global Session Controls (Open / Move All, Close / Recall All, Broadcast) */}
+                    {breakoutRooms.length > 0 && (
+                      <div className="p-3 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-2.5">
+                        <p className="font-meta text-[9px] uppercase font-bold text-amber-300 tracking-wider">
+                          🎛️ Session Orchestration
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const updated = await openAllBreakoutRooms(meeting.id, {
+                                moveAssignedIntoRooms: true,
+                                durationMinutes:
+                                  breakoutTimerMinutes > 0 ? breakoutTimerMinutes : undefined,
+                              });
+                              if (updated) {
+                                setMeeting({ ...updated });
+                                toast.success("Opened all rooms & moved assigned participants!");
+                              }
+                            }}
+                            className="py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display text-[9.5px] font-bold uppercase flex items-center justify-center gap-1 shadow-sm transition-colors"
+                            title="Open all rooms and move assigned participants into their rooms immediately"
+                          >
+                            <span>▶️</span> Launch &amp; Move All
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const updated = await closeAllBreakoutRooms(meeting.id);
+                              if (updated) {
+                                setMeeting({ ...updated });
+                                toast.info("Closed all Breakout Rooms & recalled everyone to Main Stage");
+                              }
+                            }}
+                            className="py-2 px-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/35 border border-red-500/40 text-red-300 font-display text-[9.5px] font-bold uppercase flex items-center justify-center gap-1 transition-colors"
+                            title="Close all breakout rooms and bring every participant back to the Main Stage"
+                          >
+                            <span>⏹️</span> Close &amp; Recall All
+                          </button>
+                        </div>
+
+                        {/* Broadcast Announcement to All Breakout Rooms */}
+                        <div className="pt-1.5 border-t border-neutral-800 space-y-1.5">
+                          <label className="font-meta text-[9px] text-neutral-400 uppercase font-bold block">
+                            📢 Broadcast Announcement to All Rooms
+                          </label>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={breakoutBroadcastDraft}
+                              onChange={(e) => setBreakoutBroadcastDraft(e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === "Enter" && breakoutBroadcastDraft.trim()) {
+                                  e.preventDefault();
+                                  const msg = breakoutBroadcastDraft.trim();
+                                  setBreakoutBroadcastDraft("");
+                                  const updated = await broadcastToBreakoutRooms(
+                                    meeting.id,
+                                    displayName,
+                                    msg
+                                  );
+                                  if (updated) setMeeting({ ...updated });
+                                  toast.success("Broadcast sent to all Breakout Rooms!");
+                                }
+                              }}
+                              placeholder="e.g. Wrap up in 2 mins — returning to Main Stage!"
+                              className="flex-1 bg-neutral-950 border border-neutral-700 focus:border-amber-400 px-2.5 py-1.5 rounded-xl text-[11px] text-white placeholder-neutral-500 outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!breakoutBroadcastDraft.trim()) return;
+                                const msg = breakoutBroadcastDraft.trim();
+                                setBreakoutBroadcastDraft("");
+                                const updated = await broadcastToBreakoutRooms(
+                                  meeting.id,
+                                  displayName,
+                                  msg
+                                );
+                                if (updated) setMeeting({ ...updated });
+                                toast.success("Broadcast sent to all Breakout Rooms!");
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-display text-[9.5px] font-extrabold uppercase shrink-0"
+                            >
+                              Send
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* PARTICIPANT / GUEST QUICK CARD (When not Host) */}
+                {!isHost && (
+                  <div className="p-3 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-2">
+                    {myAssignedBreakoutRoom ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-meta text-[9px] uppercase text-purple-300 font-bold">
+                            Your Assigned Room
+                          </p>
+                          <p className="font-display text-xs font-bold text-white truncate">
+                            {myAssignedBreakoutRoom.name}
+                          </p>
+                          {myAssignedBreakoutRoom.topic && (
+                            <p className="font-meta text-[10px] text-neutral-400 truncate">
+                              {myAssignedBreakoutRoom.topic}
+                            </p>
+                          )}
+                        </div>
+                        {myCurrentBreakoutRoomId === myAssignedBreakoutRoom.id ? (
+                          <span className="px-2.5 py-1 rounded-xl bg-purple-500/20 border border-purple-400/50 text-purple-200 font-meta text-[9px] font-bold shrink-0">
+                            ✓ Inside Room
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const updated = await joinBreakoutRoom(
+                                meeting.id,
+                                myParticipantId,
+                                myAssignedBreakoutRoom.id
+                              );
+                              if (updated) setMeeting({ ...updated });
+                              toast.success(`Joined "${myAssignedBreakoutRoom.name}"`);
+                            }}
+                            className="btn btn-dept !py-1.5 !px-3 font-display text-[10px] font-bold uppercase shrink-0"
+                          >
+                            🚪 Join Room
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="font-meta text-[10.5px] text-neutral-400">
+                        {meeting.breakoutAllowSelfSelect
+                          ? "Self-select is enabled! Choose any open Breakout Room below to join its creative stage."
+                          : "The Host manages room assignments. When you are assigned to a room, you can join with 1 click."}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* DIRECTORY OF BREAKOUT ROOMS (Interactive Cards for Viewing, Assigning & Visiting) */}
+                {breakoutRooms.length === 0 ? (
+                  <div className="text-center py-10 px-4 rounded-2xl border border-dashed border-neutral-800 space-y-2">
+                    <span className="text-3xl">🔀</span>
+                    <p className="font-display text-xs font-bold uppercase text-neutral-300">
+                      No Breakout Rooms Active
+                    </p>
+                    <p className="font-meta text-[10px] text-neutral-500 max-w-xs mx-auto">
+                      {isHost
+                        ? "Create custom rooms above or use Quick Split to divide participants into focused collaboration pods."
+                        : "Waiting for the host to launch breakout sessions."}
+                    </p>
                   </div>
                 ) : (
-                  <p className="text-neutral-400 text-center py-6 text-xs">
-                    The host manages breakout rooms. You will be invited if assigned.
-                  </p>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="font-meta text-[9px] uppercase font-bold text-neutral-400 tracking-wider">
+                        Breakout Rooms ({breakoutRooms.length})
+                      </span>
+                      {breakoutHelpRequests.length > 0 && isHost && (
+                        <span className="font-meta text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400 text-amber-200 font-bold animate-pulse">
+                          🆘 {breakoutHelpRequests.length} Help Request{breakoutHelpRequests.length > 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+
+                    {breakoutRooms.map((room: MeetingBreakoutRoom) => {
+                      const isMyCurrentRoom = myCurrentBreakoutRoomId === room.id;
+                      const isMyAssigned = room.assignedParticipants.includes(myParticipantId);
+                      const canParticipantJoin =
+                        room.status === "open" &&
+                        (isHost || isMyAssigned || Boolean(meeting.breakoutAllowSelfSelect));
+
+                      // Combine assigned + currently active participants in this room
+                      const roomMemberIds = Array.from(
+                        new Set([
+                          ...room.assignedParticipants,
+                          ...room.activeParticipants,
+                          ...activeParticipants
+                            .filter((p) => p.currentBreakoutRoomId === room.id)
+                            .map((p) => p.id),
+                        ])
+                      );
+                      const roomMembers = roomMemberIds
+                        .map((pid) => activeParticipants.find((p) => p.id === pid))
+                        .filter((p): p is MeetingParticipant => Boolean(p));
+
+                      const activeInRoomCount = activeParticipants.filter(
+                        (p) => p.currentBreakoutRoomId === room.id
+                      ).length;
+
+                      const roomHelpRequesters = activeParticipants.filter(
+                        (p) => p.helpRequestedRoomId === room.id
+                      );
+
+                      const unassignedOrOtherParticipants = activeParticipants.filter(
+                        (p) => !roomMemberIds.includes(p.id)
+                      );
+
+                      return (
+                        <div
+                          key={room.id}
+                          className={`p-3 rounded-2xl border transition-all space-y-2.5 ${
+                            isMyCurrentRoom
+                              ? "bg-purple-950/40 border-purple-400/70 shadow-lg"
+                              : roomHelpRequesters.length > 0 && isHost
+                              ? "bg-amber-950/30 border-amber-400/70"
+                              : "bg-neutral-900/90 border-neutral-800 hover:border-neutral-700"
+                          }`}
+                        >
+                          {/* Room Header */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              {editingBreakoutRoomId === room.id && isHost ? (
+                                <div className="space-y-1.5">
+                                  <input
+                                    type="text"
+                                    value={editingBreakoutName}
+                                    onChange={(e) => setEditingBreakoutName(e.target.value)}
+                                    className="w-full bg-neutral-950 border border-purple-500 rounded-lg px-2 py-1 text-xs text-white outline-none"
+                                    placeholder="Room name"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={editingBreakoutTopic}
+                                    onChange={(e) => setEditingBreakoutTopic(e.target.value)}
+                                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1 text-[10px] text-white outline-none"
+                                    placeholder="Topic / brief"
+                                  />
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const updated = await updateBreakoutRoom(
+                                          meeting.id,
+                                          room.id,
+                                          {
+                                            name: editingBreakoutName.trim() || room.name,
+                                            topic: editingBreakoutTopic.trim() || undefined,
+                                          }
+                                        );
+                                        if (updated) setMeeting({ ...updated });
+                                        setEditingBreakoutRoomId(null);
+                                        toast.success("Room updated");
+                                      }}
+                                      className="px-2 py-0.5 rounded bg-purple-600 text-white font-meta text-[9px] font-bold"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingBreakoutRoomId(null)}
+                                      className="px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 font-meta text-[9px]"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="flex items-center flex-wrap gap-1.5">
+                                    <h4 className="font-display text-xs font-bold uppercase text-white truncate">
+                                      {room.name}
+                                    </h4>
+                                    <span
+                                      className={`font-meta text-[8px] px-1.5 py-0.5 rounded-full uppercase font-extrabold ${
+                                        room.status === "open"
+                                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                          : "bg-neutral-800 text-neutral-400 border border-neutral-700"
+                                      }`}
+                                    >
+                                      {room.status === "open" ? "Open" : "Closed"}
+                                    </span>
+                                    <span className="font-meta text-[8.5px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300">
+                                      {activeInRoomCount} active / {roomMembers.length} assigned
+                                    </span>
+                                  </div>
+                                  {room.topic && (
+                                    <p className="font-meta text-[10px] text-purple-200/80 mt-0.5">
+                                      🎯 {room.topic}
+                                    </p>
+                                  )}
+                                </>
+                              )}
+                            </div>
+
+                            {/* Join / Leave / Edit / Delete Room Actions */}
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isMyCurrentRoom ? (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const updated = await joinBreakoutRoom(
+                                      meeting.id,
+                                      myParticipantId,
+                                      null
+                                    );
+                                    if (updated) setMeeting({ ...updated });
+                                    toast.info("Returned to Main Stage");
+                                  }}
+                                  className="px-2.5 py-1 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-600 text-white font-meta text-[9px] font-bold"
+                                >
+                                  ↩️ Leave
+                                </button>
+                              ) : canParticipantJoin ? (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const updated = await joinBreakoutRoom(
+                                      meeting.id,
+                                      myParticipantId,
+                                      room.id
+                                    );
+                                    if (updated) setMeeting({ ...updated });
+                                    toast.success(
+                                      isHost
+                                        ? `Visiting "${room.name}"`
+                                        : `Joined "${room.name}"`
+                                    );
+                                  }}
+                                  className="px-2.5 py-1 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-meta text-[9px] font-bold shadow-xs"
+                                >
+                                  🚪 {isHost ? "Visit" : "Join"}
+                                </button>
+                              ) : null}
+
+                              {isHost && editingBreakoutRoomId !== room.id && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingBreakoutRoomId(room.id);
+                                      setEditingBreakoutName(room.name);
+                                      setEditingBreakoutTopic(room.topic || "");
+                                    }}
+                                    className="w-6 h-6 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex items-center justify-center text-[10px]"
+                                    title="Rename room or edit topic"
+                                  >
+                                    ✏️
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const updated = await deleteBreakoutRoom(
+                                        meeting.id,
+                                        room.id
+                                      );
+                                      if (updated) setMeeting({ ...updated });
+                                      toast.info(`Deleted "${room.name}"`);
+                                    }}
+                                    className="w-6 h-6 rounded-lg bg-neutral-800 hover:bg-red-950/60 text-neutral-400 hover:text-red-300 flex items-center justify-center text-[10px]"
+                                    title="Delete breakout room"
+                                  >
+                                    🗑️
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Help Request Banner inside Room Card */}
+                          {roomHelpRequesters.length > 0 && isHost && (
+                            <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-400/50 flex items-center justify-between gap-2">
+                              <span className="font-meta text-[9.5px] text-amber-200 font-bold truncate">
+                                🆘 {roomHelpRequesters.map((r) => r.displayName).join(", ")} requested host help
+                              </span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const updated = await joinBreakoutRoom(
+                                    meeting.id,
+                                    myParticipantId,
+                                    room.id
+                                  );
+                                  if (updated) setMeeting({ ...updated });
+                                  toast.success(`Joined "${room.name}" to assist`);
+                                }}
+                                className="px-2 py-0.5 rounded-lg bg-amber-400 text-black font-meta text-[9px] font-extrabold shrink-0"
+                              >
+                                Join Now
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Members List inside this Room */}
+                          <div className="space-y-1">
+                            {roomMembers.length === 0 ? (
+                              <p className="font-meta text-[10px] text-neutral-500 italic py-1">
+                                No participants assigned yet.
+                              </p>
+                            ) : (
+                              roomMembers.map((member) => {
+                                const isInRoomNow = member.currentBreakoutRoomId === room.id;
+                                return (
+                                  <div
+                                    key={member.id}
+                                    className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl bg-neutral-950/80 border border-neutral-800/80"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className={`h-2 w-2 rounded-full shrink-0 ${
+                                          isInRoomNow ? "bg-emerald-400" : "bg-amber-400/70"
+                                        }`}
+                                        title={
+                                          isInRoomNow
+                                            ? "Currently inside this breakout room"
+                                            : "Assigned (currently on Main Stage)"
+                                        }
+                                      />
+                                      <span className="font-medium text-[11px] text-neutral-200 truncate">
+                                        {member.displayName}{" "}
+                                        {member.id === myParticipantId ? "(You)" : ""}
+                                      </span>
+                                      <span
+                                        className={`font-meta text-[8px] px-1.5 py-0.2 rounded uppercase font-bold ${
+                                          isInRoomNow
+                                            ? "bg-emerald-500/15 text-emerald-300"
+                                            : "bg-neutral-800 text-neutral-400"
+                                        }`}
+                                      >
+                                        {isInRoomNow ? "In Room" : "Assigned"}
+                                      </span>
+                                    </div>
+
+                                    {isHost && (
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {!isInRoomNow && room.status === "open" && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              const updated = await assignParticipantToBreakoutRoom(
+                                                meeting.id,
+                                                member.id,
+                                                room.id,
+                                                true
+                                              );
+                                              if (updated) setMeeting({ ...updated });
+                                              toast.success(
+                                                `Moved ${member.displayName} into "${room.name}"`
+                                              );
+                                            }}
+                                            className="px-1.5 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/35 text-purple-200 font-meta text-[8.5px] font-bold"
+                                            title="Move participant into this room now"
+                                          >
+                                            Move In
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={async () => {
+                                            const updated = await assignParticipantToBreakoutRoom(
+                                              meeting.id,
+                                              member.id,
+                                              null,
+                                              true
+                                            );
+                                            if (updated) setMeeting({ ...updated });
+                                            toast.info(
+                                              `Returned ${member.displayName} to Main Stage`
+                                            );
+                                          }}
+                                          className="w-5 h-5 rounded bg-neutral-800 hover:bg-red-950/60 text-neutral-400 hover:text-red-300 flex items-center justify-center text-[9px]"
+                                          title="Remove from room & return to Main Stage"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          {/* Host Quick-Assign / Move Participant Dropdown */}
+                          {isHost && unassignedOrOtherParticipants.length > 0 && (
+                            <div className="pt-1">
+                              <select
+                                value=""
+                                onChange={async (e) => {
+                                  const targetPid = e.target.value;
+                                  if (!targetPid) return;
+                                  const targetPerson = activeParticipants.find(
+                                    (p) => p.id === targetPid
+                                  );
+                                  const updated = await assignParticipantToBreakoutRoom(
+                                    meeting.id,
+                                    targetPid,
+                                    room.id,
+                                    room.status === "open"
+                                  );
+                                  if (updated) setMeeting({ ...updated });
+                                  toast.success(
+                                    `Assigned ${targetPerson?.displayName || "participant"} to "${room.name}"`
+                                  );
+                                }}
+                                className="w-full bg-neutral-950 border border-neutral-800 hover:border-purple-500/50 rounded-xl px-2.5 py-1.5 text-[10.5px] text-neutral-300 outline-none cursor-pointer"
+                                aria-label={`Assign participant to ${room.name}`}
+                              >
+                                <option value="">
+                                  + Assign / Move participant to {room.name}…
+                                </option>
+                                {unassignedOrOtherParticipants.map((p) => {
+                                  const currentRoom = breakoutRooms.find(
+                                    (r) =>
+                                      r.id === p.currentBreakoutRoomId ||
+                                      r.assignedParticipants.includes(p.id)
+                                  );
+                                  return (
+                                    <option key={p.id} value={p.id}>
+                                      {p.displayName} {p.role === "host" ? "(Host)" : ""}{" "}
+                                      {currentRoom ? `[in ${currentRoom.name}]` : "[Main Stage]"}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Main Stage / Unassigned Participants Summary Card */}
+                {breakoutRooms.length > 0 && (
+                  <div className="p-3 rounded-2xl bg-neutral-900/70 border border-neutral-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-meta text-[9px] uppercase font-bold text-neutral-400">
+                        🌐 Currently on Main Stage
+                      </span>
+                      <span className="font-meta text-[9px] text-neutral-400">
+                        {activeParticipants.filter((p) => !p.currentBreakoutRoomId).length} people
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {activeParticipants
+                        .filter((p) => !p.currentBreakoutRoomId)
+                        .map((p) => (
+                          <span
+                            key={p.id}
+                            className="px-2 py-0.5 rounded-lg bg-neutral-950 border border-neutral-800 text-[10px] text-neutral-300 flex items-center gap-1"
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            <span>
+                              {p.displayName} {p.id === myParticipantId ? "(You)" : ""}
+                            </span>
+                          </span>
+                        ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -5871,6 +6998,35 @@ export default function MeetingRoom() {
             <Palette className="w-4 h-4 shrink-0 text-purple-300" strokeWidth={2} />
             <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
               Co-Design
+            </span>
+          </button>
+
+          {/* Dedicated Breakout Rooms Button */}
+          <button
+            type="button"
+            onClick={() => setActiveDrawer(activeDrawer === "breakouts" ? "none" : "breakouts")}
+            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[74px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              activeDrawer === "breakouts"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+                : myActiveBreakoutRoom
+                ? "bg-purple-600/25 text-purple-200 border-purple-400/70"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
+            }`}
+            title="Breakout Rooms — create, assign, and join breakout sessions"
+            aria-label="Breakout Rooms"
+          >
+            {isHost && breakoutHelpRequests.length > 0 ? (
+              <span className="absolute -top-1.5 -right-1.5 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+                🆘
+              </span>
+            ) : openBreakoutRooms.length > 0 ? (
+              <span className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center shadow-md">
+                {openBreakoutRooms.length}
+              </span>
+            ) : null}
+            <GitBranch className="w-4 h-4 shrink-0" strokeWidth={2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              {myActiveBreakoutRoom ? "In Room" : "Breakouts"}
             </span>
           </button>
 
@@ -7317,10 +8473,25 @@ export default function MeetingRoom() {
                   setActiveDrawer("breakouts");
                   setShowMobileActionsSheet(false);
                 }}
-                className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
+                className={`relative p-3 rounded-2xl border flex flex-col items-center justify-center gap-1.5 text-center transition-all ${
+                  myActiveBreakoutRoom
+                    ? "bg-purple-950/50 border-purple-400/70 text-purple-200"
+                    : "border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white"
+                }`}
               >
+                {isHost && breakoutHelpRequests.length > 0 ? (
+                  <span className="absolute top-1.5 right-1.5 bg-amber-400 text-black text-[8px] font-extrabold px-1 rounded-full animate-bounce">
+                    🆘 {breakoutHelpRequests.length}
+                  </span>
+                ) : openBreakoutRooms.length > 0 ? (
+                  <span className="absolute top-1.5 right-1.5 bg-purple-500 text-white text-[8px] font-extrabold px-1.5 rounded-full">
+                    {openBreakoutRooms.length}
+                  </span>
+                ) : null}
                 <GitBranch className="w-5 h-5" strokeWidth={2} />
-                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Breakouts</span>
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">
+                  {myActiveBreakoutRoom ? myActiveBreakoutRoom.name : "Breakouts"}
+                </span>
               </button>
 
               {/* Share / Invite Link */}

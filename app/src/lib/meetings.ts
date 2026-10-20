@@ -69,6 +69,10 @@ export interface MeetingParticipant {
   connectionQuality?: "excellent" | "good" | "fair" | "poor";
   /** Set by the host to politely ask this participant to unmute (Zoom-style) */
   unmuteRequestedAt?: string;
+  /** ID of the breakout room this participant is currently inside (null/undefined = Main Stage) */
+  currentBreakoutRoomId?: string | null;
+  /** ID of the breakout room where this participant clicked "Ask Host for Help" */
+  helpRequestedRoomId?: string | null;
 }
 
 export interface MeetingChatMessage {
@@ -78,6 +82,9 @@ export interface MeetingChatMessage {
   senderName: string;
   senderRole: ParticipantRole;
   recipientId?: string; // empty for public message, userId for private message
+  /** Optional breakout room ID if sent inside a breakout room chat */
+  breakoutRoomId?: string;
+  breakoutRoomName?: string;
   message: string;
   createdAt: string;
 }
@@ -95,8 +102,13 @@ export interface MeetingBreakoutRoom {
   id: string;
   meetingId: string;
   name: string;
-  status: "open" | "closed";
-  assignedParticipants: string[]; // participant IDs
+  topic?: string;
+  status: "draft" | "open" | "closed";
+  assignedParticipants: string[]; // participant IDs assigned to this room
+  activeParticipants: string[];   // participant IDs currently inside this room
+  durationMinutes?: number;
+  openedAt?: string;
+  endsAt?: string;
   createdAt: string;
 }
 
@@ -235,6 +247,14 @@ export interface MeetingRecord {
   allowMicrophone: boolean;
   participants: MeetingParticipant[];
   breakoutRooms?: MeetingBreakoutRoom[];
+  breakoutAllowSelfSelect?: boolean;
+  breakoutBroadcast?: {
+    id: string;
+    senderName: string;
+    message: string;
+    sentAt: string;
+    createdAt?: string;
+  };
   intelligence?: MeetingIntelligence;
   liveProofing?: LiveProofingState;
   /** "Come watch" ping broadcast when someone starts presenting (Zoom-style) */
@@ -976,6 +996,8 @@ export async function endMeetingForAll(meetingId: string): Promise<void> {
   const closedParticipants = meeting.participants.map((p) => ({
     ...p,
     status: (p.status === "joined" || p.status === "admitted" ? "left" : p.status) as ParticipantStatus,
+    currentBreakoutRoomId: null,
+    helpRequestedRoomId: null,
     leftAt: now,
   }));
 
@@ -986,6 +1008,460 @@ export async function endMeetingForAll(meetingId: string): Promise<void> {
   });
 }
 
+/* ---------------- Breakout Rooms Engine (Create, Assign, Move, Join, Broadcast) ---------------- */
+
+/** Pure helper: distributes participant IDs evenly across breakout rooms in round-robin order */
+export function distributeParticipantsEvenly(
+  participantIds: string[],
+  rooms: MeetingBreakoutRoom[]
+): MeetingBreakoutRoom[] {
+  if (rooms.length === 0) return [];
+  const uniqueIds = Array.from(new Set(participantIds.filter(Boolean)));
+  const buckets: string[][] = rooms.map(() => []);
+  uniqueIds.forEach((pid, idx) => {
+    buckets[idx % rooms.length].push(pid);
+  });
+  return rooms.map((room, idx) => ({
+    ...room,
+    assignedParticipants: buckets[idx],
+  }));
+}
+
+/** Create a single breakout room and persist to the meeting record */
+export async function createBreakoutRoom(
+  meetingId: string,
+  nameOrOptions:
+    | string
+    | {
+        name: string;
+        topic?: string;
+        durationMinutes?: number;
+        status?: "draft" | "open";
+      },
+  maybeOptions?: {
+    topic?: string;
+    durationMinutes?: number;
+    status?: "draft" | "open";
+  }
+): Promise<MeetingRecord | null> {
+  const options =
+    typeof nameOrOptions === "string"
+      ? { name: nameOrOptions, ...(maybeOptions || {}) }
+      : nameOrOptions;
+  const meeting = await getMeetingById(meetingId);
+  const existing = meeting?.breakoutRooms || [];
+  const now = new Date().toISOString();
+  const status = options.status ?? "open";
+  const durationMinutes =
+    options.durationMinutes && options.durationMinutes > 0 ? options.durationMinutes : undefined;
+  const endsAt =
+    status === "open" && durationMinutes
+      ? new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
+      : undefined;
+
+  const newRoom: MeetingBreakoutRoom = {
+    id: `br_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    meetingId: normalizeRoomCode(meetingId),
+    name: options.name.trim() || `Breakout Room ${existing.length + 1}`,
+    topic: options.topic?.trim() || undefined,
+    status,
+    assignedParticipants: [],
+    activeParticipants: [],
+    durationMinutes,
+    openedAt: status === "open" ? now : undefined,
+    endsAt,
+    createdAt: now,
+  };
+
+  const updatedRooms = [...existing, newRoom];
+  await updateMeeting(meetingId, { breakoutRooms: updatedRooms });
+  return await getMeetingById(meetingId);
+}
+
+/** Quick-generate N breakout rooms and optionally auto-assign active non-host participants evenly */
+export async function createMultipleBreakoutRooms(
+  meetingId: string,
+  countOrOptions:
+    | number
+    | {
+        count: number;
+        autoAssign?: boolean;
+        durationMinutes?: number;
+        allowSelfSelect?: boolean;
+        topicPrefix?: string;
+        autoMoveAssigned?: boolean;
+        openImmediately?: boolean;
+      },
+  maybeOptions?: {
+    autoAssign?: boolean;
+    durationMinutes?: number;
+    allowSelfSelect?: boolean;
+    topicPrefix?: string;
+    autoMoveAssigned?: boolean;
+    openImmediately?: boolean;
+  }
+): Promise<MeetingRecord | null> {
+  const options =
+    typeof countOrOptions === "number"
+      ? { count: countOrOptions, ...(maybeOptions || {}) }
+      : countOrOptions;
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return null;
+
+  const count = Math.max(1, Math.min(12, Math.floor(options.count || 2)));
+  const existing = meeting.breakoutRooms || [];
+  const now = new Date().toISOString();
+  const durationMinutes =
+    options.durationMinutes && options.durationMinutes > 0 ? options.durationMinutes : undefined;
+  const endsAt = durationMinutes
+    ? new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
+    : undefined;
+
+  const creativeDefaultTopics = [
+    "Brand Strategy & Positioning",
+    "Visual Identity & Typography",
+    "Social Campaign & Reels",
+    "Copywriting & Conversion",
+    "Deliverables Review",
+    "Packaging & Print Layout",
+  ];
+
+  const createdRooms: MeetingBreakoutRoom[] = Array.from({ length: count }, (_, idx) => {
+    const roomNum = existing.length + idx + 1;
+    return {
+      id: `br_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+      meetingId: normalizeRoomCode(meetingId),
+      name: `Room ${roomNum}`,
+      topic: options.topicPrefix
+        ? `${options.topicPrefix} #${roomNum}`
+        : creativeDefaultTopics[(roomNum - 1) % creativeDefaultTopics.length],
+      status: options.openImmediately === false ? "draft" : "open",
+      assignedParticipants: [],
+      activeParticipants: [],
+      durationMinutes,
+      openedAt: now,
+      endsAt,
+      createdAt: now,
+    };
+  });
+
+  let allRooms = [...existing, ...createdRooms];
+  let updatedParticipants = [...(meeting.participants || [])];
+
+  if (options.autoAssign) {
+    const assignableIds = updatedParticipants
+      .filter((p) => (p.status === "joined" || p.status === "admitted") && p.role !== "host")
+      .map((p) => p.id);
+    allRooms = distributeParticipantsEvenly(assignableIds, allRooms);
+
+    if (options.autoMoveAssigned) {
+      const pidToRoom = new Map<string, string>();
+      allRooms.forEach((r) => {
+        r.assignedParticipants.forEach((pid) => pidToRoom.set(pid, r.id));
+      });
+      updatedParticipants = updatedParticipants.map((p) => {
+        const targetRoomId = pidToRoom.get(p.id);
+        return targetRoomId ? { ...p, currentBreakoutRoomId: targetRoomId } : p;
+      });
+      allRooms = allRooms.map((r) => ({
+        ...r,
+        activeParticipants: [...r.assignedParticipants],
+      }));
+    }
+  }
+
+  await updateMeeting(meetingId, {
+    breakoutRooms: allRooms,
+    participants: updatedParticipants,
+    ...(typeof options.allowSelfSelect === "boolean"
+      ? { breakoutAllowSelfSelect: options.allowSelfSelect }
+      : {}),
+  });
+
+  return await getMeetingById(meetingId);
+}
+
+/** Update a breakout room's name, topic, status, or timer */
+export async function updateBreakoutRoom(
+  meetingId: string,
+  roomId: string,
+  updates: Partial<MeetingBreakoutRoom>
+): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return null;
+  const rooms = (meeting.breakoutRooms || []).map((r) =>
+    r.id === roomId ? { ...r, ...updates } : r
+  );
+  await updateMeeting(meetingId, { breakoutRooms: rooms });
+  return await getMeetingById(meetingId);
+}
+
+/** Delete a breakout room and return any participants inside it to the Main Stage */
+export async function deleteBreakoutRoom(
+  meetingId: string,
+  roomId: string
+): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return null;
+  const rooms = (meeting.breakoutRooms || []).filter((r) => r.id !== roomId);
+  const participants = (meeting.participants || []).map((p) =>
+    p.currentBreakoutRoomId === roomId
+      ? { ...p, currentBreakoutRoomId: undefined, helpRequestedRoomId: undefined }
+      : p
+  );
+  await updateMeeting(meetingId, { breakoutRooms: rooms, participants });
+  return await getMeetingById(meetingId);
+}
+
+/** Assign (or unassign if roomId is null) a participant to a specific breakout room */
+export async function assignParticipantToBreakoutRoom(
+  meetingId: string,
+  participantId: string,
+  roomId: string | null,
+  moveImmediately: boolean = false
+): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return null;
+
+  const rooms = (meeting.breakoutRooms || []).map((r) => {
+    const filteredAssigned = (r.assignedParticipants || []).filter((id) => id !== participantId);
+    const filteredActive = (r.activeParticipants || []).filter((id) => id !== participantId);
+    if (r.id === roomId) {
+      return {
+        ...r,
+        assignedParticipants: [...filteredAssigned, participantId],
+        activeParticipants: moveImmediately ? [...filteredActive, participantId] : r.activeParticipants || [],
+      };
+    }
+    return {
+      ...r,
+      assignedParticipants: filteredAssigned,
+      activeParticipants: moveImmediately || roomId === null ? filteredActive : r.activeParticipants || [],
+    };
+  });
+
+  const participants = (meeting.participants || []).map((p) => {
+    if (p.id !== participantId) return p;
+    if (moveImmediately || roomId === null) {
+      return {
+        ...p,
+        currentBreakoutRoomId: roomId ?? undefined,
+        helpRequestedRoomId: undefined,
+      };
+    }
+    return p;
+  });
+
+  await updateMeeting(meetingId, { breakoutRooms: rooms, participants });
+  return await getMeetingById(meetingId);
+}
+
+/** Automatically distribute all active non-host participants evenly across existing breakout rooms */
+export async function autoAssignParticipantsToBreakoutRooms(
+  meetingId: string,
+  moveImmediately: boolean = false
+): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting || !meeting.breakoutRooms?.length) return meeting;
+
+  const assignableIds = (meeting.participants || [])
+    .filter((p) => (p.status === "joined" || p.status === "admitted") && p.role !== "host")
+    .map((p) => p.id);
+
+  let updatedRooms = distributeParticipantsEvenly(assignableIds, meeting.breakoutRooms);
+  let updatedParticipants = [...(meeting.participants || [])];
+
+  if (moveImmediately) {
+    const pidToRoom = new Map<string, string>();
+    updatedRooms.forEach((r) => {
+      r.assignedParticipants.forEach((pid) => pidToRoom.set(pid, r.id));
+    });
+    updatedParticipants = updatedParticipants.map((p) => {
+      const targetId = pidToRoom.get(p.id);
+      return targetId ? { ...p, currentBreakoutRoomId: targetId } : p;
+    });
+    updatedRooms = updatedRooms.map((r) => ({
+      ...r,
+      status: "open" as const,
+      activeParticipants: [...r.assignedParticipants],
+    }));
+  }
+
+  await updateMeeting(meetingId, {
+    breakoutRooms: updatedRooms,
+    participants: updatedParticipants,
+  });
+  return await getMeetingById(meetingId);
+}
+
+/** Join a breakout room (or pass null to return to the Main Stage) */
+export async function joinBreakoutRoom(
+  meetingId: string,
+  participantId: string,
+  roomId: string | null
+): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return null;
+
+  const rooms = (meeting.breakoutRooms || []).map((r) => {
+    const withoutMe = (r.activeParticipants || []).filter((id) => id !== participantId);
+    if (r.id === roomId) {
+      const alsoAssigned = (r.assignedParticipants || []).includes(participantId)
+        ? r.assignedParticipants
+        : [...(r.assignedParticipants || []), participantId];
+      return {
+        ...r,
+        status: "open" as const,
+        assignedParticipants: alsoAssigned,
+        activeParticipants: [...withoutMe, participantId],
+      };
+    }
+    return {
+      ...r,
+      activeParticipants: withoutMe,
+    };
+  });
+
+  const isHostJoining =
+    (meeting.participants || []).find((p) => p.id === participantId)?.role === "host";
+
+  const participants = (meeting.participants || []).map((p) => {
+    if (p.id === participantId) {
+      return {
+        ...p,
+        currentBreakoutRoomId: roomId ?? undefined,
+        helpRequestedRoomId: undefined,
+      };
+    }
+    if (isHostJoining && roomId && p.helpRequestedRoomId === roomId) {
+      return {
+        ...p,
+        helpRequestedRoomId: undefined,
+      };
+    }
+    return p;
+  });
+
+  await updateMeeting(meetingId, { breakoutRooms: rooms, participants });
+  return await getMeetingById(meetingId);
+}
+
+/** Open all breakout rooms and optionally move assigned participants inside */
+export async function openAllBreakoutRooms(
+  meetingId: string,
+  options?: {
+    durationMinutes?: number;
+    allowSelfSelect?: boolean;
+    autoMoveAssigned?: boolean;
+    moveAssignedIntoRooms?: boolean;
+  }
+): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting || !meeting.breakoutRooms?.length) return meeting;
+
+  const shouldMove = Boolean(options?.autoMoveAssigned || options?.moveAssignedIntoRooms);
+  const now = new Date().toISOString();
+  const durationMinutes = options?.durationMinutes;
+  const endsAt =
+    durationMinutes && durationMinutes > 0
+      ? new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
+      : undefined;
+
+  const pidToRoom = new Map<string, string>();
+  const rooms = meeting.breakoutRooms.map((r) => {
+    (r.assignedParticipants || []).forEach((pid) => pidToRoom.set(pid, r.id));
+    return {
+      ...r,
+      status: "open" as const,
+      openedAt: now,
+      ...(durationMinutes !== undefined ? { durationMinutes, endsAt } : {}),
+      activeParticipants: shouldMove
+        ? Array.from(new Set([...(r.activeParticipants || []), ...(r.assignedParticipants || [])]))
+        : r.activeParticipants || [],
+    };
+  });
+
+  const participants = shouldMove
+    ? (meeting.participants || []).map((p) => {
+        const assignedRoom = pidToRoom.get(p.id);
+        return assignedRoom ? { ...p, currentBreakoutRoomId: assignedRoom } : p;
+      })
+    : meeting.participants;
+
+  await updateMeeting(meetingId, {
+    breakoutRooms: rooms,
+    participants,
+    ...(typeof options?.allowSelfSelect === "boolean"
+      ? { breakoutAllowSelfSelect: options.allowSelfSelect }
+      : {}),
+  });
+  return await getMeetingById(meetingId);
+}
+
+/** Close all breakout rooms and recall every participant back to the Main Stage */
+export async function closeAllBreakoutRooms(meetingId: string): Promise<MeetingRecord | null> {
+  const meeting = await getMeetingById(meetingId);
+  if (!meeting) return null;
+
+  const rooms = (meeting.breakoutRooms || []).map((r) => ({
+    ...r,
+    status: "closed" as const,
+    activeParticipants: [],
+    endsAt: undefined,
+  }));
+
+  const participants = (meeting.participants || []).map((p) => ({
+    ...p,
+    currentBreakoutRoomId: undefined,
+    helpRequestedRoomId: undefined,
+  }));
+
+  await updateMeeting(meetingId, { breakoutRooms: rooms, participants });
+  return await getMeetingById(meetingId);
+}
+
+/** Toggle whether participants can self-select and switch between open breakout rooms */
+export async function setBreakoutAllowSelfSelect(
+  meetingId: string,
+  allowSelfSelect: boolean
+): Promise<MeetingRecord | null> {
+  await updateMeeting(meetingId, { breakoutAllowSelfSelect: allowSelfSelect });
+  return await getMeetingById(meetingId);
+}
+
+/** Broadcast an announcement banner from the Host to all open breakout rooms */
+export async function broadcastToBreakoutRooms(
+  meetingId: string,
+  senderName: string,
+  message: string
+): Promise<MeetingRecord | null> {
+  const trimmed = message.trim();
+  if (!trimmed) return await getMeetingById(meetingId);
+  const now = new Date().toISOString();
+  await updateMeeting(meetingId, {
+    breakoutBroadcast: {
+      id: `bb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      senderName,
+      message: trimmed,
+      sentAt: now,
+      createdAt: now,
+    },
+  });
+  return await getMeetingById(meetingId);
+}
+
+/** Request or clear Host assistance from inside a breakout room */
+export async function requestBreakoutHostHelp(
+  meetingId: string,
+  participantId: string,
+  roomId: string | null
+): Promise<MeetingRecord | null> {
+  await updateParticipant(meetingId, participantId, {
+    helpRequestedRoomId: roomId ?? undefined,
+  });
+  return await getMeetingById(meetingId);
+}
+
 /* ---------------- Real-Time In-Meeting Chat ---------------- */
 
 export async function sendMeetingChatMessage(
@@ -994,7 +1470,9 @@ export async function sendMeetingChatMessage(
   senderName: string,
   senderRole: ParticipantRole,
   message: string,
-  recipientId?: string
+  recipientId?: string,
+  breakoutRoomId?: string,
+  breakoutRoomName?: string
 ): Promise<MeetingChatMessage> {
   const normId = normalizeRoomCode(meetingId);
   const now = new Date().toISOString();
@@ -1011,6 +1489,12 @@ export async function sendMeetingChatMessage(
   };
   if (recipientId) {
     chatMsg.recipientId = recipientId;
+  }
+  if (breakoutRoomId) {
+    chatMsg.breakoutRoomId = breakoutRoomId;
+    if (breakoutRoomName) {
+      chatMsg.breakoutRoomName = breakoutRoomName;
+    }
   }
 
   // 1. Broadcast via local channel for zero-latency in same-device testing

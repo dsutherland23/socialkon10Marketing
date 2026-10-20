@@ -3,7 +3,9 @@ import {
   cleanFirestoreObject,
   mergeParticipantUpdate,
   normalizeRoomCode,
+  distributeParticipantsEvenly,
   type MeetingParticipant,
+  type MeetingBreakoutRoom,
 } from "../meetings";
 import { isPolitePeer } from "../webrtc";
 
@@ -149,5 +151,49 @@ describe("isPolitePeer (perfect negotiation)", () => {
     // "p_1..." < "p_admin..." because '1' (0x31) < 'a' (0x61)
     expect(isPolitePeer("p_admin_1", "p_1700000000000_ab")).toBe(true);
     expect(isPolitePeer("p_1700000000000_ab", "p_admin_1")).toBe(false);
+  });
+});
+
+describe("Breakout Rooms engine", () => {
+  const makeRoom = (id: string, name: string): MeetingBreakoutRoom => ({
+    id,
+    meetingId: "SK-TEST-1234-XYZ",
+    name,
+    status: "open",
+    assignedParticipants: [],
+    activeParticipants: [],
+    createdAt: "2026-10-20T00:00:00Z",
+  });
+
+  it("distributes participants evenly across rooms in round-robin order and deduplicates IDs", () => {
+    const rooms = [makeRoom("r1", "Room 1"), makeRoom("r2", "Room 2")];
+    const distributed = distributeParticipantsEvenly(
+      ["p1", "p2", "p3", "p4", "p5", "p1"],
+      rooms
+    );
+    expect(distributed[0].assignedParticipants).toEqual(["p1", "p3", "p5"]);
+    expect(distributed[1].assignedParticipants).toEqual(["p2", "p4"]);
+  });
+
+  it("handles empty room list gracefully when distributing participants", () => {
+    expect(distributeParticipantsEvenly(["p1", "p2"], [])).toEqual([]);
+  });
+
+  it("preserves currentBreakoutRoomId and helpRequestedRoomId across mergeParticipantUpdate", () => {
+    const list = [makeP({ id: "p_alice", displayName: "Alice" })];
+    const inRoom = mergeParticipantUpdate(list, "p_alice", {
+      currentBreakoutRoomId: "br_1",
+      helpRequestedRoomId: "br_1",
+    });
+    expect(inRoom[0].currentBreakoutRoomId).toBe("br_1");
+    expect(inRoom[0].helpRequestedRoomId).toBe("br_1");
+
+    // Returning to Main Stage clears currentBreakoutRoomId
+    const backOnMain = mergeParticipantUpdate(inRoom, "p_alice", {
+      currentBreakoutRoomId: null,
+      helpRequestedRoomId: null,
+    });
+    expect(backOnMain[0].currentBreakoutRoomId).toBeNull();
+    expect(backOnMain[0].helpRequestedRoomId).toBeNull();
   });
 });
