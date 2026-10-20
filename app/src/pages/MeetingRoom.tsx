@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuth } from "../lib/auth";
@@ -60,6 +60,7 @@ import {
   type MediaDeviceList,
 } from "../lib/webrtc";
 import { listAllCustomerDesigns, type CustomerDesign } from "../lib/editor-store";
+import { computeGalleryLayout } from "../lib/meeting-layout";
 
 /* ------------------------------------------------------------------
    ROBUST VIDEO TILE COMPONENT (Autoplay + Clean SrcObject Binding)
@@ -194,6 +195,13 @@ export default function MeetingRoom() {
   // Spotlight & Fullscreen & Presentation Modes
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
   const [autoSpotlightActiveSpeaker, setAutoSpotlightActiveSpeaker] = useState(false);
+  // Zoom-style view mode + smart gallery layout state (pure UI — never
+  // touches media tracks or signaling).
+  const [viewMode, setViewMode] = useState<"gallery" | "speaker">("gallery");
+  const [galleryPage, setGalleryPage] = useState(0);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const lastManualPinRef = useRef(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showScreenShareMenu, setShowScreenShareMenu] = useState(false);
   const meetingContainerRef = useRef<HTMLDivElement>(null);
@@ -294,6 +302,7 @@ export default function MeetingRoom() {
 
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
   const [showMobileActionsSheet, setShowMobileActionsSheet] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showDeviceSettingsModal, setShowDeviceSettingsModal] = useState(false);
   const [isRequestingMedia, setIsRequestingMedia] = useState(false);
   const [newRoomName, setNewRoomName] = useState("");
@@ -340,6 +349,48 @@ export default function MeetingRoom() {
     if (user?.email && p.email && p.email.toLowerCase().trim() === user.email.toLowerCase().trim()) return false;
     return true;
   });
+
+  // 0b. Smart gallery layout — measure the stage and compute the optimal
+  // cols/rows (and pagination) from viewport size. Pure layout math; a
+  // relayout never renegotiates or remounts media.
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      setStageSize((prev) =>
+        Math.abs(prev.width - rect.width) < 1 && Math.abs(prev.height - rect.height) < 1
+          ? prev
+          : { width: rect.width, height: rect.height }
+      );
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [phase]);
+
+  const galleryTileCount = 1 + otherConnectedParticipants.length;
+  const galleryLayout = useMemo(
+    () =>
+      computeGalleryLayout({
+        width: stageSize.width || 1280,
+        height: stageSize.height || 720,
+        count: Math.max(1, galleryTileCount),
+      }),
+    [stageSize.width, stageSize.height, galleryTileCount]
+  );
+  const galleryPageSafe = Math.min(galleryPage, Math.max(0, galleryLayout.pages - 1));
+
+  // Page 0 always leads with the local tile, so remotes fill perPage-1 slots
+  // there and a full page afterwards. Keys stay the participant id — paging
+  // never remounts a tile that is still visible.
+  const pagedRemoteParticipants = useMemo(() => {
+    const per = galleryLayout.perPage;
+    const start = galleryPageSafe === 0 ? 0 : galleryPageSafe * per - 1;
+    const take = galleryPageSafe === 0 ? per - 1 : per;
+    return otherConnectedParticipants.slice(start, start + take);
+  }, [otherConnectedParticipants, galleryLayout.perPage, galleryPageSafe]);
 
   // 1. Load & Subscribe to Meeting
   useEffect(() => {
@@ -720,6 +771,60 @@ export default function MeetingRoom() {
     };
   }, [remoteStreams, phase, myParticipantId]);
 
+  // 8b-2. Speaker view / auto-spotlight follow: pin the loudest current
+  // speaker. A manual pin (tile click) holds the stage for a few seconds
+  // before follow resumes, so rapid exchanges don't make the view flicker.
+  useEffect(() => {
+    const follow = viewMode === "speaker" || autoSpotlightActiveSpeaker;
+    if (!follow || phase !== "in_meeting") return;
+    if (speakingIds.size === 0) return;
+    if (Date.now() - lastManualPinRef.current < 4000) return;
+    let bestId: string | null = null;
+    let bestLevel = -1;
+    speakingIds.forEach((id) => {
+      const lvl = id === myParticipantId ? micVolumeRef.current : speakerLevelsRef.current.get(id) ?? 0;
+      if (lvl > bestLevel) {
+        bestLevel = lvl;
+        bestId = id;
+      }
+    });
+    if (bestId && bestId !== pinnedParticipantId) {
+      setPinnedParticipantId(bestId);
+    }
+  }, [speakingIds, viewMode, autoSpotlightActiveSpeaker, phase, myParticipantId, pinnedParticipantId]);
+
+  // 8b-3. Zoom-style keyboard shortcuts: M = mic, V = camera, H = hand.
+  // Ignored while typing in any field or when a drawer input has focus.
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (key === "m") {
+        e.preventDefault();
+        handleToggleMic();
+      } else if (key === "v") {
+        e.preventDefault();
+        handleToggleVideo();
+      } else if (key === "h") {
+        e.preventDefault();
+        handleToggleRaiseHand();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
   // 8c. Host moderation honored locally: a host flipping your isMuted flag
   // force-mutes your microphone (and an unmute request pings you to speak).
   const prevUnmuteReqRef = useRef<string>("");
@@ -2069,12 +2174,30 @@ export default function MeetingRoom() {
   };
 
   const handleSpotlightParticipant = (participantId: string | null) => {
+    lastManualPinRef.current = Date.now();
     setPinnedParticipantId((prev) => (prev === participantId ? null : participantId));
     if (participantId) {
       const p = meeting?.participants.find((x) => x.id === participantId);
       toast.info(`Spotlight: ${p?.displayName || "Participant"}`);
     } else {
+      setViewMode("gallery");
       toast.info("Spotlight cleared. Grid view active.");
+    }
+  };
+
+  const handleViewModeChange = (next: "gallery" | "speaker") => {
+    setViewMode(next);
+    if (next === "speaker" && !pinnedParticipantId) {
+      // Default the stage to the host, else the first remote participant,
+      // else self — speaker-follow takes over as soon as someone talks.
+      const fallback =
+        activeParticipants.find((p) => p.role === "host")?.id ??
+        otherConnectedParticipants[0]?.id ??
+        myParticipantId;
+      setPinnedParticipantId(fallback);
+    }
+    if (next === "gallery") {
+      setPinnedParticipantId(null);
     }
   };
 
@@ -2106,6 +2229,8 @@ export default function MeetingRoom() {
 
   const handleEndForAll = async () => {
     if (!meeting || !isHost) return;
+    // Dangerous action — always confirm first (Zoom parity).
+    if (!window.confirm("End this meeting for ALL participants? Everyone will be disconnected.")) return;
     await endMeetingForAll(meeting.id);
     stopMediaStream(localStream);
     stopMediaStream(screenStream);
@@ -2920,6 +3045,36 @@ export default function MeetingRoom() {
 
         {/* Top Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Gallery / Speaker view switch (Zoom-style) */}
+          <div className="flex items-center rounded-full border border-neutral-700 bg-neutral-800 overflow-hidden" role="group" aria-label="View mode">
+            <button
+              type="button"
+              onClick={() => handleViewModeChange("gallery")}
+              aria-pressed={viewMode === "gallery" && !pinnedParticipantId}
+              className={`font-meta text-[9px] px-2.5 py-1 flex items-center gap-1 transition-colors ${
+                viewMode === "gallery" && !pinnedParticipantId
+                  ? "bg-white text-black font-bold"
+                  : "text-neutral-300 hover:text-white"
+              }`}
+              title="Gallery view — everyone in an equal grid"
+            >
+              ▦ <span className="hidden md:inline">Gallery</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleViewModeChange("speaker")}
+              aria-pressed={viewMode === "speaker" || Boolean(pinnedParticipantId)}
+              className={`font-meta text-[9px] px-2.5 py-1 flex items-center gap-1 transition-colors border-l border-neutral-700 ${
+                viewMode === "speaker" || pinnedParticipantId
+                  ? "bg-white text-black font-bold"
+                  : "text-neutral-300 hover:text-white"
+              }`}
+              title="Speaker view — stage follows whoever is talking"
+            >
+              ▣ <span className="hidden md:inline">Speaker</span>
+            </button>
+          </div>
+
           {/* Host Auto-Spotlight Toggle */}
           {isHost && (
             <button
@@ -3624,23 +3779,26 @@ export default function MeetingRoom() {
               </div>
             </div>
           ) : (
-            /* STANDARD PARTICIPANT VIDEO GRID */
-            <div className={`grid gap-2.5 sm:gap-4 flex-1 h-full min-h-0 ${
-              activeParticipants.length <= 1 ? "grid-cols-1 max-w-4xl mx-auto w-full h-full" :
-              activeParticipants.length === 2 ? "grid-cols-1 sm:grid-cols-2 grid-rows-2 sm:grid-rows-1 h-full w-full" :
-              activeParticipants.length <= 4 ? "grid-cols-2 grid-rows-2 h-full w-full" :
-              "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 auto-rows-fr h-full w-full"
-            }`}>
-              {/* My Local Tile */}
+            /* STANDARD PARTICIPANT VIDEO GRID — smart Zoom-style gallery.
+               Optimal cols/rows come from computeGalleryLayout against the
+               measured stage; tiles are fixed-size 16:9 inside a centered
+               flex-wrap so an incomplete last row centers naturally.
+               Beyond 25 tiles the gallery paginates with stable keys, and
+               resizing/rejoins never renegotiate or remount media. */
+            <div ref={stageRef} className="flex-1 h-full min-h-0 w-full relative">
+            <div className="h-full min-h-0 flex flex-wrap content-center justify-center gap-2 overflow-hidden">
+              {/* My Local Tile (first gallery page only) */}
+              {galleryPageSafe === 0 && (
               <div
                 onClick={() => handleSpotlightParticipant(myParticipantId)}
                 title="Click to maximize your video"
-                className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center cursor-pointer ${
+                style={{ width: galleryLayout.tileWidth, height: galleryLayout.tileHeight }}
+                className={`group relative max-w-full max-h-full bg-neutral-900 rounded-lg overflow-hidden transition-all flex items-center justify-center cursor-pointer ${
                 isHandRaised
-                  ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] border-amber-400 animate-pulse"
+                  ? "border-2 border-amber-400 animate-pulse"
                   : speakingIds.has(myParticipantId)
-                  ? "ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)] border-emerald-400"
-                  : "border-neutral-800 shadow-md hover:border-cyan-500/60"
+                  ? "border-2 border-emerald-400"
+                  : "border border-neutral-800 hover:border-neutral-600"
               }`}>
                 {!isVideoOff && localStream ? (
                   <VideoTile stream={localStream} muted={true} isMirrored={true} className="w-full h-full object-cover" />
@@ -3678,10 +3836,11 @@ export default function MeetingRoom() {
                   </button>
                 </div>
 
-                {/* Tile Badges */}
-                <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-display font-bold uppercase flex items-center gap-2 max-w-[85%] truncate">
+                {/* Zoom-style name chip (bottom-left, translucent, mute state inline) */}
+                <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[11px] text-white flex items-center gap-1.5 max-w-[85%]">
                   <span className="truncate">{displayName} (You)</span>
-                  {isHost && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded shrink-0">HOST</span>}
+                  {isHost && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded shrink-0 font-bold">HOST</span>}
+                  {isMicMuted && <span className="shrink-0" title="Muted">🔇</span>}
                 </div>
 
                 <div className="absolute top-2 right-2 flex items-center gap-1.5">
@@ -3690,16 +3849,12 @@ export default function MeetingRoom() {
                       ✋ RAISED
                     </span>
                   )}
-                  {isMicMuted && (
-                    <span className="bg-red-500/80 px-1.5 py-0.5 rounded text-[10px]" title="Muted">
-                      🔇
-                    </span>
-                  )}
                 </div>
               </div>
+              )}
 
-              {/* Other Connected Participants */}
-              {otherConnectedParticipants.map((p) => {
+              {/* Other Connected Participants (paged) */}
+              {pagedRemoteParticipants.map((p) => {
                 const rStream = remoteStreams.get(p.id);
                 const hasVideo = rStream && rStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live") && !p.isVideoOff;
 
@@ -3708,12 +3863,13 @@ export default function MeetingRoom() {
                     key={p.id}
                     onClick={() => handleSpotlightParticipant(p.id)}
                     title={`Click to maximize ${p.displayName}`}
-                    className={`group relative h-full w-full min-h-0 bg-neutral-900 rounded-2xl sm:rounded-3xl overflow-hidden border transition-all flex items-center justify-center cursor-pointer ${
+                    style={{ width: galleryLayout.tileWidth, height: galleryLayout.tileHeight }}
+                    className={`group relative max-w-full max-h-full bg-neutral-900 rounded-lg overflow-hidden transition-all flex items-center justify-center cursor-pointer ${
                       p.isHandRaised
-                        ? "ring-4 ring-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.85)] border-amber-400 animate-pulse"
+                        ? "border-2 border-amber-400 animate-pulse"
                         : speakingIds.has(p.id)
-                        ? "ring-4 ring-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.7)] border-emerald-400"
-                        : "border-neutral-800 shadow-md hover:border-cyan-500/60"
+                        ? "border-2 border-emerald-400"
+                        : "border border-neutral-800 hover:border-neutral-600"
                     }`}
                   >
                     {hasVideo && rStream ? (
@@ -3752,10 +3908,11 @@ export default function MeetingRoom() {
                       </button>
                     </div>
 
-                    <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-display font-bold uppercase flex items-center gap-2 max-w-[85%] truncate">
+                    <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[11px] text-white flex items-center gap-1.5 max-w-[85%]">
                       <span className="truncate">{p.displayName}</span>
-                      {p.role === "host" && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded shrink-0">HOST</span>}
-                      {p.role === "cohost" && <span className="text-cyan-400 text-[8px] bg-cyan-400/20 px-1 rounded shrink-0">CO-HOST</span>}
+                      {p.role === "host" && <span className="text-amber-400 text-[8px] bg-amber-400/20 px-1 rounded shrink-0 font-bold">HOST</span>}
+                      {p.role === "cohost" && <span className="text-cyan-400 text-[8px] bg-cyan-400/20 px-1 rounded shrink-0 font-bold">CO-HOST</span>}
+                      {p.isMuted && <span className="shrink-0" title="Muted">🔇</span>}
                     </div>
 
                     <div className="absolute top-2 right-2 flex items-center gap-1.5">
@@ -3773,15 +3930,38 @@ export default function MeetingRoom() {
                           )}
                         </div>
                       )}
-                      {p.isMuted && (
-                        <span className="bg-red-500/80 px-1.5 py-0.5 rounded text-[10px]">
-                          🔇
-                        </span>
-                      )}
                     </div>
                   </div>
                 );
               })}
+            </div>
+
+              {/* Gallery pagination — appears only beyond 25 participants */}
+              {galleryLayout.pages > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setGalleryPage(Math.max(0, galleryPageSafe - 1))}
+                    disabled={galleryPageSafe === 0}
+                    aria-label="Previous gallery page"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-10 h-14 rounded-lg bg-neutral-900/85 hover:bg-neutral-800 border border-neutral-700 text-white text-xl disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGalleryPage(Math.min(galleryLayout.pages - 1, galleryPageSafe + 1))}
+                    disabled={galleryPageSafe >= galleryLayout.pages - 1}
+                    aria-label="Next gallery page"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-10 h-14 rounded-lg bg-neutral-900/85 hover:bg-neutral-800 border border-neutral-700 text-white text-xl disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
+                  >
+                    ›
+                  </button>
+                  <span className="absolute top-2 right-2 z-20 font-meta text-[9px] px-2 py-0.5 rounded bg-black/60 border border-neutral-700 text-neutral-300">
+                    {galleryPageSafe + 1} / {galleryLayout.pages}
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -4669,93 +4849,78 @@ export default function MeetingRoom() {
 
       {/* DESKTOP EXPANDED CONTROL BAR (>= md screens) */}
       <div className="hidden md:flex h-20 px-6 border-t border-neutral-800 bg-neutral-900/95 items-center justify-between shrink-0 gap-3">
-        {/* Left: Audio, Video & Screen Share */}
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            onClick={handleToggleMic}
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              isMicMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
-            }`}
-            title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
-          >
-            <span className="text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
-          </button>
-
-          <button
-            onClick={handleToggleVideo}
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              isVideoOff ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
-            }`}
-            title={isVideoOff ? "Start Video" : "Stop Video"}
-          >
-            <span className="text-base">{isVideoOff ? "🚫" : "📹"}</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
-          </button>
-
-          <button
-            onClick={() => {
-              if (isScreenSharing) {
-                handleStartScreenShare(false);
-              } else {
-                setShowScreenShareMenu(true);
-              }
-            }}
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              isScreenSharing ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
-            }`}
-            title={isScreenSharing ? "Stop Screen Share" : "Share Window or Screen"}
-          >
-            <span className="text-base">🖥️</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">{isScreenSharing ? "Sharing" : "Share"}</span>
-          </button>
-
-          {/* Dedicated Studio Co-Design Button */}
-          <button
-            onClick={() => setShowStudioCoDesignModal(true)}
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              isStudioBroadcasting
-                ? "bg-purple-500/25 text-purple-300 border-2 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.5)] animate-pulse"
-                : "bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 text-purple-300 hover:text-white"
-            }`}
-            title="Launch Live Studio Co-Design & Broadcast"
-          >
-            <span className="text-base">🎨</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5 font-bold">Co-Design</span>
-          </button>
-        </div>
-
-        {/* Center: Collaboration Tools (Reactions, Hand, Proofing, Chat, People, AI) */}
+        {/* Left: Mic & Camera, each with a device-picker caret (Zoom parity) */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Reaction Triggers */}
-          <div className="flex items-center gap-1 bg-neutral-800/80 p-1.5 rounded-xl border border-neutral-700/60">
-            <button onClick={() => handleSendReaction("thumbs_up")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Thumbs Up">👍</button>
-            <button onClick={() => handleSendReaction("heart")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Heart">❤️</button>
-            <button onClick={() => handleSendReaction("clap")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Clap">👏</button>
-            <button onClick={() => handleSendReaction("celebrate")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Celebrate">🎉</button>
-            <button onClick={() => handleSendReaction("laugh")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Laugh">😂</button>
+          <div className="flex items-stretch">
+            <button
+              onClick={handleToggleMic}
+              className={`flex flex-col items-center justify-center w-12 h-12 rounded-l-xl text-xs font-bold transition-all shrink-0 ${
+                isMicMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
+              }`}
+              title={isMicMuted ? "Unmute Mic (M)" : "Mute Mic (M)"}
+              aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
+            >
+              <span className="text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
+              <span className="font-meta text-[8px] uppercase mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
+            </button>
+            <button
+              onClick={() => setShowDeviceSettingsModal(true)}
+              className={`flex items-center justify-center w-5 h-12 rounded-r-xl border-l transition-all shrink-0 ${
+                isMicMuted
+                  ? "bg-red-500/20 text-red-400 border-red-500/40 border-l-red-500/30 hover:bg-red-500/30"
+                  : "bg-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-700 border-l-neutral-700"
+              }`}
+              title="Select microphone & speaker"
+              aria-label="Audio device settings"
+            >
+              <span className="text-[9px]">⌃</span>
+            </button>
           </div>
 
-          <button
-            onClick={handleToggleRaiseHand}
-            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              isHandRaised ? "bg-amber-500/25 text-amber-300 border-2 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.5)] animate-pulse" : "bg-neutral-800 text-white hover:bg-neutral-700"
-            }`}
-            title="Raise / Lower Hand"
-          >
-            <span className="text-base">✋</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">Hand</span>
-          </button>
+          <div className="flex items-stretch">
+            <button
+              onClick={handleToggleVideo}
+              className={`flex flex-col items-center justify-center w-12 h-12 rounded-l-xl text-xs font-bold transition-all shrink-0 ${
+                isVideoOff ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
+              }`}
+              title={isVideoOff ? "Start Video (V)" : "Stop Video (V)"}
+              aria-label={isVideoOff ? "Start Camera" : "Stop Camera"}
+            >
+              <span className="text-base">{isVideoOff ? "🚫" : "📹"}</span>
+              <span className="font-meta text-[8px] uppercase mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
+            </button>
+            <button
+              onClick={() => setShowDeviceSettingsModal(true)}
+              className={`flex items-center justify-center w-5 h-12 rounded-r-xl border-l transition-all shrink-0 ${
+                isVideoOff
+                  ? "bg-red-500/20 text-red-400 border-red-500/40 border-l-red-500/30 hover:bg-red-500/30"
+                  : "bg-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-700 border-l-neutral-700"
+              }`}
+              title="Select camera"
+              aria-label="Camera settings"
+            >
+              <span className="text-[9px]">⌃</span>
+            </button>
+          </div>
+        </div>
 
+        {/* Center: Participants, Chat, Share (green), Co-Design, Reactions, Hand, More */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={() => setActiveDrawer(activeDrawer === "proofing" ? "none" : "proofing")}
-            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeDrawer === "proofing" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            onClick={() => setActiveDrawer(activeDrawer === "participants" ? "none" : "participants")}
+            className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+              activeDrawer === "participants" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
-            title="Live Proofing & Concepts"
+            title="Participants panel"
+            aria-label={`Participants, ${activeParticipants.length} in meeting`}
           >
-            <span className="text-base">🎨</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">Proof</span>
+            {isHost && waitingParticipants.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+                {waitingParticipants.length}
+              </span>
+            )}
+            <span className="text-base">👥</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">People ({activeParticipants.length})</span>
           </button>
 
           <button
@@ -4767,7 +4932,8 @@ export default function MeetingRoom() {
             className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeDrawer === "chat" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
             }`}
-            title="Toggle Chat"
+            title="In-meeting chat"
+            aria-label="Toggle chat"
           >
             {unreadChatCount > 0 && activeDrawer !== "chat" && (
               <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
@@ -4778,59 +4944,173 @@ export default function MeetingRoom() {
             <span className="font-meta text-[8px] uppercase mt-0.5">Chat</span>
           </button>
 
+          {/* Share Screen — the green hero action (Zoom parity) */}
           <button
-            onClick={() => setActiveDrawer(activeDrawer === "participants" ? "none" : "participants")}
-            className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeDrawer === "participants" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            onClick={() => {
+              if (isScreenSharing) {
+                handleStartScreenShare(false);
+              } else {
+                setShowScreenShareMenu(true);
+              }
+            }}
+            className={`flex flex-col items-center justify-center w-14 h-12 rounded-xl text-xs font-bold transition-all shrink-0 shadow-md ${
+              isScreenSharing
+                ? "bg-emerald-500/25 text-emerald-300 border border-emerald-400"
+                : "bg-emerald-600 hover:bg-emerald-500 text-white"
             }`}
-            title="Toggle Participants"
+            title={isScreenSharing ? "Stop sharing your screen" : "Share your screen or a window"}
+            aria-label={isScreenSharing ? "Stop screen share" : "Share screen"}
           >
-            {isHost && waitingParticipants.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
-                {waitingParticipants.length}
-              </span>
-            )}
-            <span className="text-base">👥</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">People</span>
+            <span className="text-base">🖥️</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">{isScreenSharing ? "Stop Share" : "Share"}</span>
           </button>
 
+          {/* Dedicated Studio Co-Design Button */}
           <button
-            onClick={() => setActiveDrawer(activeDrawer === "intelligence" ? "none" : "intelligence")}
-            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeDrawer === "intelligence" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            onClick={() => setShowStudioCoDesignModal(true)}
+            className={`flex flex-col items-center justify-center w-12 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+              isStudioBroadcasting
+                ? "bg-purple-500/25 text-purple-300 border-2 border-purple-400 animate-pulse"
+                : "bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 text-purple-300 hover:text-white"
             }`}
-            title="AI Meeting Intelligence"
+            title="Launch Live Studio Co-Design & Broadcast"
+            aria-label="Launch co-design session"
           >
-            <span className="text-base">✨</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">AI</span>
+            <span className="text-base">🎨</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5 font-bold">Co-Design</span>
           </button>
+
+          {/* Reaction Triggers */}
+          <div className="hidden lg:flex items-center gap-1 bg-neutral-800/80 p-1.5 rounded-xl border border-neutral-700/60" role="group" aria-label="Send a reaction">
+            <button onClick={() => handleSendReaction("thumbs_up")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Thumbs Up">👍</button>
+            <button onClick={() => handleSendReaction("heart")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Heart">❤️</button>
+            <button onClick={() => handleSendReaction("clap")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Clap">👏</button>
+            <button onClick={() => handleSendReaction("celebrate")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Celebrate">🎉</button>
+            <button onClick={() => handleSendReaction("laugh")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Laugh">😂</button>
+          </div>
+
+          <button
+            onClick={handleToggleRaiseHand}
+            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+              isHandRaised ? "bg-amber-500/25 text-amber-300 border-2 border-amber-400 animate-pulse" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            }`}
+            title="Raise / Lower Hand (H)"
+            aria-label={isHandRaised ? "Lower hand" : "Raise hand"}
+          >
+            <span className="text-base">✋</span>
+            <span className="font-meta text-[8px] uppercase mt-0.5">Hand</span>
+          </button>
+
+          {/* More ⋯ — secondary tools, opens upward and stays inside the viewport */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMoreMenu((v) => !v)}
+              className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                showMoreMenu ? "bg-neutral-700 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
+              }`}
+              title="More meeting actions"
+              aria-label="More meeting actions"
+              aria-haspopup="menu"
+              aria-expanded={showMoreMenu}
+            >
+              <span className="text-base leading-none">⋯</span>
+              <span className="font-meta text-[8px] uppercase mt-0.5">More</span>
+            </button>
+            {showMoreMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
+                <div
+                  role="menu"
+                  className="absolute bottom-full right-0 mb-2 z-50 w-64 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl py-1.5 max-h-[70vh] overflow-y-auto"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => { setActiveDrawer("proofing"); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                  >
+                    <span>🎨</span> Deliverable Proof Canvas
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => { setActiveDrawer("intelligence"); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                  >
+                    <span>✨</span> AI Meeting Notes
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => { setActiveDrawer("breakouts"); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                  >
+                    <span>🔀</span> Breakout Rooms
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => { setShareModalOpen(true); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                  >
+                    <span>🔗</span> Copy Invite Link
+                  </button>
+                  <div className="my-1 border-t border-neutral-800" />
+                  <button
+                    role="menuitem"
+                    onClick={() => { setShowDeviceSettingsModal(true); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                  >
+                    <span>⚙️</span> Audio &amp; Video Settings
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => { handleToggleFullscreen(); setShowMoreMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                  >
+                    <span>{isFullscreen ? "↙️" : "⛶"}</span> {isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                  </button>
+                  <div className="my-1 border-t border-neutral-800" />
+                  <div
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs text-neutral-500 cursor-not-allowed"
+                    title="Cloud recording needs a server-side recorder — coming soon"
+                    aria-disabled="true"
+                  >
+                    <span>⏺️</span> Record <span className="ml-auto text-[9px] uppercase tracking-wide">Soon</span>
+                  </div>
+                  {isHost && (
+                    <>
+                      <div className="my-1 border-t border-neutral-800" />
+                      <button
+                        role="menuitem"
+                        onClick={() => { setShowMoreMenu(false); handleEndForAll(); }}
+                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-red-400 hover:bg-red-950/50 font-bold"
+                      >
+                        <span>📞</span> End Meeting for All
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
-        {/* Right: Settings, Fullscreen & Leave / End Meeting */}
+        {/* Right: red Leave / End (danger zone, destructive ops confirm) */}
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setShowDeviceSettingsModal(true)}
-            className="w-10 h-10 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white flex items-center justify-center text-xs"
-            title="Device & Audio Settings"
-          >
-            ⚙️
-          </button>
-
-          <button
-            onClick={handleToggleFullscreen}
-            className="w-10 h-10 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white flex items-center justify-center text-xs"
-            title="Fullscreen"
-          >
-            {isFullscreen ? "↙️" : "⛶"}
-          </button>
-
           {isHost ? (
-            <button
-              onClick={handleEndForAll}
-              className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-display text-xs font-bold uppercase rounded-xl transition-colors shadow-sm"
-            >
-              End
-            </button>
+            <>
+              <button
+                onClick={handleLeaveMeeting}
+                className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-display text-xs font-bold uppercase rounded-xl transition-colors"
+                title="Leave without ending the meeting for others"
+              >
+                Leave
+              </button>
+              <button
+                onClick={handleEndForAll}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-display text-xs font-bold uppercase rounded-xl transition-colors shadow-sm"
+                title="End meeting for everyone (asks for confirmation)"
+              >
+                End
+              </button>
+            </>
           ) : (
             <button
               onClick={handleLeaveMeeting}
