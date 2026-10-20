@@ -47,7 +47,9 @@ export function MeetingProximityAlert() {
   // Do not show the banner if the user is already inside a meeting room
   const isInMeetingRoom = location.pathname.startsWith("/meet/");
   const isInMeetingRoomRef = useRef(isInMeetingRoom);
-  isInMeetingRoomRef.current = isInMeetingRoom;
+  useEffect(() => {
+    isInMeetingRoomRef.current = isInMeetingRoom;
+  }, [isInMeetingRoom]);
 
   // 1. Real-time subscription + polling for upcoming meetings & waiting room knocks
   useEffect(() => {
@@ -134,7 +136,9 @@ export function MeetingProximityAlert() {
                 navigate(`/meet/${first.meeting.roomId}`);
                 n.close();
               };
-            } catch {}
+            } catch {
+              // ignore browser notification restriction
+            }
           }
         }
 
@@ -224,7 +228,7 @@ export function MeetingProximityAlert() {
       unsub();
       clearInterval(interval);
     };
-  }, [user?.email, isAdmin, navigate]);
+  }, [user, isAdmin, navigate]);
 
   // 2. Real-time second countdown ticker & Chime/Haptic triggers
   useEffect(() => {

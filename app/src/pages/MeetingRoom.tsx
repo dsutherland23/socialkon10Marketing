@@ -1,6 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  Users,
+  MessageSquare,
+  MonitorUp,
+  MonitorOff,
+  Palette,
+  Hand,
+  MoreHorizontal,
+  PhoneOff,
+  LogOut,
+  ChevronUp,
+  Settings,
+  Maximize2,
+  Minimize2,
+  Share2,
+  Sparkles,
+  GitBranch,
+  LayoutGrid,
+  UserSquare2,
+  Volume2,
+  Check,
+  X,
+  Bell,
+} from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useSEO } from "../lib/seo";
 import { firebaseReady } from "../lib/firebase";
@@ -906,13 +934,15 @@ export default function MeetingRoom() {
               window.focus();
               n.close();
             };
-          } catch {}
+          } catch {
+            // ignore notification restrictions
+          }
         } else if (Notification.permission === "default") {
           Notification.requestPermission().catch(() => {});
         }
       }
     }
-  }, [meeting?.participants, meeting?.id, meeting?.title, isHost, phase]);
+  }, [meeting, isHost, phase]);
 
   // 9b. Flashing Tab Title & Periodic Gentle Reminder Chime while guests remain waiting
   useEffect(() => {
@@ -940,7 +970,7 @@ export default function MeetingRoom() {
       window.clearInterval(reminderInterval);
       document.title = baseTitle;
     };
-  }, [meeting?.participants, meeting?.title, isHost, phase]);
+  }, [meeting, isHost, phase]);
 
   // 10. Listen for Fullscreen State Change
   useEffect(() => {
@@ -2539,26 +2569,28 @@ export default function MeetingRoom() {
 
               {/* In-Preview Controls (Only shown when localStream is active) */}
               {localStream && (
-                <div className="absolute bottom-3 sm:bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-2.5 sm:gap-3 bg-neutral-900/85 backdrop-blur-md px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-full border border-neutral-700 shadow-md">
+                <div className="absolute bottom-3 sm:bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-2.5 sm:gap-3 bg-neutral-900/90 backdrop-blur-md px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-full border border-neutral-700/80 shadow-lg">
                   <button
                     type="button"
                     onClick={handleToggleMic}
-                    className={`p-2 sm:p-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors ${
-                      isMicMuted ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
+                    className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                      isMicMuted ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700 border border-neutral-700"
                     }`}
                     title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
+                    aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
                   >
-                    {isMicMuted ? "🔇" : "🎙️"}
+                    {isMicMuted ? <MicOff className="w-4 h-4" strokeWidth={2} /> : <Mic className="w-4 h-4" strokeWidth={2} />}
                   </button>
                   <button
                     type="button"
                     onClick={handleToggleVideo}
-                    className={`p-2 sm:p-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors ${
-                      isVideoOff ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
+                    className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                      isVideoOff ? "bg-red-500 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700 border border-neutral-700"
                     }`}
                     title={isVideoOff ? "Turn Video On" : "Turn Video Off"}
+                    aria-label={isVideoOff ? "Turn Video On" : "Turn Video Off"}
                   >
-                    {isVideoOff ? "🚫" : "📹"}
+                    {isVideoOff ? <VideoOff className="w-4 h-4" strokeWidth={2} /> : <Video className="w-4 h-4" strokeWidth={2} />}
                   </button>
                 </div>
               )}
@@ -2934,12 +2966,14 @@ export default function MeetingRoom() {
           <div
             role="alert"
             aria-live="assertive"
-            className="pointer-events-auto w-full bg-amber-950/95 border-2 border-amber-500 backdrop-blur-md px-4 py-3 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-4 duration-200"
+            className="pointer-events-auto w-full bg-neutral-900/95 border border-amber-500/50 ring-1 ring-amber-500/20 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-4 duration-200"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <span className="text-2xl animate-bounce shrink-0">🔔</span>
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                <Bell className="w-4 h-4 animate-bounce" strokeWidth={2.2} />
+              </div>
               <div className="min-w-0">
-                <h4 className="font-display text-xs font-bold uppercase text-amber-300">
+                <h4 className="font-display text-xs font-bold uppercase text-amber-300 tracking-wide">
                   {waitingParticipants.length} {waitingParticipants.length > 1 ? "People" : "Person"} Waiting in Lobby
                 </h4>
                 <p className="font-meta text-[9.5px] text-neutral-300 truncate max-w-xs">
@@ -2950,23 +2984,24 @@ export default function MeetingRoom() {
 
             <div className="flex flex-wrap items-center gap-1.5">
               {waitingParticipants.map((p) => (
-                <div key={p.id} className="flex items-center gap-1 bg-black/30 p-1 rounded-xl border border-amber-500/30">
+                <div key={p.id} className="flex items-center gap-1 bg-neutral-950/80 p-1 rounded-xl border border-neutral-800">
                   <button
                     type="button"
                     onClick={() => void admitParticipant(meeting.id, p.id)}
-                    className="btn btn-dept !py-1 !px-2.5 font-display text-[10px] font-bold uppercase rounded-lg"
+                    className="h-7 px-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-meta text-[9.5px] font-bold uppercase tracking-wider rounded-lg flex items-center gap-1 transition-all shadow-sm"
                     title={`Admit ${p.displayName}`}
                   >
-                    ✓ Admit {p.displayName.split(" ")[0]}
+                    <Check className="w-3.5 h-3.5" strokeWidth={2.5} />
+                    <span>Admit {p.displayName.split(" ")[0]}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => void removeParticipant(meeting.id, p.id)}
-                    className="font-meta text-[9.5px] px-2 py-1 bg-red-600/80 hover:bg-red-500 text-white font-bold rounded-lg transition-colors"
+                    className="h-7 w-7 bg-neutral-800 hover:bg-red-600/90 text-neutral-400 hover:text-white rounded-lg flex items-center justify-center transition-colors"
                     title={`Decline ${p.displayName}`}
                     aria-label={`Decline ${p.displayName}`}
                   >
-                    ✕
+                    <X className="w-3.5 h-3.5" strokeWidth={2.2} />
                   </button>
                 </div>
               ))}
@@ -2974,7 +3009,7 @@ export default function MeetingRoom() {
                 <button
                   type="button"
                   onClick={() => void admitAllParticipants(meeting.id)}
-                  className="font-meta text-[10px] px-3 py-1.5 bg-amber-500 text-black font-bold rounded-lg hover:bg-amber-400 shadow-sm"
+                  className="h-8 px-3 bg-amber-500 hover:bg-amber-400 active:scale-95 text-black font-meta text-[9.5px] font-bold uppercase tracking-wider rounded-xl shadow-sm transition-all"
                 >
                   Admit All ({waitingParticipants.length})
                 </button>
@@ -2985,9 +3020,11 @@ export default function MeetingRoom() {
 
         {/* Floating Attention Alert for Raised Hands */}
         {activeParticipants.some((p) => p.isHandRaised) && (
-          <div className="pointer-events-auto w-full max-w-md bg-neutral-900/95 border-2 border-amber-400 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-top-3">
+          <div className="pointer-events-auto w-full max-w-md bg-neutral-900/95 border border-amber-400/50 backdrop-blur-xl px-4 py-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-4 animate-in slide-in-from-top-3">
             <div className="flex items-center gap-2.5 min-w-0">
-              <span className="text-xl animate-bounce">✋</span>
+              <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-300 flex items-center justify-center shrink-0">
+                <Hand className="w-4 h-4 animate-bounce" strokeWidth={2.2} />
+              </div>
               <div className="min-w-0">
                 <p className="font-display text-xs font-bold uppercase text-amber-300 truncate">
                   {activeParticipants.filter((p) => p.isHandRaised).map((p) => p.displayName).join(", ")}
@@ -3004,7 +3041,7 @@ export default function MeetingRoom() {
                     .filter((p) => p.isHandRaised)
                     .forEach((p) => handleLowerParticipantHand(p.id));
                 }}
-                className="font-meta text-[9px] px-2.5 py-1 bg-amber-400 text-black font-bold rounded-lg hover:bg-amber-300 shrink-0"
+                className="h-7 px-3 bg-amber-400 hover:bg-amber-300 text-black font-meta text-[9px] font-bold uppercase tracking-wider rounded-lg shrink-0 transition-colors"
               >
                 Lower Hands
               </button>
@@ -3118,32 +3155,34 @@ export default function MeetingRoom() {
         {/* Top Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Gallery / Speaker view switch (Zoom-style) */}
-          <div className="flex items-center rounded-full border border-neutral-700 bg-neutral-800 overflow-hidden" role="group" aria-label="View mode">
+          <div className="flex items-center rounded-xl border border-neutral-800 bg-neutral-900/90 p-0.5" role="group" aria-label="View mode">
             <button
               type="button"
               onClick={() => handleViewModeChange("gallery")}
               aria-pressed={viewMode === "gallery" && !pinnedParticipantId}
-              className={`font-meta text-[9px] px-2.5 py-1 flex items-center gap-1 transition-colors ${
+              className={`font-meta text-[9px] px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all ${
                 viewMode === "gallery" && !pinnedParticipantId
-                  ? "bg-white text-black font-bold"
-                  : "text-neutral-300 hover:text-white"
+                  ? "bg-neutral-800 text-white font-bold shadow-xs border border-neutral-700"
+                  : "text-neutral-400 hover:text-white"
               }`}
               title="Gallery view — everyone in an equal grid"
             >
-              ▦ <span className="hidden md:inline">Gallery</span>
+              <LayoutGrid className="w-3.5 h-3.5" strokeWidth={2} />
+              <span className="hidden md:inline">Gallery</span>
             </button>
             <button
               type="button"
               onClick={() => handleViewModeChange("speaker")}
               aria-pressed={viewMode === "speaker" || Boolean(pinnedParticipantId)}
-              className={`font-meta text-[9px] px-2.5 py-1 flex items-center gap-1 transition-colors border-l border-neutral-700 ${
+              className={`font-meta text-[9px] px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all ${
                 viewMode === "speaker" || pinnedParticipantId
-                  ? "bg-white text-black font-bold"
-                  : "text-neutral-300 hover:text-white"
+                  ? "bg-neutral-800 text-white font-bold shadow-xs border border-neutral-700"
+                  : "text-neutral-400 hover:text-white"
               }`}
               title="Speaker view — stage follows whoever is talking"
             >
-              ▣ <span className="hidden md:inline">Speaker</span>
+              <UserSquare2 className="w-3.5 h-3.5" strokeWidth={2} />
+              <span className="hidden md:inline">Speaker</span>
             </button>
           </div>
 
@@ -3156,14 +3195,15 @@ export default function MeetingRoom() {
                 setAutoSpotlightActiveSpeaker(next);
                 toast.info(next ? "Auto-Spotlight Active Speaker: ON" : "Auto-Spotlight: OFF");
               }}
-              className={`font-meta text-[9px] px-2.5 py-1 rounded-full border transition-all hidden md:flex items-center gap-1.5 ${
+              className={`font-meta text-[9px] h-8 px-2.5 rounded-xl border transition-all hidden md:flex items-center gap-1.5 ${
                 autoSpotlightActiveSpeaker
-                  ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-300"
-                  : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white"
+                  ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300 font-bold"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white hover:border-neutral-700"
               }`}
               title="Automatically feature who is speaking"
             >
-              <span>🗣️</span> {autoSpotlightActiveSpeaker ? "Auto-Spotlight ON" : "Auto-Spotlight"}
+              <Volume2 className="w-3.5 h-3.5" strokeWidth={2} />
+              <span>{autoSpotlightActiveSpeaker ? "Auto-Spotlight ON" : "Auto-Spotlight"}</span>
             </button>
           )}
 
@@ -3171,13 +3211,13 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={() => setActiveDrawer(activeDrawer === "proofing" ? "none" : "proofing")}
-            className={`font-meta text-[10px] px-2.5 sm:px-3 py-1.5 rounded-full font-bold flex items-center gap-1 sm:gap-1.5 border transition-all ${
+            className={`font-meta text-[9.5px] h-8 px-2.5 sm:px-3 rounded-xl font-bold flex items-center gap-1.5 border transition-all ${
               activeDrawer === "proofing"
-                ? "bg-[var(--dept)] text-black border-[var(--dept)]"
-                : "bg-neutral-800 border-neutral-700 text-white hover:border-[var(--dept)]"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] shadow-xs"
+                : "bg-neutral-900 border-neutral-800 text-neutral-200 hover:text-white hover:border-neutral-700"
             }`}
           >
-            <span>🎨</span>
+            <Palette className="w-3.5 h-3.5" strokeWidth={2} />
             <span className="hidden sm:inline">Proof Canvas</span>
           </button>
 
@@ -3185,27 +3225,31 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={() => setShowDeviceSettingsModal(true)}
-            className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 flex items-center justify-center text-xs text-neutral-300 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white transition-colors"
             title="Audio & Video Settings"
+            aria-label="Audio & Video Settings"
           >
-            ⚙️
+            <Settings className="w-3.5 h-3.5" strokeWidth={2} />
           </button>
 
           {/* Fullscreen Toggle */}
           <button
             type="button"
             onClick={handleToggleFullscreen}
-            className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hidden sm:flex items-center justify-center text-xs text-neutral-300 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 hidden sm:flex items-center justify-center text-neutral-300 hover:text-white transition-colors"
             title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+            aria-label={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
           >
-            {isFullscreen ? "↙️" : "⛶"}
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" strokeWidth={2} /> : <Maximize2 className="w-3.5 h-3.5" strokeWidth={2} />}
           </button>
 
           <button
+            type="button"
             onClick={() => setShareModalOpen(true)}
-            className="font-meta text-[10px] px-2.5 sm:px-3 py-1.5 rounded-full bg-[var(--dept)] text-[var(--on-dept)] font-bold flex items-center gap-1 sm:gap-1.5 hover:brightness-110 shadow-sm transition-all"
+            className="font-meta text-[9.5px] h-8 px-2.5 sm:px-3 rounded-xl bg-[var(--dept)] text-[var(--on-dept)] font-bold flex items-center gap-1.5 hover:brightness-110 shadow-xs transition-all"
           >
-            <span>🔗</span> <span className="hidden sm:inline">Share</span>
+            <Share2 className="w-3.5 h-3.5" strokeWidth={2.2} />
+            <span className="hidden sm:inline">Invite</span>
           </button>
         </div>
       </div>
@@ -4809,37 +4853,41 @@ export default function MeetingRoom() {
       {/* Bottom Control Bar: Dual Layout (Mobile 5-Action Dock + Desktop Expanded Bar) */}
       
       {/* MOBILE CONTROL DOCK (< md screens) */}
-      <div className="flex md:hidden h-20 px-3 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-xl items-center justify-between gap-2 shrink-0 z-40 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] w-full">
+      <div className="flex md:hidden h-20 px-3 border-t border-neutral-800/90 bg-neutral-950/95 backdrop-blur-xl items-center justify-between gap-2 shrink-0 z-40 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] w-full">
         {/* 1. Microphone Toggle */}
         <button
           type="button"
           onClick={handleToggleMic}
-          className={`flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
+          className={`flex-1 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 text-xs font-bold transition-all active:scale-95 shadow-sm border ${
             isMicMuted
-              ? "bg-red-500/15 text-red-400 border border-red-500/40"
-              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
+              ? "bg-red-500/15 text-red-400 border-red-500/40"
+              : "bg-neutral-900/90 text-neutral-100 border-neutral-800 hover:bg-neutral-800 hover:border-neutral-700"
           }`}
           title={isMicMuted ? "Unmute Mic" : "Mute Mic"}
           aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
         >
-          <span className="text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
-          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
+          {isMicMuted ? <MicOff className="w-4 h-4" strokeWidth={2} /> : <Mic className="w-4 h-4" strokeWidth={2} />}
+          <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+            {isMicMuted ? "Unmute" : "Mute"}
+          </span>
         </button>
 
         {/* 2. Camera Toggle */}
         <button
           type="button"
           onClick={handleToggleVideo}
-          className={`flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
+          className={`flex-1 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 text-xs font-bold transition-all active:scale-95 shadow-sm border ${
             isVideoOff
-              ? "bg-red-500/15 text-red-400 border border-red-500/40"
-              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
+              ? "bg-red-500/15 text-red-400 border-red-500/40"
+              : "bg-neutral-900/90 text-neutral-100 border-neutral-800 hover:bg-neutral-800 hover:border-neutral-700"
           }`}
           title={isVideoOff ? "Start Video" : "Stop Video"}
           aria-label={isVideoOff ? "Start Camera" : "Stop Camera"}
         >
-          <span className="text-base">{isVideoOff ? "🚫" : "📹"}</span>
-          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
+          {isVideoOff ? <VideoOff className="w-4 h-4" strokeWidth={2} /> : <Video className="w-4 h-4" strokeWidth={2} />}
+          <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+            {isVideoOff ? "Start" : "Stop"}
+          </span>
         </button>
 
         {/* 3. In-Call Public Chat */}
@@ -4850,47 +4898,47 @@ export default function MeetingRoom() {
             setActiveDrawer(next);
             if (next === "chat") setUnreadChatCount(0);
           }}
-          className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
+          className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 text-xs font-bold transition-all active:scale-95 shadow-sm border ${
             activeDrawer === "chat"
-              ? "bg-[var(--dept)] text-black border border-[var(--dept)] font-extrabold"
-              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
+              ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+              : "bg-neutral-900/90 text-neutral-100 border-neutral-800 hover:bg-neutral-800 hover:border-neutral-700"
           }`}
           title="Toggle In-Meeting Chat"
           aria-label="Toggle Chat"
         >
           {unreadChatCount > 0 && activeDrawer !== "chat" && (
-            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+            <span className="absolute -top-1.5 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
               {unreadChatCount}
             </span>
           )}
-          <span className="text-base">💬</span>
-          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">Chat</span>
+          <MessageSquare className="w-4 h-4" strokeWidth={2} />
+          <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Chat</span>
         </button>
 
-        {/* 4. More Actions Sheet Trigger (•••) */}
+        {/* 4. More Actions Sheet Trigger */}
         <button
           type="button"
           onClick={() => setShowMobileActionsSheet(true)}
-          className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center text-xs font-bold transition-all active:scale-95 shadow-md ${
+          className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 text-xs font-bold transition-all active:scale-95 shadow-sm border ${
             showMobileActionsSheet || isHandRaised || (activeDrawer !== "none" && activeDrawer !== "chat")
-              ? "bg-cyan-500/20 text-cyan-300 border border-cyan-400/60"
-              : "bg-neutral-900 text-white border border-neutral-800 hover:bg-neutral-800"
+              ? "bg-cyan-500/20 text-cyan-300 border-cyan-400/60"
+              : "bg-neutral-900/90 text-neutral-100 border-neutral-800 hover:bg-neutral-800 hover:border-neutral-700"
           }`}
           title="More Meeting Actions"
           aria-label="Open Meeting Tools"
         >
           {isHandRaised && (
-            <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 w-4 rounded-full flex items-center justify-center animate-bounce shadow-md">
+            <span className="absolute -top-1.5 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 w-4 rounded-full flex items-center justify-center animate-bounce shadow-md">
               ✋
             </span>
           )}
           {isHost && waitingParticipants.length > 0 && !isHandRaised && (
-            <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+            <span className="absolute -top-1.5 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
               {waitingParticipants.length}
             </span>
           )}
-          <span className="text-base">⚙️</span>
-          <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">Tools</span>
+          <MoreHorizontal className="w-4 h-4" strokeWidth={2.2} />
+          <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Tools</span>
         </button>
 
         {/* 5. End / Leave Call */}
@@ -4898,126 +4946,170 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={handleEndForAll}
-            className="flex-1 h-14 rounded-2xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all border border-red-400/40"
+            className="flex-1 h-14 rounded-2xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 shadow-lg transition-all border border-red-400/40"
             title="End Meeting for All"
             aria-label="End Meeting"
           >
-            <span className="text-base">📞</span>
-            <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">End</span>
+            <PhoneOff className="w-4 h-4" strokeWidth={2.2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">End</span>
           </button>
         ) : (
           <button
             type="button"
             onClick={handleLeaveMeeting}
-            className="flex-1 h-14 rounded-2xl bg-red-600/90 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center shadow-lg transition-all border border-red-400/40"
+            className="flex-1 h-14 rounded-2xl bg-red-600/90 hover:bg-red-500 active:scale-95 text-white font-display text-[9px] font-bold uppercase flex flex-col items-center justify-center gap-1 shadow-lg transition-all border border-red-400/40"
             title="Leave Meeting"
             aria-label="Leave Meeting"
           >
-            <span className="text-base">📞</span>
-            <span className="font-meta text-[8px] uppercase tracking-wider font-bold mt-0.5">Leave</span>
+            <LogOut className="w-4 h-4" strokeWidth={2.2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Leave</span>
           </button>
         )}
       </div>
 
       {/* DESKTOP EXPANDED CONTROL BAR (>= md screens) */}
-      <div className="hidden md:flex h-20 px-6 border-t border-neutral-800 bg-neutral-900/95 items-center justify-between shrink-0 gap-3">
-        {/* Left: Mic & Camera, each with a device-picker caret (Zoom parity) */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-stretch">
+      <div className="hidden md:flex h-20 px-6 border-t border-neutral-800/90 bg-neutral-950/95 backdrop-blur-xl items-center justify-between shrink-0 gap-4">
+        {/* Left: Mic & Camera split buttons with device-picker caret */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div
+            className={`flex items-stretch h-12 rounded-xl border overflow-hidden transition-all shadow-sm ${
+              isMicMuted
+                ? "bg-red-500/15 border-red-500/40 text-red-400"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:border-neutral-700"
+            }`}
+          >
             <button
+              type="button"
               onClick={handleToggleMic}
-              className={`flex flex-col items-center justify-center w-12 h-12 rounded-l-xl text-xs font-bold transition-all shrink-0 ${
-                isMicMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
+              className={`flex flex-col items-center justify-center gap-1 px-3.5 min-w-[60px] h-full transition-colors ${
+                isMicMuted ? "hover:bg-red-500/20" : "hover:bg-neutral-800/80"
               }`}
               title={isMicMuted ? "Unmute Mic (M)" : "Mute Mic (M)"}
               aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
             >
-              <span className="text-base">{isMicMuted ? "🔇" : "🎙️"}</span>
-              <span className="font-meta text-[8px] uppercase mt-0.5">{isMicMuted ? "Unmute" : "Mute"}</span>
+              {isMicMuted ? <MicOff className="w-4 h-4 shrink-0" strokeWidth={2} /> : <Mic className="w-4 h-4 shrink-0" strokeWidth={2} />}
+              <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+                {isMicMuted ? "Unmute" : "Mute"}
+              </span>
             </button>
             <button
+              type="button"
               onClick={() => setShowDeviceSettingsModal(true)}
-              className={`flex items-center justify-center w-5 h-12 rounded-r-xl border-l transition-all shrink-0 ${
+              className={`flex items-center justify-center w-6 h-full border-l transition-colors ${
                 isMicMuted
-                  ? "bg-red-500/20 text-red-400 border-red-500/40 border-l-red-500/30 hover:bg-red-500/30"
-                  : "bg-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-700 border-l-neutral-700"
+                  ? "border-l-red-500/30 hover:bg-red-500/25 text-red-300"
+                  : "border-l-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-white"
               }`}
               title="Select microphone & speaker"
               aria-label="Audio device settings"
             >
-              <span className="text-[9px]">⌃</span>
+              <ChevronUp className="w-3.5 h-3.5" strokeWidth={2.2} />
             </button>
           </div>
 
-          <div className="flex items-stretch">
+          <div
+            className={`flex items-stretch h-12 rounded-xl border overflow-hidden transition-all shadow-sm ${
+              isVideoOff
+                ? "bg-red-500/15 border-red-500/40 text-red-400"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:border-neutral-700"
+            }`}
+          >
             <button
+              type="button"
               onClick={handleToggleVideo}
-              className={`flex flex-col items-center justify-center w-12 h-12 rounded-l-xl text-xs font-bold transition-all shrink-0 ${
-                isVideoOff ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-neutral-800 text-white hover:bg-neutral-700"
+              className={`flex flex-col items-center justify-center gap-1 px-3.5 min-w-[60px] h-full transition-colors ${
+                isVideoOff ? "hover:bg-red-500/20" : "hover:bg-neutral-800/80"
               }`}
               title={isVideoOff ? "Start Video (V)" : "Stop Video (V)"}
               aria-label={isVideoOff ? "Start Camera" : "Stop Camera"}
             >
-              <span className="text-base">{isVideoOff ? "🚫" : "📹"}</span>
-              <span className="font-meta text-[8px] uppercase mt-0.5">{isVideoOff ? "Start" : "Stop"}</span>
+              {isVideoOff ? <VideoOff className="w-4 h-4 shrink-0" strokeWidth={2} /> : <Video className="w-4 h-4 shrink-0" strokeWidth={2} />}
+              <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+                {isVideoOff ? "Start" : "Stop"}
+              </span>
             </button>
             <button
+              type="button"
               onClick={() => setShowDeviceSettingsModal(true)}
-              className={`flex items-center justify-center w-5 h-12 rounded-r-xl border-l transition-all shrink-0 ${
+              className={`flex items-center justify-center w-6 h-full border-l transition-colors ${
                 isVideoOff
-                  ? "bg-red-500/20 text-red-400 border-red-500/40 border-l-red-500/30 hover:bg-red-500/30"
-                  : "bg-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-700 border-l-neutral-700"
+                  ? "border-l-red-500/30 hover:bg-red-500/25 text-red-300"
+                  : "border-l-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-white"
               }`}
               title="Select camera"
               aria-label="Camera settings"
             >
-              <span className="text-[9px]">⌃</span>
+              <ChevronUp className="w-3.5 h-3.5" strokeWidth={2.2} />
             </button>
           </div>
         </div>
 
-        {/* Center: Participants, Chat, Share (green), Co-Design, Reactions, Hand, More */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* Center: Unified h-12 Dock (People, Chat, Share, Co-Design, Reactions, Hand, More) */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* People / Participants */}
           <button
+            type="button"
             onClick={() => setActiveDrawer(activeDrawer === "participants" ? "none" : "participants")}
-            className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeDrawer === "participants" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[68px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              activeDrawer === "participants"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
             }`}
             title="Participants panel"
             aria-label={`Participants, ${activeParticipants.length} in meeting`}
           >
             {isHost && waitingParticipants.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+              <span className="absolute -top-1.5 -right-1.5 bg-amber-400 text-black text-[9px] font-extrabold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
                 {waitingParticipants.length}
               </span>
             )}
-            <span className="text-base">👥</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">People ({activeParticipants.length})</span>
+            <div className="flex items-center gap-1">
+              <Users className="w-4 h-4 shrink-0" strokeWidth={2} />
+              <span
+                className={`font-meta text-[9px] font-extrabold px-1.5 py-0.5 rounded-full leading-none ${
+                  activeDrawer === "participants"
+                    ? "bg-black/20 text-black"
+                    : "bg-neutral-800 text-neutral-300 border border-neutral-700/80"
+                }`}
+              >
+                {activeParticipants.length}
+              </span>
+            </div>
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              People
+            </span>
           </button>
 
+          {/* Chat */}
           <button
+            type="button"
             onClick={() => {
               const next = activeDrawer === "chat" ? "none" : "chat";
               setActiveDrawer(next);
               if (next === "chat") setUnreadChatCount(0);
             }}
-            className={`relative flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              activeDrawer === "chat" ? "bg-[var(--dept)] text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            className={`relative flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[64px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              activeDrawer === "chat"
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
             }`}
             title="In-meeting chat"
             aria-label="Toggle chat"
           >
             {unreadChatCount > 0 && activeDrawer !== "chat" && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
+              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center animate-bounce shadow-md">
                 {unreadChatCount}
               </span>
             )}
-            <span className="text-base">💬</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">Chat</span>
+            <MessageSquare className="w-4 h-4 shrink-0" strokeWidth={2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              Chat
+            </span>
           </button>
 
-          {/* Share Screen — the green hero action (Zoom parity) */}
+          {/* Share Screen — Emerald Hero Action */}
           <button
+            type="button"
             onClick={() => {
               if (isScreenSharing) {
                 handleStartScreenShare(false);
@@ -5025,136 +5117,162 @@ export default function MeetingRoom() {
                 setShowScreenShareMenu(true);
               }
             }}
-            className={`flex flex-col items-center justify-center w-14 h-12 rounded-xl text-xs font-bold transition-all shrink-0 shadow-md ${
+            className={`flex flex-col items-center justify-center gap-1 h-12 px-4 min-w-[72px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
               isScreenSharing
-                ? "bg-emerald-500/25 text-emerald-300 border border-emerald-400"
-                : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/70"
+                : "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/80 text-white"
             }`}
             title={isScreenSharing ? "Stop sharing your screen" : "Share your screen or a window"}
             aria-label={isScreenSharing ? "Stop screen share" : "Share screen"}
           >
-            <span className="text-base">🖥️</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">{isScreenSharing ? "Stop Share" : "Share"}</span>
+            {isScreenSharing ? <MonitorOff className="w-4 h-4 shrink-0" strokeWidth={2} /> : <MonitorUp className="w-4 h-4 shrink-0" strokeWidth={2} />}
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              {isScreenSharing ? "Stop Share" : "Share"}
+            </span>
           </button>
 
           {/* Dedicated Studio Co-Design Button */}
           <button
+            type="button"
             onClick={() => setShowStudioCoDesignModal(true)}
-            className={`flex flex-col items-center justify-center w-12 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[78px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
               isStudioBroadcasting
-                ? "bg-purple-500/25 text-purple-300 border-2 border-purple-400 animate-pulse"
-                : "bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 text-purple-300 hover:text-white"
+                ? "bg-purple-500/25 text-purple-200 border-purple-400 animate-pulse"
+                : "bg-purple-950/50 hover:bg-purple-900/60 border-purple-500/40 text-purple-200 hover:text-white hover:border-purple-400/70"
             }`}
             title="Launch Live Studio Co-Design & Broadcast"
             aria-label="Launch co-design session"
           >
-            <span className="text-base">🎨</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5 font-bold">Co-Design</span>
+            <Palette className="w-4 h-4 shrink-0 text-purple-300" strokeWidth={2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              Co-Design
+            </span>
           </button>
 
-          {/* Reaction Triggers */}
-          <div className="hidden lg:flex items-center gap-1 bg-neutral-800/80 p-1.5 rounded-xl border border-neutral-700/60" role="group" aria-label="Send a reaction">
-            <button onClick={() => handleSendReaction("thumbs_up")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Thumbs Up">👍</button>
-            <button onClick={() => handleSendReaction("heart")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Heart">❤️</button>
-            <button onClick={() => handleSendReaction("clap")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Clap">👏</button>
-            <button onClick={() => handleSendReaction("celebrate")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Celebrate">🎉</button>
-            <button onClick={() => handleSendReaction("laugh")} className="p-1.5 rounded hover:bg-neutral-700 text-sm" title="Laugh">😂</button>
+          {/* Reaction Triggers — matched h-12 container */}
+          <div
+            className="hidden lg:flex items-center gap-0.5 h-12 px-2 bg-neutral-900/90 rounded-xl border border-neutral-800 shadow-sm"
+            role="group"
+            aria-label="Send a reaction"
+          >
+            <button type="button" onClick={() => handleSendReaction("thumbs_up")} className="w-8 h-8 rounded-lg hover:bg-neutral-800 active:scale-110 flex items-center justify-center text-sm transition-all" title="Thumbs Up">👍</button>
+            <button type="button" onClick={() => handleSendReaction("heart")} className="w-8 h-8 rounded-lg hover:bg-neutral-800 active:scale-110 flex items-center justify-center text-sm transition-all" title="Heart">❤️</button>
+            <button type="button" onClick={() => handleSendReaction("clap")} className="w-8 h-8 rounded-lg hover:bg-neutral-800 active:scale-110 flex items-center justify-center text-sm transition-all" title="Clap">👏</button>
+            <button type="button" onClick={() => handleSendReaction("celebrate")} className="w-8 h-8 rounded-lg hover:bg-neutral-800 active:scale-110 flex items-center justify-center text-sm transition-all" title="Celebrate">🎉</button>
+            <button type="button" onClick={() => handleSendReaction("laugh")} className="w-8 h-8 rounded-lg hover:bg-neutral-800 active:scale-110 flex items-center justify-center text-sm transition-all" title="Laugh">😂</button>
           </div>
 
+          {/* Raise Hand */}
           <button
+            type="button"
             onClick={handleToggleRaiseHand}
-            className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-              isHandRaised ? "bg-amber-500/25 text-amber-300 border-2 border-amber-400 animate-pulse" : "bg-neutral-800 text-white hover:bg-neutral-700"
+            className={`flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[60px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              isHandRaised
+                ? "bg-amber-500/20 text-amber-300 border-amber-400 animate-pulse"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
             }`}
             title="Raise / Lower Hand (H)"
             aria-label={isHandRaised ? "Lower hand" : "Raise hand"}
           >
-            <span className="text-base">✋</span>
-            <span className="font-meta text-[8px] uppercase mt-0.5">Hand</span>
+            <Hand className="w-4 h-4 shrink-0" strokeWidth={2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              {isHandRaised ? "Lower" : "Hand"}
+            </span>
           </button>
 
           {/* More ⋯ — secondary tools, opens upward and stays inside the viewport */}
           <div className="relative">
             <button
+              type="button"
               onClick={() => setShowMoreMenu((v) => !v)}
-              className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                showMoreMenu ? "bg-neutral-700 text-white" : "bg-neutral-800 text-white hover:bg-neutral-700"
+              className={`flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[60px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+                showMoreMenu
+                  ? "bg-neutral-800 text-white border-neutral-600"
+                  : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
               }`}
               title="More meeting actions"
               aria-label="More meeting actions"
               aria-haspopup="menu"
               aria-expanded={showMoreMenu}
             >
-              <span className="text-base leading-none">⋯</span>
-              <span className="font-meta text-[8px] uppercase mt-0.5">More</span>
+              <MoreHorizontal className="w-4 h-4 shrink-0" strokeWidth={2.2} />
+              <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+                More
+              </span>
             </button>
             {showMoreMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
                 <div
                   role="menu"
-                  className="absolute bottom-full right-0 mb-2 z-50 w-64 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl py-1.5 max-h-[70vh] overflow-y-auto"
+                  className="absolute bottom-full right-0 mb-2.5 z-50 w-64 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700/80 rounded-2xl shadow-2xl p-1.5 max-h-[70vh] overflow-y-auto"
                 >
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => { setActiveDrawer("proofing"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
                   >
-                    <span>🎨</span> Deliverable Proof Canvas
+                    <Palette className="w-4 h-4 text-cyan-400 shrink-0" strokeWidth={2} />
+                    <span>Deliverable Proof Canvas</span>
                   </button>
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => { setActiveDrawer("intelligence"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
                   >
-                    <span>✨</span> AI Meeting Notes
+                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={2} />
+                    <span>AI Meeting Notes</span>
                   </button>
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => { setActiveDrawer("breakouts"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
                   >
-                    <span>🔀</span> Breakout Rooms
+                    <GitBranch className="w-4 h-4 text-purple-400 shrink-0" strokeWidth={2} />
+                    <span>Breakout Rooms</span>
                   </button>
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => { setShareModalOpen(true); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
                   >
-                    <span>🔗</span> Copy Invite Link
+                    <Share2 className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2} />
+                    <span>Copy Invite Link</span>
                   </button>
                   <div className="my-1 border-t border-neutral-800" />
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => { setShowDeviceSettingsModal(true); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
                   >
-                    <span>⚙️</span> Audio &amp; Video Settings
+                    <Settings className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} />
+                    <span>Audio &amp; Video Settings</span>
                   </button>
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => { handleToggleFullscreen(); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-white hover:bg-neutral-800"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
                   >
-                    <span>{isFullscreen ? "↙️" : "⛶"}</span> {isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                    {isFullscreen ? <Minimize2 className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} /> : <Maximize2 className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} />}
+                    <span>{isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</span>
                   </button>
-                  <div className="my-1 border-t border-neutral-800" />
-                  <div
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs text-neutral-500 cursor-not-allowed"
-                    title="Cloud recording needs a server-side recorder — coming soon"
-                    aria-disabled="true"
-                  >
-                    <span>⏺️</span> Record <span className="ml-auto text-[9px] uppercase tracking-wide">Soon</span>
-                  </div>
                   {isHost && (
                     <>
                       <div className="my-1 border-t border-neutral-800" />
                       <button
+                        type="button"
                         role="menuitem"
                         onClick={() => { setShowMoreMenu(false); handleEndForAll(); }}
-                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-xs text-red-400 hover:bg-red-950/50 font-bold"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-red-400 hover:bg-red-950/50 font-bold transition-colors"
                       >
-                        <span>📞</span> End Meeting for All
+                        <PhoneOff className="w-4 h-4 shrink-0" strokeWidth={2} />
+                        <span>End Meeting for All</span>
                       </button>
                     </>
                   )}
@@ -5164,31 +5282,44 @@ export default function MeetingRoom() {
           </div>
         </div>
 
-        {/* Right: red Leave / End (danger zone, destructive ops confirm) */}
+        {/* Right: Leave / End Call (Matched h-12 height & icon-label hierarchy) */}
         <div className="flex items-center gap-2 shrink-0">
           {isHost ? (
             <>
               <button
+                type="button"
                 onClick={handleLeaveMeeting}
-                className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-display text-xs font-bold uppercase rounded-xl transition-colors"
+                className="flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[60px] bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-200 hover:text-white rounded-xl transition-all shadow-sm active:scale-95"
                 title="Leave without ending the meeting for others"
               >
-                Leave
+                <LogOut className="w-4 h-4 shrink-0" strokeWidth={2} />
+                <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+                  Leave
+                </span>
               </button>
               <button
+                type="button"
                 onClick={handleEndForAll}
-                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-display text-xs font-bold uppercase rounded-xl transition-colors shadow-sm"
+                className="flex flex-col items-center justify-center gap-1 h-12 px-4 min-w-[68px] bg-red-600 hover:bg-red-500 border border-red-500 text-white rounded-xl transition-all shadow-sm active:scale-95"
                 title="End meeting for everyone (asks for confirmation)"
               >
-                End
+                <PhoneOff className="w-4 h-4 shrink-0" strokeWidth={2.2} />
+                <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+                  End Call
+                </span>
               </button>
             </>
           ) : (
             <button
+              type="button"
               onClick={handleLeaveMeeting}
-              className="px-4 py-2 bg-red-600/80 hover:bg-red-500 text-white font-display text-xs font-bold uppercase rounded-xl transition-colors"
+              className="flex flex-col items-center justify-center gap-1 h-12 px-4 min-w-[68px] bg-red-600 hover:bg-red-500 border border-red-500 text-white rounded-xl transition-all shadow-sm active:scale-95"
+              title="Leave meeting"
             >
-              Leave
+              <LogOut className="w-4 h-4 shrink-0" strokeWidth={2.2} />
+              <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+                Leave
+              </span>
             </button>
           )}
         </div>
@@ -6359,8 +6490,8 @@ export default function MeetingRoom() {
                     : "bg-neutral-950/80 border-neutral-800 hover:border-neutral-700 text-white"
                 }`}
               >
-                <span className="text-xl">✋</span>
-                <span className="font-meta text-[10px] font-bold uppercase">{isHandRaised ? "Lower Hand" : "Raise Hand"}</span>
+                <Hand className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">{isHandRaised ? "Lower Hand" : "Raise Hand"}</span>
               </button>
 
               {/* Proof Canvas */}
@@ -6372,8 +6503,8 @@ export default function MeetingRoom() {
                 }}
                 className="p-3 rounded-2xl border border-cyan-500/30 bg-cyan-950/25 hover:bg-cyan-900/40 text-cyan-300 flex flex-col items-center justify-center gap-1.5 text-center transition-all"
               >
-                <span className="text-xl">🎨</span>
-                <span className="font-meta text-[10px] font-bold uppercase">Proof Canvas</span>
+                <Palette className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Proof Canvas</span>
               </button>
 
               {/* KON10 Co-Design */}
@@ -6385,8 +6516,8 @@ export default function MeetingRoom() {
                 }}
                 className="p-3 rounded-2xl border border-purple-500/30 bg-purple-950/25 hover:bg-purple-900/40 text-purple-300 flex flex-col items-center justify-center gap-1.5 text-center transition-all"
               >
-                <span className="text-xl">🛠️</span>
-                <span className="font-meta text-[10px] font-bold uppercase">Co-Design</span>
+                <Palette className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Co-Design</span>
               </button>
 
               {/* Screen Share */}
@@ -6402,12 +6533,12 @@ export default function MeetingRoom() {
                 }}
                 className={`p-3 rounded-2xl border flex flex-col items-center justify-center gap-1.5 transition-all text-center ${
                   isScreenSharing
-                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-400"
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-400"
                     : "bg-neutral-950/80 border-neutral-800 hover:border-neutral-700 text-white"
                 }`}
               >
-                <span className="text-xl">🖥️</span>
-                <span className="font-meta text-[10px] font-bold uppercase">{isScreenSharing ? "Stop Share" : "Share Screen"}</span>
+                {isScreenSharing ? <MonitorOff className="w-5 h-5" strokeWidth={2} /> : <MonitorUp className="w-5 h-5" strokeWidth={2} />}
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">{isScreenSharing ? "Stop Share" : "Share Screen"}</span>
               </button>
 
               {/* People & Waiting Room */}
@@ -6424,8 +6555,8 @@ export default function MeetingRoom() {
                     {waitingParticipants.length}
                   </span>
                 )}
-                <span className="text-xl">👥</span>
-                <span className="font-meta text-[10px] font-bold uppercase">People ({activeParticipants.length})</span>
+                <Users className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">People ({activeParticipants.length})</span>
               </button>
 
               {/* AI Meeting Intelligence */}
@@ -6437,8 +6568,8 @@ export default function MeetingRoom() {
                 }}
                 className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
               >
-                <span className="text-xl">✨</span>
-                <span className="font-meta text-[10px] font-bold uppercase">AI Notes</span>
+                <Sparkles className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">AI Notes</span>
               </button>
 
               {/* Audio & Video Device Settings */}
@@ -6450,8 +6581,8 @@ export default function MeetingRoom() {
                 }}
                 className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
               >
-                <span className="text-xl">⚙️</span>
-                <span className="font-meta text-[10px] font-bold uppercase">A/V Settings</span>
+                <Settings className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">A/V Settings</span>
               </button>
 
               {/* Breakout Rooms */}
@@ -6463,8 +6594,8 @@ export default function MeetingRoom() {
                 }}
                 className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/80 hover:border-neutral-700 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
               >
-                <span className="text-xl">🔀</span>
-                <span className="font-meta text-[10px] font-bold uppercase">Breakouts</span>
+                <GitBranch className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Breakouts</span>
               </button>
 
               {/* Share / Invite Link */}
@@ -6476,8 +6607,8 @@ export default function MeetingRoom() {
                 }}
                 className="p-3 rounded-2xl border border-[var(--dept)]/40 bg-[var(--dept)]/10 hover:bg-[var(--dept)]/20 text-white flex flex-col items-center justify-center gap-1.5 text-center transition-all"
               >
-                <span className="text-xl">🔗</span>
-                <span className="font-meta text-[10px] font-bold uppercase">Invite Link</span>
+                <Share2 className="w-5 h-5" strokeWidth={2} />
+                <span className="font-meta text-[9.5px] font-bold uppercase whitespace-nowrap">Invite Link</span>
               </button>
             </div>
           </div>
