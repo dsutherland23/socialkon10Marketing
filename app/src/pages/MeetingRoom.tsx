@@ -1081,6 +1081,107 @@ export default function MeetingRoom() {
     };
   }, [phase, activeParticipants.length, isScreenSharing]);
 
+  // 8b-6. Video health watchdog + visibility recovery. Browsers aggressively
+  // throttle hidden tabs: decoders freeze, <video> elements end up paused,
+  // and nothing fires an event when you come back — the classic "I switched
+  // apps and my video was gone" symptom. On visibility/focus restore AND on
+  // a light 5s interval, revive any paused video whose stream is still live,
+  // and rebind decoders that report playing but carry no frames.
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    const reviveVideos = () => {
+      document.querySelectorAll<HTMLVideoElement>("video").forEach((v) => {
+        const s = v.srcObject as MediaStream | null;
+        if (!s) return;
+        const liveVideo = s.getVideoTracks().some((t) => t.readyState === "live" && t.enabled && !t.muted);
+        const liveAudio = s.getAudioTracks().some((t) => t.readyState === "live" && t.enabled);
+        if (!liveVideo && !liveAudio) return;
+        if (v.paused) {
+          v.play().catch(() => {});
+          return;
+        }
+        // Decoder stall: claims to be playing but has no frame data.
+        // Rebinding srcObject forces the pipeline to reattach.
+        if (liveVideo && v.readyState < 2) {
+          const src = v.srcObject;
+          v.srcObject = null;
+          v.srcObject = src;
+          v.play().catch(() => {});
+        }
+      });
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // Two passes: a quick one for the common case, a delayed one that
+      // catches tracks which finish renegotiating a moment later.
+      setTimeout(reviveVideos, 250);
+      setTimeout(reviveVideos, 1500);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    const interval = setInterval(reviveVideos, 5000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      clearInterval(interval);
+    };
+  }, [phase]);
+
+  // 8b-7. Local track resurrection. Mobile OSes (iOS Safari especially)
+  // silently END the camera/mic track while the app is backgrounded; the
+  // stream object stays but produces black frames forever. On return,
+  // re-acquire dead tracks and swap them into every peer via replaceTrack —
+  // no renegotiation, no rejoin, the call just comes back to life.
+  const isVideoOffRef = useRef(isVideoOff);
+  isVideoOffRef.current = isVideoOff;
+  const selectedAudioInputRef = useRef(selectedAudioInput);
+  selectedAudioInputRef.current = selectedAudioInput;
+  const selectedVideoInputRef = useRef(selectedVideoInput);
+  selectedVideoInputRef.current = selectedVideoInput;
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    let recovering = false;
+    const recoverLocalTracks = async () => {
+      if (document.visibilityState !== "visible" || recovering) return;
+      const stream = localStreamRef.current;
+      if (!stream) return;
+      const videoTrack = stream.getVideoTracks()[0];
+      const audioTrack = stream.getAudioTracks()[0];
+      const videoDead = !isVideoOffRef.current && (!videoTrack || videoTrack.readyState === "ended");
+      const audioDead = !isMicMutedRef.current && (!audioTrack || audioTrack.readyState === "ended");
+      if (!videoDead && !audioDead) return;
+      recovering = true;
+      try {
+        const fresh = await getLocalUserMedia({
+          audioDeviceId: selectedAudioInputRef.current || undefined,
+          videoDeviceId: selectedVideoInputRef.current || undefined,
+          audio: true,
+          video: true,
+        });
+        fresh.getAudioTracks().forEach((t) => (t.enabled = !isMicMutedRef.current));
+        fresh.getVideoTracks().forEach((t) => (t.enabled = !isVideoOffRef.current));
+        stopMediaStream(stream);
+        setLocalStream(fresh);
+        meshRef.current?.setLocalStream(fresh);
+        toast.success(videoDead ? "Camera reconnected" : "Microphone reconnected");
+      } catch (err) {
+        console.warn("Local track recovery failed:", err);
+        if (videoDead) setIsVideoOff(true);
+        toast.error("Camera/microphone was lost while away — tap to re-enable.", { duration: 6000 });
+      } finally {
+        recovering = false;
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        // Give the OS a beat to release/re-grant the device before probing.
+        setTimeout(() => void recoverLocalTracks(), 400);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [phase]);
+
   // 8c. Host moderation honored locally: a host flipping your isMuted flag
   // force-mutes your microphone (and an unmute request pings you to speak).
   const prevUnmuteReqRef = useRef<string>("");
