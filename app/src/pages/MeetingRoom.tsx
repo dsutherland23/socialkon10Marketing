@@ -9785,143 +9785,28 @@ export default function MeetingRoom() {
             </span>
           </button>
 
-          {/* More ⋯ — secondary tools, opens upward and stays inside the viewport */}
-          <div className="relative z-50">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowMoreMenu((v) => !v);
-              }}
-              className={`flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[60px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
-                showMoreMenu
-                  ? "bg-neutral-800 text-white border-neutral-600 ring-2 ring-[var(--dept)]"
-                  : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
-              }`}
-              title="More meeting actions"
-              aria-label="More meeting actions"
-              aria-haspopup="menu"
-              aria-expanded={showMoreMenu}
-            >
-              <MoreHorizontal className="w-4 h-4 shrink-0" strokeWidth={2.2} />
-              <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
-                More
-              </span>
-            </button>
-            {showMoreMenu && (
-              <>
-                <div
-                  className="fixed inset-0 z-[120]"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowMoreMenu(false);
-                  }}
-                />
-                <div
-                  role="menu"
-                  className="absolute bottom-full right-0 mb-3 z-[130] w-64 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-700/80 rounded-2xl shadow-2xl p-1.5 max-h-[70vh] overflow-y-auto ring-1 ring-white/10"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setActiveDrawer("proofing"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <Palette className="w-4 h-4 text-cyan-400 shrink-0" strokeWidth={2} />
-                    <span>Deliverable Proof Canvas</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setActiveDrawer("intelligence"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={2} />
-                    <span>AI Meeting Notes</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setActiveDrawer("breakouts"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <GitBranch className="w-4 h-4 text-purple-400 shrink-0" strokeWidth={2} />
-                    <span>Breakout Rooms</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setActiveDrawer("queue"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <Hand className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={2} />
-                    <span>Speaker Queue</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setActiveDrawer("agenda"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <span className="w-4 h-4 flex items-center justify-center text-emerald-400 shrink-0">&#9201;</span>
-                    <span>Agenda &amp; Focus Timer</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setActiveDrawer("actions"); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <span className="w-4 h-4 flex items-center justify-center text-sky-400 shrink-0">&#9989;</span>
-                    <span>Live Action Board</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setShareModalOpen(true); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <Share2 className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2} />
-                    <span>Copy Invite Link</span>
-                  </button>
-                  <div className="my-1 border-t border-neutral-800" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setShowDeviceSettingsModal(true); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    <Settings className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} />
-                    <span>Audio &amp; Video Settings</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { handleToggleFullscreen(); setShowMoreMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
-                  >
-                    {isFullscreen ? <Minimize2 className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} /> : <Maximize2 className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} />}
-                    <span>{isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</span>
-                  </button>
-                  {isHost && (
-                    <>
-                      <div className="my-1 border-t border-neutral-800" />
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => { setShowMoreMenu(false); handleEndForAll(); }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-red-400 hover:bg-red-950/50 font-bold transition-colors"
-                      >
-                        <PhoneOff className="w-4 h-4 shrink-0" strokeWidth={2} />
-                        <span>End Meeting for All</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          {/* More ⋯ — secondary tools trigger */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMoreMenu((v) => !v);
+            }}
+            className={`flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[60px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
+              showMoreMenu
+                ? "bg-[var(--dept)] text-black border-[var(--dept)] font-extrabold shadow-md"
+                : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
+            }`}
+            title="More meeting actions"
+            aria-label="More meeting actions"
+            aria-haspopup="menu"
+            aria-expanded={showMoreMenu}
+          >
+            <MoreHorizontal className="w-4 h-4 shrink-0" strokeWidth={2.2} />
+            <span className="font-meta text-[8.5px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">
+              More
+            </span>
+          </button>
         </div>
 
         {/* Right: Leave / End Call (Matched h-12 height & icon-label hierarchy) */}
@@ -11056,6 +10941,132 @@ export default function MeetingRoom() {
             <span className="font-meta text-xs text-neutral-400 bg-neutral-900 px-3 py-1 rounded-full border border-neutral-800">
               Drag anywhere horizontally across the screen to slide comparison ({compareSplitPos}% Split)
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* DESKTOP & TABLET MORE ACTIONS FLOATING POPOVER */}
+      {showMoreMenu && (
+        <div 
+          className="fixed inset-0 z-[140] pointer-events-auto flex flex-col justify-end items-center pb-24 md:pb-20 animate-in fade-in duration-100 select-none"
+          onClick={() => setShowMoreMenu(false)}
+        >
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-xs" />
+          <div
+            role="menu"
+            aria-label="More meeting actions"
+            className="relative z-10 w-72 sm:w-80 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-700/90 rounded-3xl p-3 shadow-2xl text-white space-y-1 max-h-[75vh] overflow-y-auto ring-1 ring-white/10 animate-in zoom-in-95 slide-in-from-bottom-2 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-2 py-1.5 border-b border-neutral-800 mb-1">
+              <span className="font-meta text-[9px] uppercase tracking-wider font-bold text-neutral-400">
+                More Actions &amp; Tools
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowMoreMenu(false)}
+                className="w-6 h-6 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white flex items-center justify-center text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setActiveDrawer("proofing"); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <Palette className="w-4 h-4 text-cyan-400 shrink-0" strokeWidth={2} />
+              <span>Deliverable Proof Canvas</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setActiveDrawer("intelligence"); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={2} />
+              <span>AI Meeting Notes</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setActiveDrawer("breakouts"); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <GitBranch className="w-4 h-4 text-purple-400 shrink-0" strokeWidth={2} />
+              <span>Breakout Rooms</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setActiveDrawer("queue"); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <Hand className="w-4 h-4 text-amber-400 shrink-0" strokeWidth={2} />
+              <span>Speaker Queue</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setActiveDrawer("agenda"); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <span className="w-4 h-4 flex items-center justify-center text-emerald-400 shrink-0 font-bold">⏱</span>
+              <span>Agenda &amp; Focus Timer</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setActiveDrawer("actions"); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <span className="w-4 h-4 flex items-center justify-center text-sky-400 shrink-0 font-bold">✅</span>
+              <span>Live Action Board</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setShareModalOpen(true); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <Share2 className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2} />
+              <span>Copy Invite Link</span>
+            </button>
+            <div className="my-1 border-t border-neutral-800" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setShowDeviceSettingsModal(true); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              <Settings className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} />
+              <span>Audio &amp; Video Settings</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { handleToggleFullscreen(); setShowMoreMenu(false); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} /> : <Maximize2 className="w-4 h-4 text-neutral-400 shrink-0" strokeWidth={2} />}
+              <span>{isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</span>
+            </button>
+            {isHost && (
+              <>
+                <div className="my-1 border-t border-neutral-800" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowMoreMenu(false); handleEndForAll(); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs text-red-400 hover:bg-red-950/50 font-bold transition-colors"
+                >
+                  <PhoneOff className="w-4 h-4 shrink-0" strokeWidth={2} />
+                  <span>End Meeting for All</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
