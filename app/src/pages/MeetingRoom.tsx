@@ -142,6 +142,9 @@ import {
   playSuccessChime,
   triggerHapticFeedback,
   WebRTCMeshSession,
+  getVideoSendProfile,
+  ConnectionQualityMonitor,
+  type PeerQualitySample,
   type MediaDeviceList,
   type DisplaySurfaceType,
   type ScreenCaptureOptimization,
@@ -1008,6 +1011,76 @@ export default function MeetingRoom() {
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+  // 8b-4. Adaptive video send profile (2026 mesh best practice): outgoing
+  // camera quality steps DOWN as the room fills — mesh uplink cost scales
+  // ~N², and an uncapped 720p stream per peer is exactly what makes audio
+  // choppy. Screen share keeps full resolution for legible text. Applies
+  // live via sender parameters — no renegotiation, no media restart.
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    meshRef.current?.setVideoProfile(
+      getVideoSendProfile({ participantCount: activeParticipants.length, isScreenSharing })
+    );
+  }, [phase, activeParticipants.length, isScreenSharing]);
+
+  // 8b-5. Connection quality telemetry + gentle auto-degrade. Polls inbound
+  // RTP stats per peer every 3s; two consecutive "poor" readings halve the
+  // outgoing bitrate (floor 150 kbps), sustained "good" restores it. This
+  // is the same congestion-response loop Zoom/Meet run, adapted for mesh.
+  const [peerQuality, setPeerQuality] = useState<Record<string, PeerQualitySample>>({});
+  const qualityMonitorRef = useRef<ConnectionQualityMonitor | null>(null);
+  const poorStreakRef = useRef(0);
+  const bitrateScaleRef = useRef(1);
+  useEffect(() => {
+    if (phase !== "in_meeting") return;
+    if (!qualityMonitorRef.current) qualityMonitorRef.current = new ConnectionQualityMonitor();
+    const monitor = qualityMonitorRef.current;
+    let cancelled = false;
+    const poll = async () => {
+      const mesh = meshRef.current;
+      if (!mesh || cancelled) return;
+      const entries: [string, PeerQualitySample][] = [];
+      for (const id of mesh.getPeerIds()) {
+        const pc = mesh.getPeerConnection(id);
+        if (!pc) continue;
+        const sample = await monitor.sample(pc);
+        if (sample.score > 0) entries.push([id, sample]);
+      }
+      if (cancelled || entries.length === 0) return;
+      setPeerQuality((prev) => {
+        const next = { ...prev };
+        entries.forEach(([id, s]) => {
+          next[id] = s;
+        });
+        return next;
+      });
+      const worst = entries.reduce((m, [, s]) => Math.min(m, s.score), 3);
+      if (worst === 1) {
+        poorStreakRef.current += 1;
+        if (poorStreakRef.current >= 2) {
+          bitrateScaleRef.current = Math.max(0.25, bitrateScaleRef.current / 2);
+        }
+      } else {
+        poorStreakRef.current = 0;
+        if (worst >= 3) {
+          bitrateScaleRef.current = Math.min(1, bitrateScaleRef.current * 1.25);
+        }
+      }
+      if (bitrateScaleRef.current < 1) {
+        const base = getVideoSendProfile({ participantCount: activeParticipants.length, isScreenSharing });
+        mesh.setVideoProfile({
+          ...base,
+          maxBitrate: Math.max(150_000, Math.round(base.maxBitrate * bitrateScaleRef.current)),
+        });
+      }
+    };
+    const interval = setInterval(() => void poll(), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [phase, activeParticipants.length, isScreenSharing]);
+
   // 8c. Host moderation honored locally: a host flipping your isMuted flag
   // force-mutes your microphone (and an unmute request pings you to speak).
   const prevUnmuteReqRef = useRef<string>("");
@@ -6937,6 +7010,24 @@ export default function MeetingRoom() {
                       </div>
 
                       <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                        {(() => {
+                          // Self connection indicator — worst peer score, shown
+                          // only when degraded so good calls stay clutter-free.
+                          const scores = Object.values(peerQuality)
+                            .map((q) => q.score)
+                            .filter((s) => s > 0);
+                          if (scores.length === 0) return null;
+                          const worst = Math.min(...scores);
+                          if (worst >= 3) return null;
+                          return (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] ${worst === 1 ? "bg-red-500/80" : "bg-amber-500/80"}`}
+                              title={worst === 1 ? "Your connection is poor — outgoing video was reduced automatically" : "Your connection is unstable"}
+                            >
+                              📶
+                            </span>
+                          );
+                        })()}
                         {isHandRaised && (
                           <span className="bg-amber-500 text-black px-2 py-0.5 rounded-full text-[9px] font-extrabold flex items-center gap-1 animate-bounce" title="Hand Raised">
                             ✋ RAISED
@@ -7012,6 +7103,14 @@ export default function MeetingRoom() {
                         </div>
 
                         <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                          {peerQuality[p.id] && peerQuality[p.id].score > 0 && peerQuality[p.id].score < 3 && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] ${peerQuality[p.id].score === 1 ? "bg-red-500/80" : "bg-amber-500/80"}`}
+                              title={`Connection ${peerQuality[p.id].score === 1 ? "poor" : "unstable"} — ${peerQuality[p.id].packetLossPct.toFixed(1)}% packet loss${peerQuality[p.id].rttMs !== null ? `, ${Math.round(peerQuality[p.id].rttMs!)} ms` : ""}`}
+                            >
+                              📶
+                            </span>
+                          )}
                           {p.isHandRaised && (
                             <div className="flex items-center gap-1 bg-amber-500 text-black px-2 py-0.5 rounded-full text-[9px] font-extrabold animate-bounce">
                               <span>✋ RAISED</span>

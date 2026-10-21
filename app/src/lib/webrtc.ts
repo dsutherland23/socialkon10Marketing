@@ -5,6 +5,8 @@
    - Speaker chime test via Web Audio Oscillator
    - Screen sharing with system audio capture
    - Real-time connection quality telemetry
+   - Opus in-band FEC + DTX negotiation (choppy-audio resilience)
+   - Codec preferences (VP9-first video) & adaptive send profiles
 ------------------------------------------------------------------- */
 
 export interface MediaDeviceList {
@@ -41,8 +43,52 @@ export async function getMediaDevices(): Promise<MediaDeviceList> {
   }
 }
 
+/** 2026-standard audio capture chain: mono 48 kHz voice channel with the
+ *  full echo/noise/gain DSP stack. Mono + Opus DTX keeps voice smooth even
+ *  on constrained uplinks. */
+function buildAudioConstraints(deviceId?: string): MediaTrackConstraints {
+  return {
+    ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: { ideal: 1 },
+    sampleRate: { ideal: 48000 },
+  };
+}
+
+/** Hint the browser's encoder about content type — "speech" optimizes the
+ *  audio pipeline for voice, "motion" favors fluid camera video. */
+export function applyLocalTrackHints(stream: MediaStream): void {
+  stream.getAudioTracks().forEach((t) => {
+    try {
+      (t as MediaStreamTrack & { contentHint?: string }).contentHint = "speech";
+    } catch {
+      // contentHint unsupported — harmless, encoding defaults apply
+    }
+  });
+  stream.getVideoTracks().forEach((t) => {
+    try {
+      (t as MediaStreamTrack & { contentHint?: string }).contentHint = "motion";
+    } catch {
+      // contentHint unsupported — harmless, encoding defaults apply
+    }
+  });
+}
+
 /** Request local camera and microphone media stream with progressive fallback */
 export async function getLocalUserMedia(options?: {
+  audioDeviceId?: string;
+  videoDeviceId?: string;
+  audio?: boolean;
+  video?: boolean;
+}): Promise<MediaStream> {
+  const stream = await getLocalUserMediaRaw(options);
+  applyLocalTrackHints(stream);
+  return stream;
+}
+
+async function getLocalUserMediaRaw(options?: {
   audioDeviceId?: string;
   videoDeviceId?: string;
   audio?: boolean;
@@ -59,17 +105,13 @@ export async function getLocalUserMedia(options?: {
   const isMobile = typeof window !== "undefined" && (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768);
 
   const primaryConstraints: MediaStreamConstraints = {
-    audio: wantAudio
-      ? options?.audioDeviceId
-        ? { deviceId: { ideal: options.audioDeviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        : { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      : false,
+    audio: wantAudio ? buildAudioConstraints(options?.audioDeviceId) : false,
     video: wantVideo
       ? options?.videoDeviceId
-        ? { deviceId: { ideal: options.videoDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+        ? { deviceId: { ideal: options.videoDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
         : isMobile
-        ? { facingMode: "user" }
-        : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+        ? { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 } }
+        : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
       : false,
   };
 
@@ -82,7 +124,7 @@ export async function getLocalUserMedia(options?: {
     if (wantAudio && wantVideo) {
       try {
         return await navigator.mediaDevices.getUserMedia({
-          audio: true,
+          audio: buildAudioConstraints(),
           video: { facingMode: "user" },
         });
       } catch (err2) {
@@ -94,7 +136,7 @@ export async function getLocalUserMedia(options?: {
     if (wantAudio && wantVideo) {
       try {
         return await navigator.mediaDevices.getUserMedia({
-          audio: true,
+          audio: buildAudioConstraints(),
           video: true,
         });
       } catch (err3) {
@@ -105,7 +147,7 @@ export async function getLocalUserMedia(options?: {
     // 4. Fourth Attempt: Audio-only fallback if camera is blocked/busy
     if (wantAudio) {
       try {
-        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints() });
         return audioOnlyStream;
       } catch (err4) {
         console.warn("Audio-only fallback failed:", err4);
@@ -150,7 +192,14 @@ export function getRtcConfig(): RTCConfiguration {
   } catch {
     // TURN is optional — STUN-only config still works for most networks
   }
-  return { iceServers };
+  return {
+    iceServers,
+    // One transport for all media — fewer ports, less setup churn, faster
+    // ICE. Standard in every production meeting app.
+    bundlePolicy: "max-bundle",
+    rtcpMuxPolicy: "require",
+    iceCandidatePoolSize: 2,
+  };
 }
 
 export const RTC_CONFIG: RTCConfiguration = getRtcConfig();
@@ -160,6 +209,193 @@ export const RTC_CONFIG: RTCConfiguration = getRtcConfig();
  *  Pure & deterministic so both sides always agree without extra signaling. */
 export function isPolitePeer(myId: string, remoteId: string): boolean {
   return myId > remoteId;
+}
+
+/* ---------------- 2026 Media Quality Enhancements ---------------- */
+
+/** Rewrite the Opus fmtp lines in an SDP blob to request in-band FEC
+ *  (recovers lost voice packets) and DTX (stops sending during silence,
+ *  freeing uplink for video). These two params are the single biggest
+ *  lever against "choppy / robotic" audio on lossy networks, and every
+ *  major meeting stack (Jitsi, mediasoup templates) negotiates them. */
+export function enhanceOpusSdp(sdp: string): string {
+  const opusPts = new Set<string>();
+  sdp.split(/\r?\n/).forEach((line) => {
+    const m = line.match(/^a=rtpmap:(\d+)\s+opus\/48000/i);
+    if (m) opusPts.add(m[1]);
+  });
+  if (opusPts.size === 0) return sdp;
+
+  const lines = sdp.split(/\r?\n/);
+  const out: string[] = [];
+  const seenFmtp = new Set<string>();
+  for (const line of lines) {
+    const fmtp = line.match(/^a=fmtp:(\d+)\s+(.*)$/);
+    if (fmtp && opusPts.has(fmtp[1])) {
+      seenFmtp.add(fmtp[1]);
+      let params = fmtp[2];
+      if (!/useinbandfec=1/i.test(params)) params += ";useinbandfec=1";
+      if (!/usedtx=1/i.test(params)) params += ";usedtx=1";
+      out.push(`a=fmtp:${fmtp[1]} ${params}`);
+    } else {
+      out.push(line);
+    }
+  }
+
+  // Some stacks omit the fmtp line entirely — inject one after the rtpmap.
+  if ([...opusPts].some((pt) => !seenFmtp.has(pt))) {
+    const finalLines: string[] = [];
+    for (const line of out) {
+      finalLines.push(line);
+      const rm = line.match(/^a=rtpmap:(\d+)\s+opus\/48000/i);
+      if (rm && opusPts.has(rm[1]) && !seenFmtp.has(rm[1])) {
+        finalLines.push(`a=fmtp:${rm[1]} minptime=10;useinbandfec=1;usedtx=1`);
+      }
+    }
+    return finalLines.join("\r\n");
+  }
+  return out.join("\r\n");
+}
+
+/** Lower score = more preferred. VP9 first: better quality-per-bit and far
+ *  better packet-loss resilience than VP8; H264 next for hardware encode;
+ *  AV1 last — great compression but expensive software encode on low-end
+ *  devices causes exactly the choppiness we are fixing. */
+export function scoreCodecPreference(kind: "audio" | "video", codec: { mimeType: string }): number {
+  const mime = codec.mimeType.toLowerCase();
+  if (kind === "audio") {
+    if (mime.includes("opus")) return 0;
+    if (mime.includes("g722")) return 10;
+    if (mime.includes("pcmu") || mime.includes("pcma")) return 20;
+    return 50;
+  }
+  if (mime.includes("vp9")) return 0;
+  if (mime.includes("h264")) return 10;
+  if (mime.includes("vp8")) return 20;
+  if (mime.includes("av1")) return 30;
+  return 50;
+}
+
+export interface VideoSendProfile {
+  maxBitrate: number; // bps
+  scaleResolutionDownBy: number;
+  degradationPreference: "maintain-framerate" | "maintain-resolution" | "balanced";
+  contentHint: "motion" | "detail";
+}
+
+/** Mesh topology costs scale ~N² — every extra participant means another
+ *  full copy of your video on the uplink. Industry practice (and the only
+ *  way a mesh stays smooth) is to step the outgoing camera profile down as
+ *  the room fills. Screen share keeps full resolution for legible text. */
+export function getVideoSendProfile(opts: {
+  participantCount: number;
+  isScreenSharing: boolean;
+}): VideoSendProfile {
+  if (opts.isScreenSharing) {
+    return {
+      maxBitrate: 3_000_000,
+      scaleResolutionDownBy: 1,
+      degradationPreference: "maintain-resolution",
+      contentHint: "detail",
+    };
+  }
+  const n = Math.max(1, opts.participantCount);
+  if (n <= 2) {
+    return { maxBitrate: 1_700_000, scaleResolutionDownBy: 1, degradationPreference: "maintain-framerate", contentHint: "motion" };
+  }
+  if (n <= 4) {
+    return { maxBitrate: 1_000_000, scaleResolutionDownBy: 1.5, degradationPreference: "maintain-framerate", contentHint: "motion" };
+  }
+  if (n <= 9) {
+    return { maxBitrate: 600_000, scaleResolutionDownBy: 2, degradationPreference: "balanced", contentHint: "motion" };
+  }
+  return { maxBitrate: 320_000, scaleResolutionDownBy: 3, degradationPreference: "balanced", contentHint: "motion" };
+}
+
+/** Connection quality scoring from getStats deltas. Thresholds follow the
+ *  MOS-style heuristics used by meeting dashboards:
+ *  3 = good, 2 = fair, 1 = poor, 0 = unknown/insufficient data. */
+export function scoreConnectionQuality(input: {
+  packetLossPct: number;
+  rttMs: number | null;
+  jitterMs: number | null;
+}): 0 | 1 | 2 | 3 {
+  const { packetLossPct, rttMs, jitterMs } = input;
+  if (rttMs === null && jitterMs === null && packetLossPct === 0) return 0;
+  if (packetLossPct > 8 || (rttMs !== null && rttMs > 600) || (jitterMs !== null && jitterMs > 60)) return 1;
+  if (packetLossPct > 2.5 || (rttMs !== null && rttMs > 250) || (jitterMs !== null && jitterMs > 30)) return 2;
+  return 3;
+}
+
+export interface PeerQualitySample {
+  packetLossPct: number;
+  rttMs: number | null;
+  jitterMs: number | null;
+  score: 0 | 1 | 2 | 3;
+}
+
+/** Samples a peer connection's inbound RTP stats and turns the raw counters
+ *  into a stable quality score. Keeps its own previous snapshot so each
+ *  call returns the delta for that interval. */
+export class ConnectionQualityMonitor {
+  private lastPackets = new WeakMap<RTCPeerConnection, { lost: number; received: number }>();
+
+  async sample(pc: RTCPeerConnection): Promise<PeerQualitySample> {
+    let lostDelta = 0;
+    let receivedDelta = 0;
+    let rttMs: number | null = null;
+    let jitterMs: number | null = null;
+
+    try {
+      const stats = await pc.getStats();
+      const jitterValues: number[] = [];
+      stats.forEach((report) => {
+        const type = (report as { type?: string }).type;
+        if (type === "inbound-rtp") {
+          const ir = report as unknown as { packetsLost?: number; packetsReceived?: number; jitter?: number };
+          const prev = this.lastPackets.get(pc);
+          lostDelta += Math.max(0, (ir.packetsLost ?? 0) - (prev?.lost ?? 0));
+          receivedDelta += Math.max(0, (ir.packetsReceived ?? 0) - (prev?.received ?? 0));
+          this.lastPackets.set(pc, { lost: ir.packetsLost ?? 0, received: ir.packetsReceived ?? 0 });
+          if (typeof ir.jitter === "number") jitterValues.push(ir.jitter * 1000);
+        }
+        if (type === "candidate-pair" && (report as { state?: string }).state === "succeeded") {
+          const cp = report as unknown as { currentRoundTripTime?: number };
+          if (typeof cp.currentRoundTripTime === "number") rttMs = cp.currentRoundTripTime * 1000;
+        }
+      });
+      if (jitterValues.length > 0) {
+        jitterMs = jitterValues.reduce((a, b) => a + b, 0) / jitterValues.length;
+      }
+    } catch {
+      return { packetLossPct: 0, rttMs: null, jitterMs: null, score: 0 };
+    }
+
+    const total = lostDelta + receivedDelta;
+    const packetLossPct = total > 0 ? (lostDelta / total) * 100 : 0;
+    const score = scoreConnectionQuality({ packetLossPct, rttMs, jitterMs });
+    return { packetLossPct, rttMs, jitterMs, score };
+  }
+}
+
+/** Apply codec preferences to every transceiver — no renegotiation needed
+ *  until the next offer/answer, which the mesh will do naturally. */
+function applyCodecPreferences(pc: RTCPeerConnection): void {
+  if (typeof RTCRtpSender.getCapabilities !== "function") return;
+  pc.getTransceivers().forEach((t) => {
+    try {
+      const kind = t.sender.track?.kind;
+      if ((kind !== "audio" && kind !== "video") || typeof t.setCodecPreferences !== "function") return;
+      const caps = RTCRtpSender.getCapabilities(kind);
+      if (!caps?.codecs?.length) return;
+      const sorted = [...caps.codecs].sort(
+        (a, b) => scoreCodecPreference(kind, a) - scoreCodecPreference(kind, b)
+      );
+      t.setCodecPreferences(sorted);
+    } catch {
+      // codec preference is best-effort
+    }
+  });
 }
 
 export class WebRTCMeshSession {
@@ -212,7 +448,53 @@ export class WebRTCMeshSession {
           } catch {}
         }
       });
+      applyCodecPreferences(pc);
     });
+  }
+
+  /** Live-tune the outgoing video sender on every peer — bitrate cap,
+   *  resolution scaling and degradation preference all apply WITHOUT
+   *  renegotiation, so this is safe to call as rooms fill or links degrade. */
+  public setVideoProfile(profile: VideoSendProfile) {
+    this.peers.forEach((pc) => {
+      pc.getSenders().forEach((sender) => {
+        if (sender.track?.kind !== "video") return;
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = profile.maxBitrate;
+          params.encodings[0].scaleResolutionDownBy = profile.scaleResolutionDownBy;
+          sender.setParameters(params).catch(() => {});
+          // degradationPreference is a non-standard but widely supported
+          // sender property (Safari/Chrome) — set it defensively.
+          (sender as RTCRtpSender & { degradationPreference?: string }).degradationPreference =
+            profile.degradationPreference;
+        } catch {
+          // sender tuning is best-effort
+        }
+      });
+    });
+    if (this.localStream) {
+      this.localStream.getVideoTracks().forEach((t) => {
+        try {
+          (t as MediaStreamTrack & { contentHint?: string }).contentHint = profile.contentHint;
+        } catch {
+          // contentHint unsupported — profile still applies via sender params
+        }
+      });
+    }
+  }
+
+  /** Expose a peer connection for stats sampling (connection quality UI). */
+  public getPeerConnection(remoteParticipantId: string): RTCPeerConnection | null {
+    return this.peers.get(remoteParticipantId) ?? null;
+  }
+
+  /** All live peer ids — for quality polling loops. */
+  public getPeerIds(): string[] {
+    return [...this.peers.keys()];
   }
 
   public async connectToPeer(remoteParticipantId: string): Promise<RTCPeerConnection> {
@@ -233,6 +515,8 @@ export class WebRTCMeshSession {
         } catch {}
       });
     }
+    // Prefer resilient codecs (Opus / VP9-first) before the first negotiation
+    applyCodecPreferences(pc);
 
     // 2. Handle remote tracks
     pc.ontrack = (event) => {
@@ -262,7 +546,11 @@ export class WebRTCMeshSession {
     pc.onnegotiationneeded = async () => {
       try {
         this.makingOffer.set(remoteParticipantId, true);
-        await pc.setLocalDescription();
+        // Explicit createOffer so we can inject Opus FEC/DTX into the SDP —
+        // the strongest defense against choppy audio on lossy networks.
+        const offer = await pc.createOffer();
+        if (offer.sdp) offer.sdp = enhanceOpusSdp(offer.sdp);
+        await pc.setLocalDescription(offer);
         if (pc.localDescription) {
           this.onSignalOut(remoteParticipantId, "offer", JSON.stringify(pc.localDescription));
         }
@@ -322,6 +610,7 @@ export class WebRTCMeshSession {
         }
         await pc.setRemoteDescription(new RTCSessionDescription(data));
         const answer = await pc.createAnswer();
+        if (answer.sdp) answer.sdp = enhanceOpusSdp(answer.sdp);
         await pc.setLocalDescription(answer);
         this.onSignalOut(fromParticipantId, "answer", JSON.stringify(pc.localDescription || answer));
       } else if (type === "answer") {
