@@ -180,7 +180,7 @@ export function getRtcConfig(): RTCConfiguration {
     { urls: "stun:stun2.l.google.com:19302" },
   ];
   try {
-    const env = (import.meta as any).env || {};
+    const env = import.meta.env || {};
     const rawTurnUrls = String(env.VITE_TURN_URLS || "").split(",").map((u: string) => u.trim()).filter(Boolean);
     const username = env.VITE_TURN_USERNAME ? String(env.VITE_TURN_USERNAME).trim() : undefined;
     const credential = env.VITE_TURN_CREDENTIAL ? String(env.VITE_TURN_CREDENTIAL).trim() : undefined;
