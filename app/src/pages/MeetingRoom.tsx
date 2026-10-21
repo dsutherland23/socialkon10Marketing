@@ -9426,14 +9426,17 @@ export default function MeetingRoom() {
         {/* 5. More Actions Sheet Trigger */}
         <button
           type="button"
-          onClick={() => setShowMobileActionsSheet(true)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowMobileActionsSheet(true);
+          }}
           className={`relative flex-1 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 text-xs font-bold transition-all active:scale-95 shadow-sm border ${
             showMobileActionsSheet || isHandRaised || (activeDrawer !== "none" && activeDrawer !== "chat")
               ? "bg-cyan-500/20 text-cyan-300 border-cyan-400/60"
               : "bg-neutral-900/90 text-neutral-100 border-neutral-800 hover:bg-neutral-800 hover:border-neutral-700"
           }`}
           title="More Meeting Actions"
-          aria-label="Open Meeting Tools"
+          aria-label="Open More Actions"
         >
           {isHandRaised && (
             <span className="absolute -top-1.5 -right-1 bg-amber-400 text-black text-[9px] font-extrabold h-4 w-4 rounded-full flex items-center justify-center animate-bounce shadow-md">
@@ -9446,7 +9449,7 @@ export default function MeetingRoom() {
             </span>
           )}
           <MoreHorizontal className="w-4 h-4" strokeWidth={2.2} />
-          <span className="font-meta text-[8px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">Tools</span>
+          <span className="font-meta text-[8px] uppercase tracking-wider font-bold leading-none whitespace-nowrap">More</span>
         </button>
 
         {/* 6. End / Leave Call */}
@@ -9476,7 +9479,7 @@ export default function MeetingRoom() {
       </div>
 
       {/* DESKTOP EXPANDED CONTROL BAR (>= md screens) */}
-      <div className="hidden md:flex h-20 px-6 border-t border-neutral-800/90 bg-neutral-950/95 backdrop-blur-xl items-center justify-between shrink-0 gap-4">
+      <div className="hidden md:flex relative z-40 h-20 px-6 border-t border-neutral-800/90 bg-neutral-950/95 backdrop-blur-xl items-center justify-between shrink-0 gap-4">
         {/* Left: Mic & Camera split buttons with device-picker caret */}
         <div className="flex items-center gap-2.5 shrink-0">
           <div
@@ -9783,13 +9786,16 @@ export default function MeetingRoom() {
           </button>
 
           {/* More ⋯ — secondary tools, opens upward and stays inside the viewport */}
-          <div className="relative">
+          <div className="relative z-50">
             <button
               type="button"
-              onClick={() => setShowMoreMenu((v) => !v)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMoreMenu((v) => !v);
+              }}
               className={`flex flex-col items-center justify-center gap-1 h-12 px-3.5 min-w-[60px] rounded-xl border transition-all shrink-0 shadow-sm active:scale-95 ${
                 showMoreMenu
-                  ? "bg-neutral-800 text-white border-neutral-600"
+                  ? "bg-neutral-800 text-white border-neutral-600 ring-2 ring-[var(--dept)]"
                   : "bg-neutral-900/90 border-neutral-800 text-neutral-100 hover:bg-neutral-800 hover:border-neutral-700"
               }`}
               title="More meeting actions"
@@ -9804,10 +9810,17 @@ export default function MeetingRoom() {
             </button>
             {showMoreMenu && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
+                <div
+                  className="fixed inset-0 z-[120]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMoreMenu(false);
+                  }}
+                />
                 <div
                   role="menu"
-                  className="absolute bottom-full right-0 mb-2.5 z-50 w-64 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700/80 rounded-2xl shadow-2xl p-1.5 max-h-[70vh] overflow-y-auto"
+                  className="absolute bottom-full right-0 mb-3 z-[130] w-64 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-700/80 rounded-2xl shadow-2xl p-1.5 max-h-[70vh] overflow-y-auto ring-1 ring-white/10"
+                  onClick={(e) => e.stopPropagation()}
                 >
                   <button
                     type="button"
@@ -11050,7 +11063,7 @@ export default function MeetingRoom() {
       {/* 2026 MOBILE ACTION SHEET MODAL */}
       {showMobileActionsSheet && (
         <div 
-          className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex flex-col justify-end md:hidden animate-in fade-in duration-150 select-none"
+          className="fixed inset-0 z-[140] pointer-events-auto bg-black/80 backdrop-blur-sm flex flex-col justify-end md:hidden animate-in fade-in duration-150 select-none"
           onClick={() => setShowMobileActionsSheet(false)}
         >
           <div
