@@ -180,17 +180,45 @@ export function getRtcConfig(): RTCConfiguration {
     { urls: "stun:stun2.l.google.com:19302" },
   ];
   try {
-    const env = import.meta.env || {};
-    const turnUrls = String(env.VITE_TURN_URLS || "").split(",").map((u: string) => u.trim()).filter(Boolean);
-    if (turnUrls.length > 0) {
+    const env = (import.meta as any).env || {};
+    const rawTurnUrls = String(env.VITE_TURN_URLS || "").split(",").map((u: string) => u.trim()).filter(Boolean);
+    const username = env.VITE_TURN_USERNAME ? String(env.VITE_TURN_USERNAME).trim() : undefined;
+    const credential = env.VITE_TURN_CREDENTIAL ? String(env.VITE_TURN_CREDENTIAL).trim() : undefined;
+
+    if (rawTurnUrls.length > 0 && username && credential) {
+      const normalizedUrls: string[] = [];
+      for (const raw of rawTurnUrls) {
+        // Normalize common Cloudflare TURN shorthand or typos (e.g. turn:://cloudflare.com)
+        if (
+          raw === "turn:://cloudflare.com" ||
+          raw === "turn://cloudflare.com" ||
+          raw === "turn:cloudflare.com" ||
+          raw.includes("cloudflare.com") && !raw.includes("turn.cloudflare.com")
+        ) {
+          normalizedUrls.push(
+            "turn:turn.cloudflare.com:3478?transport=udp",
+            "turn:turn.cloudflare.com:3478?transport=tcp",
+            "turns:turn.cloudflare.com:5349?transport=tcp"
+          );
+          continue;
+        }
+
+        let u = raw;
+        if (!u.startsWith("turn:") && !u.startsWith("turns:") && !u.startsWith("stun:")) {
+          u = `turn:${u}`;
+        }
+        normalizedUrls.push(u);
+      }
+
+      const dedupledUrls = Array.from(new Set(normalizedUrls));
       iceServers.push({
-        urls: turnUrls,
-        username: env.VITE_TURN_USERNAME || undefined,
-        credential: env.VITE_TURN_CREDENTIAL || undefined,
+        urls: dedupledUrls,
+        username,
+        credential,
       });
     }
-  } catch {
-    // TURN is optional — STUN-only config still works for most networks
+  } catch (err) {
+    console.warn("[WebRTC] Failed to parse TURN configuration:", err);
   }
   return {
     iceServers,

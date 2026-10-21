@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -254,7 +254,32 @@ export default function MeetingRoom() {
     return (params.get("pass") || params.get("passcode") || "").trim();
   });
   const [displayName, setDisplayName] = useState(user?.displayName || user?.email?.split("@")[0] || "Guest Participant");
-  const [sessionId] = useState<string>(() => `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+  // Stable per-tab participant identity, scoped to the room. Previously a
+  // fresh id was minted on EVERY mount — a page refresh or remount appended
+  // a duplicate participant record (mergeParticipantUpdate upserts by id,
+  // so a stable id turns rejoins into clean updates instead of clones).
+  const [sessionId] = useState<string>(() => {
+    const roomKey = normalizeRoomCode(decodeURIComponent(roomId || ""));
+    const storageKey = `sk_meet_session_${roomKey}`;
+    try {
+      const existing = sessionStorage.getItem(storageKey);
+      if (existing) return existing;
+      const fresh = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      sessionStorage.setItem(storageKey, fresh);
+      return fresh;
+    } catch {
+      // storage blocked (private mode) — fall back to an ephemeral id
+      return `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    }
+  });
+
+  // Duplicate-tab guard: only ONE tab may hold the live seat for this room
+  // (Zoom parity — "join from this device instead"). A heartbeat lock in
+  // localStorage coordinates between tabs; a crashed tab's lock goes stale
+  // after ~12s and is reclaimed automatically.
+  const [tabConflict, setTabConflict] = useState(false);
+  const tabLockHeldRef = useRef(false);
+  const tabLockKey = `sk_meet_activetab_${normalizeRoomCode(decodeURIComponent(roomId || ""))}`;
 
   // Phase: "lobby" | "waiting_room" | "in_meeting" | "ended"
   const [phase, setPhase] = useState<"lobby" | "waiting_room" | "in_meeting" | "ended">("lobby");
@@ -577,6 +602,64 @@ export default function MeetingRoom() {
     const take = galleryPageSafe === 0 ? per - 1 : per;
     return otherConnectedParticipants.slice(start, start + take);
   }, [otherConnectedParticipants, galleryLayout.perPage, galleryPageSafe]);
+
+  // 0. Duplicate-Tab Seat Lock — one live tab per room (Zoom parity:
+  // "Join from this device"). A heartbeat lock in localStorage coordinates
+  // between tabs; a crashed tab's lock goes stale after ~12s and is then
+  // reclaimed automatically. handleJoinFromLobby checks readTabLock BEFORE
+  // creating a participant record so a second tab never spawns a clone.
+  const readTabLock = useCallback((): { sessionId: string; ts: number } | null => {
+    try {
+      return JSON.parse(localStorage.getItem(tabLockKey) || "null") as { sessionId: string; ts: number } | null;
+    } catch {
+      return null;
+    }
+  }, [tabLockKey]);
+
+  const writeTabLock = useCallback(() => {
+    try {
+      localStorage.setItem(tabLockKey, JSON.stringify({ sessionId, ts: Date.now() }));
+    } catch {
+      // storage blocked (private mode) — the seat lock is best-effort only
+    }
+  }, [tabLockKey, sessionId]);
+
+  const leaveMeetingFnRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (tabConflict) return; // takeover screen is up — do not touch the lock
+    if (phase !== "waiting_room" && phase !== "in_meeting") return;
+    const current = readTabLock();
+    if (current && Date.now() - current.ts < 12000 && current.sessionId !== sessionId && !tabLockHeldRef.current) {
+      setTabConflict(true);
+      return;
+    }
+    writeTabLock();
+    tabLockHeldRef.current = true;
+    const heartbeat = setInterval(() => {
+      if (tabLockHeldRef.current) writeTabLock();
+      const latest = readTabLock();
+      if (latest && latest.sessionId !== sessionId) {
+        // Another tab took over the seat — bow out gracefully.
+        clearInterval(heartbeat);
+        tabLockHeldRef.current = false;
+        toast.info("You joined this meeting from another tab — this one was disconnected.");
+        void leaveMeetingFnRef.current();
+      }
+    }, 5000);
+    return () => {
+      clearInterval(heartbeat);
+      const latest = readTabLock();
+      if (latest?.sessionId === sessionId) {
+        try {
+          localStorage.removeItem(tabLockKey);
+        } catch {
+          // best-effort cleanup
+        }
+      }
+      tabLockHeldRef.current = false;
+    };
+  }, [phase, sessionId, tabConflict, tabLockKey, readTabLock, writeTabLock]);
 
   // 1. Load & Subscribe to Meeting
   useEffect(() => {
@@ -1754,6 +1837,14 @@ export default function MeetingRoom() {
 
   const handleJoinFromLobby = async (audioOnly: boolean = false) => {
     if (!meeting) return;
+
+    // Duplicate-tab guard: refuse to create a second seat for this room.
+    // Route to the takeover screen instead of spawning a clone participant.
+    const activeLock = readTabLock();
+    if (activeLock && Date.now() - activeLock.ts < 12000 && activeLock.sessionId !== sessionId && !tabLockHeldRef.current) {
+      setTabConflict(true);
+      return;
+    }
 
     // Check joinability
     const check = isMeetingJoinable(meeting);
@@ -3629,6 +3720,12 @@ export default function MeetingRoom() {
     setPhase("ended");
   };
 
+  // Keep the seat-lock heartbeat able to invoke the LATEST leave handler
+  // (it is defined far below the lock effect, so a ref avoids stale closures).
+  useEffect(() => {
+    leaveMeetingFnRef.current = handleLeaveMeeting;
+  });
+
   const handleEndForAll = async () => {
     if (!meeting || !isHost) return;
     // Dangerous action — always confirm first (Zoom parity).
@@ -3639,6 +3736,44 @@ export default function MeetingRoom() {
     setPhase("ended");
     toast.info("Meeting ended for all participants.");
   };
+
+  // Duplicate-tab takeover screen (Zoom parity: "Join from this device").
+  // Shown when another tab already holds this room's live seat.
+  if (tabConflict) {
+    return (
+      <div className="min-h-[85vh] flex flex-col items-center justify-center p-4 sm:p-6 text-center max-w-md mx-auto">
+        <div className="w-16 h-16 rounded-2xl bg-[var(--dept-soft)] border border-[var(--dept)]/40 flex items-center justify-center text-3xl mx-auto mb-4 dept-accent shadow-sm">
+          ⚠️
+        </div>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold uppercase">Already Joined Elsewhere</h1>
+        <p className="text-xs text-[var(--muted)] mt-1.5 max-w-sm">
+          This meeting is already open in another tab or window. Joining here will disconnect the other one.
+        </p>
+        <div className="w-full mt-6 p-6 border border-[var(--line)] bg-[var(--panel)] rounded-2xl shadow-xl space-y-3">
+          <button
+            type="button"
+            className="btn btn-dept w-full !py-3 font-display text-xs font-bold uppercase tracking-wider shadow-md"
+            onClick={() => {
+              // Take over the seat — the other tab's heartbeat notices the
+              // foreign lock within ~5s and leaves gracefully.
+              writeTabLock();
+              tabLockHeldRef.current = true;
+              setTabConflict(false);
+            }}
+          >
+            Join Here Instead
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost w-full !py-2 !px-4 text-xs"
+            onClick={() => navigate(-1)}
+          >
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Direct Code Entry when landing on /meet without a roomId
   if (!roomId) {
@@ -3708,6 +3843,39 @@ export default function MeetingRoom() {
         <p className="font-meta text-[10px] text-[var(--muted)] mt-6">
           Registered client? Visit the <button onClick={() => navigate("/client")} className="underline font-bold text-[var(--ink)]">Client Portal</button> to view all your scheduled sessions.
         </p>
+      </div>
+    );
+  }
+
+  if (tabConflict) {
+    return (
+      <div className="min-h-[80vh] flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto space-y-4">
+        <span className="text-4xl">💻</span>
+        <h2 className="font-display text-xl font-bold uppercase">Already Connected in Another Tab</h2>
+        <p className="text-xs text-[var(--muted)]">
+          You are already active in this meeting room in another browser tab or window. Only one active seat is allowed per participant.
+        </p>
+        <div className="flex items-center gap-3 justify-center pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              writeTabLock();
+              tabLockHeldRef.current = true;
+              setTabConflict(false);
+              toast.info("Switched to this tab.");
+            }}
+            className="btn btn-dept !py-2.5 !px-5 font-display text-xs font-bold uppercase tracking-wider shadow-md"
+          >
+            Use This Tab Instead
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/meet")}
+            className="btn btn-outline !py-2.5 !px-4 font-display text-xs font-bold uppercase"
+          >
+            Back to Meetings
+          </button>
+        </div>
       </div>
     );
   }

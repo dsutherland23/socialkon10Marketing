@@ -128,13 +128,39 @@ export async function getLocalUserMedia(options?: {
 
 /* ---------------- WebRTC Multi-Peer Mesh Session ---------------- */
 
-export const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
+/** STUN servers are free; TURN is required for restrictive/symmetric NATs
+ *  (corporate firewalls, some mobile carriers). Configure via env:
+ *  VITE_TURN_URLS (comma-separated), VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL. */
+export function getRtcConfig(): RTCConfiguration {
+  const iceServers: RTCIceServer[] = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-  ],
-};
+  ];
+  try {
+    const env = import.meta.env || {};
+    const turnUrls = String(env.VITE_TURN_URLS || "").split(",").map((u: string) => u.trim()).filter(Boolean);
+    if (turnUrls.length > 0) {
+      iceServers.push({
+        urls: turnUrls,
+        username: env.VITE_TURN_USERNAME || undefined,
+        credential: env.VITE_TURN_CREDENTIAL || undefined,
+      });
+    }
+  } catch {
+    // TURN is optional — STUN-only config still works for most networks
+  }
+  return { iceServers };
+}
+
+export const RTC_CONFIG: RTCConfiguration = getRtcConfig();
+
+/** Perfect-negotiation politeness rule (RFC 8860 style): the peer with the
+ *  lexicographically larger id is "polite" and rolls back on offer collision.
+ *  Pure & deterministic so both sides always agree without extra signaling. */
+export function isPolitePeer(myId: string, remoteId: string): boolean {
+  return myId > remoteId;
+}
 
 export class WebRTCMeshSession {
   private myParticipantId: string;
@@ -144,6 +170,9 @@ export class WebRTCMeshSession {
   private peers = new Map<string, RTCPeerConnection>();
   private remoteStreams = new Map<string, MediaStream>();
   private localStream: MediaStream | null = null;
+  private makingOffer = new Map<string, boolean>();
+  private ignoreOffer = new Map<string, boolean>();
+  private lastIceRestart = new Map<string, number>();
 
   constructor(opts: {
     myParticipantId: string;
@@ -167,13 +196,16 @@ export class WebRTCMeshSession {
     this.localStream = stream;
     if (!stream) return;
 
-    // Update tracks for existing peer connections
+    // Update tracks for existing peer connections. replaceTrack never needs
+    // renegotiation; a genuinely new track kind triggers onnegotiationneeded.
     this.peers.forEach((pc) => {
       const senders = pc.getSenders();
       stream.getTracks().forEach((track) => {
         const sender = senders.find((s) => s.track?.kind === track.kind);
         if (sender) {
-          sender.replaceTrack(track).catch(() => {});
+          if (sender.track?.id !== track.id) {
+            sender.replaceTrack(track).catch(() => {});
+          }
         } else {
           try {
             pc.addTrack(track, stream);
@@ -183,15 +215,17 @@ export class WebRTCMeshSession {
     });
   }
 
-  public async connectToPeer(remoteParticipantId: string, isInitiator: boolean): Promise<RTCPeerConnection> {
+  public async connectToPeer(remoteParticipantId: string): Promise<RTCPeerConnection> {
     if (this.peers.has(remoteParticipantId)) {
       return this.peers.get(remoteParticipantId)!;
     }
 
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(getRtcConfig());
     this.peers.set(remoteParticipantId, pc);
+    this.makingOffer.set(remoteParticipantId, false);
+    this.ignoreOffer.set(remoteParticipantId, false);
 
-    // 1. Add local tracks
+    // 1. Add local tracks — triggers onnegotiationneeded, which drives the offer
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         try {
@@ -224,49 +258,80 @@ export class WebRTCMeshSession {
       }
     };
 
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
-        this.closePeer(remoteParticipantId);
+    // 4. Perfect negotiation — both sides may offer; collisions resolve politely
+    pc.onnegotiationneeded = async () => {
+      try {
+        this.makingOffer.set(remoteParticipantId, true);
+        await pc.setLocalDescription();
+        if (pc.localDescription) {
+          this.onSignalOut(remoteParticipantId, "offer", JSON.stringify(pc.localDescription));
+        }
+      } catch (err) {
+        console.warn(`Negotiation failed for ${remoteParticipantId}:`, err);
+      } finally {
+        this.makingOffer.set(remoteParticipantId, false);
       }
     };
 
-    // 4. If initiator, create and send SDP offer
-    if (isInitiator) {
-      try {
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true,
-        });
-        await pc.setLocalDescription(offer);
-        this.onSignalOut(remoteParticipantId, "offer", JSON.stringify(offer));
-      } catch (err) {
-        console.warn(`Create offer failed for ${remoteParticipantId}:`, err);
+    // 5. Resilient connection state handling — "disconnected" is often a
+    // transient network blip, so we never tear down on it. Only true failure
+    // triggers an ICE restart (rate-limited); only "closed" disposes the peer.
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed") {
+        const now = Date.now();
+        const last = this.lastIceRestart.get(remoteParticipantId) || 0;
+        if (now - last > 8000) {
+          this.lastIceRestart.set(remoteParticipantId, now);
+          try {
+            pc.restartIce();
+          } catch {
+            // restart is best-effort; the next failure tick will retry
+          }
+        }
       }
-    }
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "closed") {
+        this.closePeer(remoteParticipantId);
+      }
+    };
 
     return pc;
   }
 
   public async handleIncomingSignal(fromParticipantId: string, type: "offer" | "answer" | "candidate", payload: string) {
-    let pc = this.peers.get(fromParticipantId);
-    if (!pc) {
-      pc = await this.connectToPeer(fromParticipantId, false);
-    }
+    const pc = await this.connectToPeer(fromParticipantId);
 
     try {
       const data = JSON.parse(payload);
 
       if (type === "offer") {
+        // Glare resolution: impolite peer ignores colliding offers entirely;
+        // polite peer rolls back its own in-flight offer and accepts theirs.
+        const offerCollision =
+          this.makingOffer.get(fromParticipantId) || pc.signalingState !== "stable";
+        const ignore = !isPolitePeer(this.myParticipantId, fromParticipantId) && offerCollision;
+        this.ignoreOffer.set(fromParticipantId, ignore);
+        if (ignore) return;
+        if (offerCollision) {
+          try {
+            await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
+          } catch {
+            // rollback unsupported in older browsers — the remote will re-offer
+          }
+        }
         await pc.setRemoteDescription(new RTCSessionDescription(data));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        this.onSignalOut(fromParticipantId, "answer", JSON.stringify(answer));
+        this.onSignalOut(fromParticipantId, "answer", JSON.stringify(pc.localDescription || answer));
       } else if (type === "answer") {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
       } else if (type === "candidate") {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(data));
-        } catch {}
+        } catch (err) {
+          if (!this.ignoreOffer.get(fromParticipantId)) throw err;
+        }
       }
     } catch (err) {
       console.warn(`Signal handling error (${type}) from ${fromParticipantId}:`, err);
@@ -281,6 +346,9 @@ export class WebRTCMeshSession {
       } catch {}
       this.peers.delete(remoteParticipantId);
     }
+    this.makingOffer.delete(remoteParticipantId);
+    this.ignoreOffer.delete(remoteParticipantId);
+    this.lastIceRestart.delete(remoteParticipantId);
     this.remoteStreams.delete(remoteParticipantId);
     this.onRemoteTrackRemoved(remoteParticipantId);
   }
@@ -293,26 +361,134 @@ export class WebRTCMeshSession {
     });
     this.peers.clear();
     this.remoteStreams.clear();
+    this.makingOffer.clear();
+    this.ignoreOffer.clear();
+    this.lastIceRestart.clear();
   }
 }
 
-/** Request screen share stream (window, specific app software, tab, or entire display).
- *  systemAudio and selfBrowserSurface are Chrome-only hints — guarded with
- *  feature detection so Safari/Firefox don't receive unsupported constraint keys. */
-export async function getDisplayMediaStream(options?: {
+export type DisplaySurfaceType = "window" | "browser" | "monitor";
+export type ScreenCaptureOptimization = "detail" | "motion";
+
+export interface DisplayMediaOptions {
   preferWindow?: boolean;
+  surface?: DisplaySurfaceType;
   withAudio?: boolean;
-}): Promise<MediaStream> {
+  optimizeFor?: ScreenCaptureOptimization;
+}
+
+/** Check whether native screen/application capture (getDisplayMedia) is supported on this device/browser */
+export function isDisplayMediaSupported(): boolean {
+  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia);
+}
+
+/** Apply WebRTC MediaStreamTrack contentHint ("detail" for crisp app UI/text, "motion" for 60fps video) */
+export function applyScreenTrackOptimization(
+  stream: MediaStream | null | undefined,
+  optimizeFor: ScreenCaptureOptimization
+): void {
+  if (!stream) return;
+  const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack) return;
+  try {
+    if ("contentHint" in videoTrack) {
+      videoTrack.contentHint = optimizeFor;
+    }
+  } catch {
+    // Ignore if read-only in older engines
+  }
+}
+
+/** Inspect an active screen-share MediaStream to identify the shared surface (App Window, Browser Tab, or Full Monitor) */
+export function detectSharedSurface(stream?: MediaStream | null): {
+  surface: DisplaySurfaceType | "unknown";
+  label: string;
+  shortLabel: string;
+  icon: string;
+  resolution?: string;
+  hasSystemAudio: boolean;
+} {
+  if (!stream) {
+    return {
+      surface: "unknown",
+      label: "Live Screen",
+      shortLabel: "Screen",
+      icon: "🖥️",
+      hasSystemAudio: false,
+    };
+  }
+  const videoTrack = stream.getVideoTracks()[0];
+  const settings = (videoTrack?.getSettings?.() ?? {}) as Record<string, unknown>;
+  const rawSurface = String(settings.displaySurface || "");
+  const width = typeof settings.width === "number" ? settings.width : undefined;
+  const height = typeof settings.height === "number" ? settings.height : undefined;
+  const resolution = width && height ? `${width}×${height}` : undefined;
+  const hasSystemAudio = stream.getAudioTracks().length > 0;
+
+  if (rawSurface === "window") {
+    return {
+      surface: "window",
+      label: "Application Window",
+      shortLabel: "App Window",
+      icon: "🪟",
+      resolution,
+      hasSystemAudio,
+    };
+  }
+  if (rawSurface === "browser") {
+    return {
+      surface: "browser",
+      label: "Browser Tab",
+      shortLabel: "Browser Tab",
+      icon: "🌐",
+      resolution,
+      hasSystemAudio,
+    };
+  }
+  if (rawSurface === "monitor") {
+    return {
+      surface: "monitor",
+      label: "Entire Screen",
+      shortLabel: "Full Screen",
+      icon: "🖥️",
+      resolution,
+      hasSystemAudio,
+    };
+  }
+  return {
+    surface: "unknown",
+    label: "Live Broadcast",
+    shortLabel: "Screen",
+    icon: "🖥️",
+    resolution,
+    hasSystemAudio,
+  };
+}
+
+/** Request screen share stream (application window, browser tab, or entire display).
+ *  Implements 2026 W3C Screen Capture best practices:
+ *  - Explicit `displaySurface` ("window" | "browser" | "monitor")
+ *  - `CaptureController` focus management
+ *  - `surfaceSwitching: "include"` & `selfBrowserSurface` Hall-of-Mirrors protection
+ *  - `track.contentHint` ("detail" for crisp creative software vs "motion" for video)
+ *  - Progressive fallback for Safari/Firefox compatibility */
+export async function getDisplayMediaStream(options?: DisplayMediaOptions): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error("Screen sharing is not supported in this browser.");
   }
 
-  // Build constraints progressively — Chrome-only hints are only added when supported
+  const targetSurface: DisplaySurfaceType | undefined =
+    options?.surface ?? (options?.preferWindow ? "window" : undefined);
+  const optimizeFor: ScreenCaptureOptimization = options?.optimizeFor ?? "detail";
+
   const videoConstraints: Record<string, unknown> = {
     cursor: "always",
+    width: { ideal: 1920, max: optimizeFor === "detail" ? 2560 : 1920 },
+    height: { ideal: 1080, max: optimizeFor === "detail" ? 1440 : 1080 },
+    frameRate: optimizeFor === "motion" ? { ideal: 60, max: 60 } : { ideal: 30, max: 60 },
   };
-  if (options?.preferWindow) {
-    videoConstraints.displaySurface = "window";
+  if (targetSurface) {
+    videoConstraints.displaySurface = targetSurface;
   }
 
   const constraints: Record<string, unknown> = {
@@ -320,17 +496,66 @@ export async function getDisplayMediaStream(options?: {
     audio: options?.withAudio ?? true,
   };
 
-  // selfBrowserSurface & systemAudio are Chrome-specific; guard with duck-typing
-  // to avoid breaking Safari / Firefox which reject unknown constraint keys.
-  const testConstraints = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
-  if ("selfBrowserSurface" in testConstraints || /Chrome/.test(navigator.userAgent)) {
-    constraints.selfBrowserSurface = "include";
-  }
-  if ("systemAudio" in testConstraints || /Chrome/.test(navigator.userAgent)) {
-    constraints.systemAudio = "include";
+  // Optional 2026 W3C CaptureController for window/tab focus behavior
+  let controller: any = null;
+  const CaptureControllerCtor = (globalThis as any).CaptureController;
+  if (typeof CaptureControllerCtor === "function") {
+    try {
+      controller = new CaptureControllerCtor();
+      constraints.controller = controller;
+    } catch {
+      controller = null;
+    }
   }
 
-  return navigator.mediaDevices.getDisplayMedia(constraints as any);
+  // Chromium 2026 Screen Capture hints (guarded for cross-browser compatibility)
+  const testConstraints = navigator.mediaDevices.getSupportedConstraints?.() ?? {};
+  const isChromium = /Chrome|Chromium|Edg/.test(navigator.userAgent);
+  if ("selfBrowserSurface" in testConstraints || isChromium) {
+    // Exclude the meeting tab itself when picking an app window or full screen to prevent Hall-of-Mirrors
+    constraints.selfBrowserSurface = targetSurface === "browser" ? "include" : "exclude";
+  }
+  if ("surfaceSwitching" in testConstraints || isChromium) {
+    constraints.surfaceSwitching = "include";
+  }
+  if ("monitorTypeSurfaces" in testConstraints || isChromium) {
+    constraints.monitorTypeSurfaces = "include";
+  }
+  if ("systemAudio" in testConstraints || isChromium) {
+    constraints.systemAudio = options?.withAudio === false ? "exclude" : "include";
+  }
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia(constraints as any);
+  } catch (err: any) {
+    // Do not retry if the user explicitly cancelled the picker dialog
+    if (err?.name === "NotAllowedError" || err?.name === "AbortError") {
+      throw err;
+    }
+    // Progressive fallback for browsers that reject advanced constraint keys
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: targetSurface ? ({ displaySurface: targetSurface } as any) : true,
+      audio: options?.withAudio ?? false,
+    });
+  }
+
+  // Configure focus behavior after capture starts if CaptureController is active
+  if (controller && typeof controller.setFocusBehavior === "function") {
+    try {
+      const capturedSurface = detectSharedSurface(stream).surface;
+      if (capturedSurface === "window" || capturedSurface === "browser") {
+        controller.setFocusBehavior("focus-captured-surface");
+      } else {
+        controller.setFocusBehavior("no-focus-change");
+      }
+    } catch {
+      // Focus behavior already finalized or unsupported for this surface
+    }
+  }
+
+  applyScreenTrackOptimization(stream, optimizeFor);
+  return stream;
 }
 
 /** Stop all tracks on a media stream */
