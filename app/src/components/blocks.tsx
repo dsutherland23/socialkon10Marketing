@@ -43,9 +43,25 @@ export function ArrowLink({ to, children, className = "" }: { to: string; childr
   );
 }
 
+const SERVICE_COVER_MAP: Record<string, string> = {
+  "logo-design": "/assets/package-logo-design.jpg",
+  "brand-identity": "/assets/package-brand-identity.jpg",
+  "event-branding": "/covers/oasis-music-festival.webp",
+  "print-digital-collateral": "/covers/vertex-conference.webp",
+  "brand-strategy": "/assets/package-brand-identity.jpg",
+  "social-media-management": "/assets/package-social-management.jpg",
+  "social-content-bundle": "/assets/package-social-management.jpg",
+  "paid-social-advertising": "/assets/package-social-management.jpg",
+  "landing-page": "/assets/package-business-website.jpg",
+  "business-website": "/assets/package-business-website.jpg",
+  "ecommerce-website": "/assets/package-business-website.jpg",
+  "website-care-plan": "/assets/package-business-website.jpg",
+};
+
 /* Service product card — file-system styling, live price, dept accent */
 export function ServiceCard({ service, delay = 0 }: { service: ServiceProduct; delay?: number }) {
   const { currency } = useShop();
+  const coverImage = SERVICE_COVER_MAP[service.slug] || "/covers/harbour-and-co.webp";
   const price =
     service.priceType === "quote" ? "Request quote"
     : service.priceType === "consultation" ? "Book consultation"
@@ -64,7 +80,22 @@ export function ServiceCard({ service, delay = 0 }: { service: ServiceProduct; d
             {service.billing === "monthly" ? "RETAINER" : service.priceType === "quote" ? "CUSTOM" : service.priceType === "consultation" ? "STRATEGY" : "PROJECT"}
           </span>
         </div>
-        <h3 className="font-display text-xl md:text-2xl font-bold uppercase mt-5 leading-tight group-hover:text-[var(--dept)] transition-colors duration-200">
+
+        {/* Visual deliverable artwork preview */}
+        <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-900 border border-[var(--line)] my-4 group-hover:border-[var(--dept)] transition-colors">
+          <img
+            src={coverImage}
+            alt={service.name}
+            className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+            loading="lazy"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
+          <span className="absolute bottom-2 left-2.5 font-meta text-[8px] uppercase tracking-wider px-2 py-0.5 bg-black/75 backdrop-blur text-white/90 border border-white/10">
+            {service.dept.toUpperCase()} DELIVERABLE
+          </span>
+        </div>
+
+        <h3 className="font-display text-xl md:text-2xl font-bold uppercase mt-1 leading-tight group-hover:text-[var(--dept)] transition-colors duration-200">
           {service.name}
         </h3>
         <p className="text-sm text-[var(--muted)] mt-2">{service.tagline}</p>

@@ -33,6 +33,13 @@ function chunkHeadline(text: string): string[] {
   return out;
 }
 
+const EVENT_TIER_IMAGES: Record<string, string> = {
+  "event-starter": "/covers/vertex-conference.webp",
+  "event-pro": "/covers/oasis-music-festival.webp",
+  "event-signature": "/covers/oasis-music-festival.webp",
+  "event-essentials": "/covers/jamrock-eats.webp",
+};
+
 function EventTiers() {
   const { currency, add } = useShop();
   return (
@@ -40,14 +47,26 @@ function EventTiers() {
       {EVENT_TIERS.map((t, i) => (
         <Reveal key={t.id} delay={i * 60} className="h-full">
           <div
-            className="relative flex flex-col h-full p-6 md:p-7"
+            className="group relative flex flex-col h-full p-6 md:p-7"
             style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}
           >
             {t.popular && <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">Most popular</span>}
             <span className="font-meta text-[9px] text-[var(--muted)] mt-4">EVENT PACKAGE</span>
-            <h3 className="font-display text-xl font-bold uppercase mt-2">{t.name}</h3>
+
+            {/* Event creative visual preview */}
+            <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-900 border border-[var(--line)] my-3">
+              <img
+                src={EVENT_TIER_IMAGES[t.id] || "/covers/oasis-music-festival.webp"}
+                alt={t.name}
+                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                loading="lazy"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
+            </div>
+
+            <h3 className="font-display text-xl font-bold uppercase mt-1">{t.name}</h3>
             <p className="text-[12px] mt-1 opacity-70">{t.tagline}</p>
-            <p className="font-display-wide text-4xl font-bold mt-6">{formatMoney(t.price, currency)}</p>
+            <p className="font-display-wide text-4xl font-bold mt-4">{formatMoney(t.price, currency)}</p>
             <ul className="mt-6 flex flex-col gap-1.5 text-[12.5px] flex-1">
               {t.includes.slice(0, 7).map((x) => <li key={x} className="flex gap-2"><span className="dept-accent" aria-hidden>✓</span>{x}</li>)}
               {t.includes.length > 7 && <li className="font-meta text-[9px] opacity-60 mt-1">+ {t.includes.length - 7} more</li>}
@@ -74,6 +93,14 @@ function EventTiers() {
   );
 }
 
+const SOCIAL_TIER_IMAGES: Record<string, string> = {
+  "social-starter": "/assets/package-social-management.jpg",
+  "social-growth": "/assets/package-social-management.jpg",
+  "social-pro": "/assets/package-social-management.jpg",
+  "social-custom": "/assets/package-social-management.jpg",
+  "social-elite": "/assets/package-social-management.jpg",
+};
+
 function SocialTiers() {
   const { currency, add } = useShop();
   return (
@@ -81,14 +108,26 @@ function SocialTiers() {
       {SOCIAL_TIERS.map((t, i) => (
         <Reveal key={t.id} delay={i * 60} className="h-full">
           <div
-            className="relative flex flex-col h-full p-6 md:p-7"
+            className="group relative flex flex-col h-full p-6 md:p-7"
             style={{ background: t.popular ? "var(--ink)" : "var(--bg)", color: t.popular ? "var(--bg)" : "inherit" }}
           >
             {t.popular && <span className="absolute top-0 left-0 dept-bg font-meta text-[9px] px-3 py-1.5">Most popular</span>}
             <span className="font-meta text-[9px] text-[var(--muted)] mt-4">MONTHLY PACKAGE</span>
-            <h3 className="font-display text-xl font-bold uppercase mt-2">{t.name}</h3>
+
+            {/* Social campaign visual preview */}
+            <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-900 border border-[var(--line)] my-3">
+              <img
+                src={SOCIAL_TIER_IMAGES[t.id] || "/covers/sol-y-mar-resort.webp"}
+                alt={t.name}
+                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                loading="lazy"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
+            </div>
+
+            <h3 className="font-display text-xl font-bold uppercase mt-1">{t.name}</h3>
             <p className="text-[12px] mt-1 opacity-70">{t.blurb}</p>
-            <p className="font-display-wide text-4xl font-bold mt-6">
+            <p className="font-display-wide text-4xl font-bold mt-4">
               {t.quote ? "Custom" : <>{formatMoney(t.price, currency)}<span className="text-sm font-meta font-normal opacity-60">{t.period}</span></>}
             </p>
             <dl className="mt-6 flex flex-col gap-2 text-[12.5px] flex-1">
